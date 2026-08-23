@@ -1,0 +1,9 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+fpdf2>=2.7
+openpyxl>=3.1
+python-multipart>=0.0.9
+pytest>=8.0
+httpx>=0.27
+# Neon Postgres руу шилжихдээ: pip install psycopg2-binary

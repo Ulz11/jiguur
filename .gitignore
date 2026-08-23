@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Дата — хэзээ ч git-д оруулахгүй
+system/backend/jiguur.db
+system/backend/jiguur.db-wal
+system/backend/jiguur.db-shm
+system/backend/backups/
+system/backend/uploads/
+system/backend/.secret
+system/backend/migration/real_data.json
+
+# Node
+system/frontend/node_modules/
+system/frontend/tsconfig.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

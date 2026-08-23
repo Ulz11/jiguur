@@ -1,0 +1,327 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { api, fmt, money } from "../api";
+import { Spinner, useToast, Receipt } from "../ui";
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+type Item = { material_id: number; grade_id: number; qty: number; daily_rate: number; unit_price: number };
+
+export default function ContractNew() {
+  const nav = useNavigate();
+  const toast = useToast();
+  const [step, setStep] = useState(1);
+  const [clients, setClients] = useState<any[] | null>(null);
+  const [materials, setMaterials] = useState<any[] | null>(null);
+  const [type, setType] = useState<"rent" | "sale">("rent");
+  const [clientId, setClientId] = useState<number | null>(null);
+  const [newClient, setNewClient] = useState({ name: "", person: "", phone: "", reg: "" });
+  const [showNew, setShowNew] = useState(false);
+  const [items, setItems] = useState<Item[]>([]);
+  const [cond, setCond] = useState({ start_date: today(), end_date: "", penalty_percent: "0.5",
+                                     deposit: "", vat_percent: "0", note: "", no: "" });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api("/api/clients").then(setClients);
+    api("/api/materials").then(setMaterials);
+  }, []);
+  if (!clients || !materials) return <Spinner />;
+
+  const client = clients.find((c) => c.id === clientId);
+  const daySum = items.reduce((s, i) => s + i.qty * i.daily_rate, 0);
+  const saleSum = items.reduce((s, i) => s + i.qty * i.unit_price, 0);
+
+  function addItem(m: any, stock: any) {
+    if (items.some((i) => i.material_id === m.id && i.grade_id === stock.grade_id)) return;
+    const price = m.prices.find((p: any) => p.grade_id === stock.grade_id);
+    setItems([...items, { material_id: m.id, grade_id: stock.grade_id, qty: 0,
+      daily_rate: m.base_rate, unit_price: price?.sale_price || 0 }]);
+  }
+
+  async function submit() {
+    setBusy(true);
+    try {
+      let cid = clientId;
+      if (!cid && newClient.name.trim()) {
+        const c = await api("/api/clients", { method: "POST", body: JSON.stringify(newClient) });
+        cid = c.id;
+      }
+      if (!cid) { toast("Харилцагч сонгоно уу", "err"); setBusy(false); return; }
+      const body = {
+        client_id: cid, type, no: cond.no, start_date: cond.start_date,
+        end_date: cond.end_date || null, penalty_percent: parseFloat(cond.penalty_percent) || 0.5,
+        deposit: parseFloat(cond.deposit) || 0, vat_percent: parseFloat(cond.vat_percent) || 0,
+        note: cond.note,
+        items: items.filter((i) => i.qty > 0),
+      };
+      const r = await api("/api/contracts", { method: "POST", body: JSON.stringify(body) });
+      toast(`Гэрээ №${r.no} үүслээ — ачилтын хүсэлт дарга руу илгээгдэв`);
+      nav(`/contracts/${r.id}`);
+    } catch (e: any) { toast(e.message, "err"); setBusy(false); }
+  }
+
+  const steps = ["Харилцагч", "Материал", "Нөхцөл", "Баталгаажуулах"];
+
+  return (
+    <div className="max-w-4xl">
+      <Link to="/contracts" className="btn-ghost mb-3 inline-flex">← Болих</Link>
+      <h1 className="text-2xl font-extrabold text-ink tracking-tight mb-1">Шинэ гэрээ</h1>
+      <p className="text-t2 text-[13.5px] mb-5">4 алхам — бүх тооцоо автоматаар.</p>
+
+      <div className="flex gap-2 mb-5">
+        {steps.map((s, i) => (
+          <div key={s} className="flex-1">
+            <div className={`h-[5px] rounded-full mb-2 transition ${i + 1 <= step ? "bg-brand" : "bg-line"}`} />
+            <span className={`text-xs font-semibold ${i + 1 === step ? "text-brand" : "text-t3"}`}>{i + 1} · {s}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="card p-6">
+        {step === 1 && (
+          <>
+            <label className="lbl">Гэрээний төрөл</label>
+            <div className="flex gap-2 mb-5">
+              {[["rent", "Түрээс"], ["sale", "Худалдаа"]].map(([v, l]) => (
+                <button key={v} onClick={() => setType(v as any)}
+                  className={`rounded-[10px] border px-6 py-2.5 font-semibold text-sm min-h-11 transition ${
+                    type === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{l}</button>
+              ))}
+            </div>
+            <label className="lbl">Харилцагч</label>
+            <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+              {clients.map((c) => (
+                <button key={c.id} onClick={() => { setClientId(c.id); setShowNew(false); }}
+                  className={`text-left border-[1.5px] rounded-[14px] px-4 py-3.5 transition min-h-16 ${
+                    clientId === c.id ? "border-brand bg-brand-50" : "border-line hover:border-line-strong hover:shadow-md"}`}>
+                  <b className="block text-sm text-ink">{c.name}</b>
+                  <span className="text-xs text-t2">{c.active_contracts} идэвхтэй гэрээ · </span>
+                  {c.overdue
+                    ? <span className="text-xs font-semibold text-danger">хэтэрсэн өртэй ⚠</span>
+                    : c.receivable > 0
+                      ? <span className="text-xs font-semibold text-warn">үлдэгдэл {fmt(c.receivable)}₮</span>
+                      : <span className="text-xs font-semibold text-money">өргүй</span>}
+                </button>
+              ))}
+              <button onClick={() => { setClientId(null); setShowNew(true); }}
+                className={`text-left border-[1.5px] border-dashed rounded-[14px] px-4 py-3.5 min-h-16 transition ${
+                  showNew ? "border-brand bg-brand-50" : "border-line hover:border-line-strong"}`}>
+                <b className="block text-sm text-brand">+ Шинэ харилцагч</b>
+                <span className="text-xs text-t2">Нэр, утас оруулаад л болно</span>
+              </button>
+            </div>
+            {showNew && (
+              <div className="grid grid-cols-2 gap-3.5 mt-4 max-sm:grid-cols-1">
+                <div><label className="lbl">Компанийн нэр *</label>
+                  <input className="inp" value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })} /></div>
+                <div><label className="lbl">Регистр</label>
+                  <input className="inp" value={newClient.reg} onChange={(e) => setNewClient({ ...newClient, reg: e.target.value })} /></div>
+                <div><label className="lbl">Хариуцах хүн</label>
+                  <input className="inp" value={newClient.person} onChange={(e) => setNewClient({ ...newClient, person: e.target.value })} /></div>
+                <div><label className="lbl">Утас</label>
+                  <input className="inp" value={newClient.phone} onChange={(e) => setNewClient({ ...newClient, phone: e.target.value })} /></div>
+              </div>
+            )}
+            {client?.overdue && (
+              <div className="mt-4 bg-danger-50 text-danger rounded-xl px-4 py-3 text-[13.5px] font-medium">
+                ⚠ Энэ харилцагч хэтэрсэн өртэй ({fmt(client.receivable)}₮). Гэрээ хийхээс өмнө анхаараарай.
+              </div>
+            )}
+            <div className="flex justify-end mt-6">
+              <button className="btn-primary" disabled={!clientId && !(showNew && newClient.name.trim())}
+                      onClick={() => setStep(2)}>Үргэлжлүүлэх →</button>
+            </div>
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            <MaterialPicker materials={materials} items={items} addItem={addItem} type={type} />
+            {items.length > 0 && (
+              <div className="mt-5 overflow-x-auto">
+                <table className="w-full min-w-[560px]">
+                  <thead><tr>
+                    <th className="th">Сонгосон</th><th className="th text-right">Тоо</th>
+                    <th className="th text-right">{type === "rent" ? "Тариф ₮/ш/хоног" : "Нэгж үнэ ₮"}</th>
+                    <th className="th text-right">{type === "rent" ? "Өдрийн дүн" : "Нийт"}</th><th className="th"></th>
+                  </tr></thead>
+                  <tbody>
+                    {items.map((it, i) => {
+                      const m = materials.find((x: any) => x.id === it.material_id);
+                      const st = m?.stock?.find((s: any) => s.grade_id === it.grade_id);
+                      const over = st && it.qty > st.on_hand;
+                      return (
+                        <tr key={i}>
+                          <td className="td"><b className="text-ink">{m?.name}</b>
+                            <span className="block text-xs text-t3">{st?.grade} · агуулахад {fmt(st?.on_hand || 0)}ш</span></td>
+                          <td className="td text-right">
+                            <input type="number" min={0} className={`inp !min-h-10 !py-2 w-24 text-right ${over ? "!border-danger" : ""}`}
+                              value={it.qty} onChange={(e) => setItems(items.map((x, j) => j === i ? { ...x, qty: +e.target.value } : x))} />
+                            {over && <span className="block text-[11px] text-danger mt-1">нөөцөөс их!</span>}
+                          </td>
+                          <td className="td text-right">
+                            <input type="number" min={0} className="inp !min-h-10 !py-2 w-28 text-right"
+                              value={type === "rent" ? it.daily_rate : it.unit_price}
+                              onChange={(e) => setItems(items.map((x, j) => j === i
+                                ? { ...x, [type === "rent" ? "daily_rate" : "unit_price"]: +e.target.value } : x))} />
+                          </td>
+                          <td className="td text-right tabular-nums font-bold text-ink">
+                            {money(it.qty * (type === "rent" ? it.daily_rate : it.unit_price))}
+                          </td>
+                          <td className="td"><button className="btn-ghost !min-h-8 !p-1.5 text-danger"
+                            onClick={() => setItems(items.filter((_, j) => j !== i))}>✕</button></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div className="mt-4">
+                  {type === "rent" ? (
+                    <Receipt
+                      rows={[
+                        { label: "Сонгосон материал", value: `${items.filter((i) => i.qty > 0).length} мөр · ${fmt(items.reduce((s, i) => s + i.qty, 0))}ш` },
+                        { label: "Өдрийн нийт тооцоо", value: money(daySum) },
+                      ]}
+                      total={{ label: "30 хоногийн нэг цикл", value: money(daySum * 30) }} />
+                  ) : (
+                    <Receipt
+                      rows={[{ label: "Сонгосон материал", value: `${items.filter((i) => i.qty > 0).length} мөр · ${fmt(items.reduce((s, i) => s + i.qty, 0))}ш` }]}
+                      total={{ label: "Худалдааны нийт үнэ", value: money(saleSum) }} />
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="flex justify-between mt-6">
+              <button className="btn-secondary" onClick={() => setStep(1)}>← Буцах</button>
+              <button className="btn-primary" disabled={!items.some((i) => i.qty > 0)} onClick={() => setStep(3)}>Үргэлжлүүлэх →</button>
+            </div>
+          </>
+        )}
+
+        {step === 3 && (
+          <>
+            <div className="grid grid-cols-3 gap-3.5 max-sm:grid-cols-1">
+              <div><label className="lbl">Гэрээний № (хоосон бол автомат)</label>
+                <input className="inp" placeholder="ж: 26/15" value={cond.no} onChange={(e) => setCond({ ...cond, no: e.target.value })} /></div>
+              <div><label className="lbl">Эхлэх огноо</label>
+                <input type="date" className="inp" value={cond.start_date} onChange={(e) => setCond({ ...cond, start_date: e.target.value })} /></div>
+              <div><label className="lbl">Дуусах огноо (заавал биш)</label>
+                <input type="date" className="inp" value={cond.end_date} onChange={(e) => setCond({ ...cond, end_date: e.target.value })} /></div>
+              <div><label className="lbl">Алданги %/хоног</label>
+                <input className="inp" inputMode="decimal" value={cond.penalty_percent}
+                       onChange={(e) => setCond({ ...cond, penalty_percent: e.target.value })} /></div>
+              <div><label className="lbl">Барьцаа ₮ (заавал биш)</label>
+                <input className="inp" inputMode="numeric" placeholder="0" value={cond.deposit}
+                       onChange={(e) => setCond({ ...cond, deposit: e.target.value })} /></div>
+              <div><label className="lbl">НӨАТ %</label>
+                <select className="inp" value={cond.vat_percent} onChange={(e) => setCond({ ...cond, vat_percent: e.target.value })}>
+                  <option value="0">Тооцохгүй</option><option value="10">10%</option>
+                </select></div>
+            </div>
+            <div className="mt-3.5"><label className="lbl">Тэмдэглэл</label>
+              <input className="inp" placeholder="ж: тээврийг захиалагч хариуцна" value={cond.note}
+                     onChange={(e) => setCond({ ...cond, note: e.target.value })} /></div>
+            <div className="flex justify-between mt-6">
+              <button className="btn-secondary" onClick={() => setStep(2)}>← Буцах</button>
+              <button className="btn-primary" onClick={() => setStep(4)}>Үргэлжлүүлэх →</button>
+            </div>
+          </>
+        )}
+
+        {step === 4 && (
+          <>
+            {(() => {
+              const vat = parseFloat(cond.vat_percent) || 0;
+              const base = type === "rent" ? daySum * 30 : saleSum;
+              const vatAmt = base * vat / 100;
+              const rows: any[] = [
+                { label: "Харилцагч", value: client?.name || newClient.name },
+                ...(type === "rent"
+                  ? [{ label: "Өдрийн тооцоо", value: money(daySum) },
+                     { label: "30 хоногийн цикл", value: money(daySum * 30) },
+                     { label: "Алданги", value: cond.penalty_percent + " %/хоног", accent: "dim" }]
+                  : [{ label: "Худалдааны дүн", value: money(saleSum) }]),
+                ...(vat > 0 ? [{ label: `НӨАТ ${vat}%`, value: "+" + money(vatAmt), accent: "violet" }] : []),
+                ...(parseFloat(cond.deposit) > 0
+                  ? [{ label: "Барьцаа", value: money(parseFloat(cond.deposit)), accent: "money" }] : []),
+              ];
+              return (
+                <Receipt className="mb-4" rows={rows}
+                  total={{ label: type === "rent" ? "Циклийн нэхэмжлэл (НӨАТ-тай)" : "Нийт төлөх дүн",
+                           value: money(base + vatAmt) }} />
+              );
+            })()}
+            <div className="bg-brand-50 rounded-xl px-4 py-3.5 text-[13.5px] text-t1 mb-2">
+              Хадгалмагц <b>ачилтын хүсэлт үйлдвэрийн дарга руу</b> автоматаар очно.
+              Дарга "Ачсан ✓" гэж баталгаажуулмагц нөөц хөдөлж, тооцоо эхэлнэ.
+            </div>
+            <div className="flex justify-between mt-5">
+              <button className="btn-secondary" onClick={() => setStep(3)}>← Буцах</button>
+              <button className="btn-primary !bg-money" disabled={busy} onClick={submit}>
+                {busy ? "Үүсгэж байна…" : "✓ Гэрээ баталгаажуулах"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MaterialPicker({ materials, items, addItem, type }: any) {
+  const [q, setQ] = useState("");
+  const cats = useMemo(() => [...new Set(materials.map((m: any) => m.category))], [materials]);
+  const [cat, setCat] = useState<string>("");
+  const shown = materials.filter((m: any) =>
+    (!cat || m.category === cat) && (!q || m.name.toLowerCase().includes(q.toLowerCase())));
+  return (
+    <div>
+      <div className="flex gap-2.5 mb-3.5 flex-wrap">
+        <input className="inp max-w-[240px] !min-h-10 !py-2" placeholder="Материал хайх…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="inline-flex bg-white border border-line rounded-full p-1 gap-0.5">
+          <button onClick={() => setCat("")}
+            className={`rounded-full px-3.5 py-1 text-[12.5px] font-semibold min-h-8 ${!cat ? "bg-brand text-white" : "text-t2"}`}>Бүгд</button>
+          {cats.map((c: any) => (
+            <button key={c} onClick={() => setCat(c)}
+              className={`rounded-full px-3.5 py-1 text-[12.5px] font-semibold min-h-8 ${cat === c ? "bg-brand text-white" : "text-t2"}`}>{c}</button>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-2.5 max-h-[300px] overflow-y-auto pr-1 max-lg:grid-cols-2 max-sm:grid-cols-1">
+        {shown.map((m: any) => (m.stock || []).filter((s: any) => s.on_hand > 0).map((s: any) => {
+          const picked = items.some((i: any) => i.material_id === m.id && i.grade_id === s.grade_id);
+          return (
+            <button key={m.id + "-" + s.grade_id} onClick={() => addItem(m, s)} disabled={picked}
+              className={`text-left border rounded-xl px-3.5 py-3 transition ${
+                picked ? "border-brand bg-brand-50 opacity-60" : "border-line hover:border-line-strong hover:shadow-md"}`}>
+              <b className="block text-[13.5px] text-ink">{m.name}</b>
+              <span className="text-xs text-t2">{s.grade} · <b className="text-money">{fmt(s.on_hand)}ш</b> агуулахад</span>
+              <span className="block text-[11.5px] text-t3">
+                {type === "rent" ? `суурь тариф ${fmt(m.base_rate)}₮` :
+                 `үнэ ${fmt(m.prices.find((p: any) => p.grade_id === s.grade_id)?.sale_price || 0)}₮`}
+              </span>
+            </button>
+          );
+        }))}
+      </div>
+    </div>
+  );
+}
+
+function Sum({ label, val, accent }: any) {
+  return (
+    <div className="text-right">
+      <div className="text-[11.5px] text-t3 font-semibold uppercase tracking-wider">{label}</div>
+      <div className={`text-xl font-extrabold tabular-nums ${accent ? "text-brand" : "text-ink"}`}>{val}</div>
+    </div>
+  );
+}
+function SumHero({ label, val, small }: any) {
+  return (
+    <div>
+      <div className="text-[11px] text-white/50 font-semibold uppercase tracking-wider mb-1">{label}</div>
+      <div className={`font-extrabold tabular-nums ${small ? "text-base" : "text-[22px]"}`}>{val}</div>
+    </div>
+  );
+}

@@ -1,0 +1,199 @@
+import { useEffect, useState } from "react";
+import { api, money, sayaFmt, token } from "../api";
+import { Spinner, useToast } from "../ui";
+
+export default function Reports() {
+  const [months, setMonths] = useState(6);
+  const [d, setD] = useState<any>(null);
+  const toast = useToast();
+
+  const load = (m: number) => { setD(null); api(`/api/reports?months=${m}`).then(setD).catch((e) => toast(e.message, "err")); };
+  useEffect(() => { load(months); }, [months]);
+  if (!d) return <Spinner />;
+  const p = d.pnl;
+
+  async function download() {
+    const res = await fetch(`/api/reports/export.xlsx?months=${months}`,
+      { headers: { Authorization: `Bearer ${token()}` } });
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "jiguur-tailan.xlsx";
+    a.click();
+  }
+
+  return (
+    <div>
+      <div className="flex items-end justify-between gap-4 mb-5 flex-wrap">
+        <div>
+          <h1 className="text-[22px] font-bold text-ink tracking-tight">Тайлан</h1>
+          <p className="text-t3 text-[13px] mt-0.5">{p.from} — {p.to} · түрээс дууссан циклээр, зардал төлөгдсөнөөр</p>
+        </div>
+        <div className="flex gap-2.5 items-center flex-wrap">
+          <div className="segment">
+            {[3, 6, 12].map((m) => (
+              <button key={m} onClick={() => setMonths(m)} className={months === m ? "on" : ""}>{m} сар</button>
+            ))}
+          </div>
+          <button className="btn-secondary" onClick={download}>⇩ Excel татах</button>
+        </div>
+      </div>
+
+      {/* Bento stat cards */}
+      <div className="grid grid-cols-12 gap-4 mb-4">
+        <div className="card p-5 col-span-3 max-lg:col-span-6 max-sm:col-span-12">
+          <div className="text-[12px] text-t3 font-medium mb-1.5 flex items-center gap-2">
+            <span className="cdot" style={{ background: "#2BBA82", boxShadow: "0 0 0 3px #E0F5EC" }} />Нийт орлого
+          </div>
+          <div className="text-[28px] font-bold tracking-tight text-ink tabular-nums">
+            {sayaFmt(p.total_income)}<span className="text-[15px] text-t3 font-medium ml-1">₮</span>
+          </div>
+          <div className="text-[11.5px] text-t3 mt-1">түрээс + худалдаа + механизм</div>
+        </div>
+        <div className="card p-5 col-span-3 max-lg:col-span-6 max-sm:col-span-12">
+          <div className="text-[12px] text-t3 font-medium mb-1.5 flex items-center gap-2">
+            <span className="cdot" style={{ background: "#E5484D", boxShadow: "0 0 0 3px #FBE2E3" }} />Нийт зардал
+          </div>
+          <div className="text-[28px] font-bold tracking-tight text-ink tabular-nums">
+            {sayaFmt(p.total_expense)}<span className="text-[15px] text-t3 font-medium ml-1">₮</span>
+          </div>
+          <div className="text-[11.5px] text-t3 mt-1">цалин + хүү + зарлага</div>
+        </div>
+        <div className="card p-5 col-span-3 max-lg:col-span-6 max-sm:col-span-12">
+          <div className="text-[12px] text-t3 font-medium mb-1.5 flex items-center gap-2">
+            <span className="cdot" style={{ background: "#8B5CF6", boxShadow: "0 0 0 3px #EFE7FE" }} />Бартерын үр дүн
+          </div>
+          <div className={`text-[28px] font-bold tracking-tight tabular-nums ${p.barter_result < 0 ? "text-danger" : "text-money"}`}>
+            {p.barter_result > 0 ? "+" : ""}{sayaFmt(p.barter_result)}<span className="text-[15px] text-t3 font-medium ml-1">₮</span>
+          </div>
+          <div className="text-[11.5px] text-t3 mt-1">зарагдсан хөрөнгийн зөрүү</div>
+        </div>
+        <div className="card hero p-5 col-span-3 max-lg:col-span-6 max-sm:col-span-12">
+          <div className="text-[12px] text-white/60 font-medium mb-1.5">Цэвэр үр дүн</div>
+          <div className="text-[30px] font-bold tracking-tight tabular-nums text-white">
+            {p.net >= 0 ? "+" : ""}{sayaFmt(p.net)}<span className="text-[15px] text-white/50 font-medium ml-1">₮</span>
+          </div>
+          <div className="mt-1.5">
+            <span className={`pill ${p.net >= 0 ? "" : ""}`}
+                  style={{ background: "rgba(255,255,255,.12)", color: p.net >= 0 ? "#7de8b8" : "#ffb3b6" }}>
+              {p.net >= 0 ? "ашигтай ажиллав" : "алдагдалтай"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-12 gap-4 items-start">
+        {/* P&L statement */}
+        <div className="card p-6 col-span-5 max-lg:col-span-12">
+          <h3 className="font-bold text-ink text-[14px] mb-4 flex items-center gap-2"><span className="cdot" />Ашиг, алдагдлын тайлан</h3>
+          <Sect label="Орлого" />
+          <Row label="Түрээсийн орлого" val={p.rent_income} />
+          <Row label="Худалдааны орлого" val={p.sale_income} />
+          <Row label="Механизмын орлого" val={p.machine_income} />
+          <Total label="Нийт орлого" val={p.total_income} tone="money" />
+          <Sect label="Зардал" cls="mt-5" />
+          <Row label="Цалин" val={-p.salary_expense} />
+          <Row label="Зээлийн хүү" val={-p.interest_expense} />
+          <Row label="Механизмын зарлага" val={-p.machine_expense} />
+          <Total label="Нийт зардал" val={-p.total_expense} tone="danger" />
+          <div className="mt-5" />
+          <Row label="Бартерын хэрэгжсэн үр дүн" val={p.barter_result} colored />
+          <div className="mt-4 rounded-2xl px-4 py-3.5 flex justify-between items-center"
+               style={{ background: "linear-gradient(135deg,#0b2545,#1e3a6e)" }}>
+            <b className="text-[13px] text-white/80 uppercase tracking-wide">Цэвэр үр дүн</b>
+            <b className={`text-[22px] tabular-nums font-bold ${p.net >= 0 ? "text-[#7de8b8]" : "text-[#ffb3b6]"}`}>
+              {p.net >= 0 ? "+" : ""}{money(p.net)}
+            </b>
+          </div>
+          {p.accruing > 0 && (
+            <div className="mt-4 rounded-xl px-4 py-3 bg-brand-50 flex justify-between items-center">
+              <span className="text-[12.5px] text-t1">
+                Дуусаагүй циклүүдэд хуримтлагдаж буй
+                <span className="block text-[11px] text-t3">цикл хаагдмагц орлогод бүртгэгдэнэ</span>
+              </span>
+              <b className="tabular-nums text-brand text-[15px]">{money(p.accruing)}</b>
+            </div>
+          )}
+          <p className="text-[11px] text-t3 mt-4 leading-relaxed">
+            Нийт өглөг (зээл): {sayaFmt(d.loans_total)}₮ — үр дүнд орохгүй, хүү нь зардалд орсон.
+            Хуучин системээс шилжсэн үлдэгдэл орлогод тооцогдохгүй (авлагад л харагдана).
+          </p>
+        </div>
+
+        {/* Cashflow */}
+        <div className="card p-6 col-span-7 max-lg:col-span-12">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="font-bold text-ink text-[14px] flex items-center gap-2"><span className="cdot" />Мөнгөн урсгал — сүүлийн 6 сар</h3>
+            <div className="flex gap-4">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-t2">
+                <i className="w-2.5 h-2.5 rounded-[3px]" style={{ background: "#2BBA82" }} />Орсон</span>
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-t2">
+                <i className="w-2.5 h-2.5 rounded-[3px]" style={{ background: "#E5484D" }} />Гарсан</span>
+            </div>
+          </div>
+          <p className="text-[11.5px] text-t3 mb-4">Орсон: харилцагчийн төлбөр + механизм · Гарсан: зарлага + хүү + цалин</p>
+          <CashBars s={d.series} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Sect({ label, cls = "" }: any) {
+  return <div className={`text-[11px] font-bold uppercase tracking-wider text-t3 pb-1.5 border-b border-line ${cls}`}>{label}</div>;
+}
+function Row({ label, val, colored }: any) {
+  const cls = colored ? (val >= 0 ? "text-money" : "text-danger") : "text-ink";
+  return (
+    <div className="flex justify-between items-center py-2 border-b border-line/60">
+      <span className="text-[13px] text-t2">{label}</span>
+      <b className={`tabular-nums text-[13px] ${cls}`}>{val > 0 && colored ? "+" : ""}{money(val)}</b>
+    </div>
+  );
+}
+function Total({ label, val, tone }: any) {
+  return (
+    <div className="flex justify-between items-center py-2.5 mt-0.5 rounded-xl px-2 -mx-2"
+         style={{ background: tone === "money" ? "#E0F5EC" : "#FBE2E3" }}>
+      <b className={`text-[13px] ${tone === "money" ? "text-money" : "text-danger"}`}>{label}</b>
+      <b className={`tabular-nums text-[14.5px] ${tone === "money" ? "text-money" : "text-danger"}`}>{money(val)}</b>
+    </div>
+  );
+}
+
+function CashBars({ s }: { s: { months: string[]; cash_in: number[]; cash_out: number[] } }) {
+  const max = Math.max(...s.cash_in, ...s.cash_out, 1);
+  const W = 620, H = 250, P = { l: 54, r: 10, t: 14, b: 28 };
+  const bw = (W - P.l - P.r) / s.months.length;
+  const y = (v: number) => H - P.b - (v / (max * 1.15)) * (H - P.t - P.b);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block">
+      {[0, 1, 2, 3].map((g) => {
+        const gy = P.t + (g * (H - P.t - P.b)) / 3;
+        const gv = max * 1.15 * (1 - g / 3);
+        return (
+          <g key={g}>
+            <line x1={P.l} x2={W - P.r} y1={gy} y2={gy} stroke="var(--color-line)" strokeDasharray="3 4" />
+            <text x={P.l - 8} y={gy + 4} textAnchor="end" fontSize="10" fill="var(--color-t3)">{sayaFmt(gv)}</text>
+          </g>
+        );
+      })}
+      {s.months.map((m, i) => {
+        const x0 = P.l + i * bw;
+        return (
+          <g key={m + i}>
+            <rect x={x0 + bw * 0.16} y={y(s.cash_in[i])} width={bw * 0.3}
+                  height={Math.max(H - P.b - y(s.cash_in[i]), 0)} rx="5" fill="#2BBA82">
+              <title>{`${m}: орсон ${money(s.cash_in[i])}`}</title>
+            </rect>
+            <rect x={x0 + bw * 0.54} y={y(s.cash_out[i])} width={bw * 0.3}
+                  height={Math.max(H - P.b - y(s.cash_out[i]), 0)} rx="5" fill="#E5484D" opacity="0.85">
+              <title>{`${m}: гарсан ${money(s.cash_out[i])}`}</title>
+            </rect>
+            <text x={x0 + bw / 2} y={H - 8} textAnchor="middle" fontSize="11" fill="var(--color-t3)">{m}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}

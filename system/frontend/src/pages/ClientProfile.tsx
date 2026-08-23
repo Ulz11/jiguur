@@ -1,0 +1,280 @@
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { api, fmt, money, sayaFmt, token, user } from "../api";
+import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit } from "../ui";
+import { PayModal } from "./ContractDetail";
+
+export default function ClientProfile() {
+  const { id } = useParams();
+  const [d, setD] = useState<any>(null);
+  const [tab, setTab] = useState("overview");
+  const [pay, setPay] = useState(false);
+  const nav = useNavigate();
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const u = user();
+
+  const load = () => api(`/api/clients/${id}`).then(setD).catch((e) => toast(e.message, "err"));
+  useEffect(() => { load(); }, [id]);
+  if (!d) return <Spinner />;
+
+  async function saveClient(patch: Record<string, string>) {
+    await api(`/api/clients/${id}`, { method: "PUT", body: JSON.stringify({
+      name: d.name, reg: d.reg || "", person: d.person || "", phone: d.phone || "",
+      note: d.note || "", ...patch }) });
+    toast("Хадгалагдлаа");
+    load();
+  }
+
+  const TABS = [
+    ["overview", "Тойм"],
+    ["contracts", `Гэрээ`, d.contracts.length],
+    ["invoices", "Нэхэмжлэл", d.invoices.length],
+    ["payments", "Төлбөр", d.payments.length],
+    ["barter", "Бартер", d.barter?.length || 0],
+    ["files", "Хавсралт", d.files.length],
+  ] as any[];
+
+  async function upload(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      await api(`/api/files/client/${id}`, { method: "POST", body: fd });
+      toast("Файл хавсаргагдлаа");
+      load();
+    } catch (er: any) { toast(er.message, "err"); }
+  }
+
+  return (
+    <div>
+      <Link to="/clients" className="btn-ghost mb-3 inline-flex">← Харилцагчид руу буцах</Link>
+      <div className="card p-6">
+        <div className="flex gap-4 items-start flex-wrap">
+          <div className="w-14 h-14 rounded-[18px] bg-brand-50 text-brand grid place-items-center font-extrabold text-lg shrink-0">
+            {d.name.slice(0, 2)}
+          </div>
+          <div className="flex-1 min-w-[230px]">
+            <h2 className="text-xl font-extrabold text-ink flex items-center gap-2.5 flex-wrap">
+              {d.name}
+              {d.overdue ? <span className="pill-red">Хэтэрсэн өртэй</span> :
+               d.receivable > 0 ? <span className="pill-amber">Үлдэгдэлтэй</span> :
+               <span className="pill-green">Хэвийн</span>}
+            </h2>
+            <div className="text-[13px] text-t2 mt-1.5 flex gap-x-4 gap-y-1.5 flex-wrap items-center">
+              <span className="inline-flex items-center gap-1.5">Регистр:
+                <InlineEdit value={d.reg} width="w-28" confirmText="Хадгалах уу?"
+                  onSave={(v) => saveClient({ reg: v })} /></span>
+              <span className="inline-flex items-center gap-1.5">Хариуцагч:
+                <InlineEdit value={d.person} width="w-36" confirmText="Хадгалах уу?"
+                  onSave={(v) => saveClient({ person: v })} /></span>
+              <span className="inline-flex items-center gap-1.5">Утас:
+                <InlineEdit value={d.phone} width="w-32" confirmText="Хадгалах уу?"
+                  onSave={(v) => saveClient({ phone: v })} /></span>
+              <span>Хамтран ажилласан: <b className="text-t1">{d.since}-с</b></span>
+            </div>
+            <div className="mt-2.5 text-[12.5px] text-t2 inline-flex items-center gap-2">💬
+              <InlineEdit value={d.note} display={d.note || "тэмдэглэл нэмэх…"} width="w-80" confirmText="Хадгалах уу?"
+                onSave={(v) => saveClient({ note: v })} />
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-6 max-sm:grid-cols-2">
+            <Stat label="Авлага" val={sayaFmt(d.receivable) + "₮"} danger={d.overdue} />
+            <Stat label="Алданги" val={d.penalty > 0 ? sayaFmt(d.penalty) + "₮" : "—"} danger={d.penalty > 0} />
+            <Stat label="Барьцаа" val={d.deposit > 0 ? sayaFmt(d.deposit) + "₮" : "—"} />
+            <Stat label="Гэрээ" val={String(d.contracts.length)} />
+          </div>
+        </div>
+        {u?.role !== "factory" && (
+          <div className="mt-4 flex gap-2.5">
+            <button className="btn-secondary !min-h-10" onClick={() => setPay(true)}>Төлбөр бүртгэх</button>
+          </div>
+        )}
+
+        <div className="flex gap-0.5 border-b border-line mt-5 mb-4 overflow-x-auto">
+          {TABS.map(([v, l, n]: any) => (
+            <button key={v} onClick={() => setTab(v)}
+              className={`px-4 py-2.5 font-semibold text-[13.5px] border-b-[2.5px] -mb-px whitespace-nowrap min-h-11 transition ${
+                tab === v ? "text-brand border-brand" : "text-t2 border-transparent hover:text-ink"}`}>
+              {l}{n !== undefined && <span className={`text-[11px] rounded-full px-1.5 py-0.5 ml-1.5 font-bold ${
+                tab === v ? "bg-brand-50 text-brand" : "bg-sunken text-t2"}`}>{n}</span>}
+            </button>
+          ))}
+        </div>
+
+        {tab === "overview" && (
+          <div className="grid grid-cols-[1.6fr_1fr] gap-6 max-lg:grid-cols-1">
+            <div>
+              <h3 className="font-bold text-[14.5px] mb-3.5">Сүүлийн үйл явдлууд</h3>
+              <div className="relative pl-6 before:content-[''] before:absolute before:left-[7px] before:top-1.5 before:bottom-1.5 before:w-0.5 before:bg-sunken">
+                {d.timeline.map((t: any, i: number) => (
+                  <div key={i} className="relative pb-4 last:pb-0">
+                    <i className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-white border-[3px] ${
+                      t.kind === "payment" ? "border-money" : t.kind === "return" ? "border-warn" :
+                      t.kind === "writeoff" ? "border-danger" : "border-brand"}`} />
+                    <span className="text-[11.5px] text-t3 font-semibold">{t.date}</span>
+                    <b className="block text-[13.5px] text-ink font-semibold">{t.title}</b>
+                    <span className="text-[12.5px] text-t2">{t.sub}</span>
+                  </div>
+                ))}
+                {d.timeline.length === 0 && <p className="text-t3 text-sm">Түүх хоосон байна.</p>}
+              </div>
+            </div>
+            <div>
+              <h3 className="font-bold text-[14.5px] mb-3.5">Нэхэмжлэлийн байдал</h3>
+              {d.invoices.slice(0, 6).map((inv: any) => (
+                <div key={inv.id} className="flex items-center justify-between gap-3 py-2.5 border-b border-sunken last:border-0">
+                  <div>
+                    <b className="text-[13px] text-ink">{inv.contract_no} · {inv.cycle_start}</b>
+                    <span className="block text-xs text-t3 tabular-nums">{money(inv.total)}
+                      {inv.penalty > 0 && <span className="text-danger"> + алданги {money(inv.penalty)}</span>}</span>
+                  </div>
+                  <StatePill state={inv.status} />
+                </div>
+              ))}
+              {d.invoices.length === 0 && <Empty title="Нэхэмжлэл алга" />}
+            </div>
+          </div>
+        )}
+
+        {tab === "contracts" && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[600px]">
+              <thead><tr><th className="th">Гэрээ</th><th className="th">Төрөл</th><th className="th">Явц</th>
+                <th className="th text-right">Үлдэгдэл</th><th className="th">Төлөв</th></tr></thead>
+              <tbody>
+                {d.contracts.map((c: any) => (
+                  <tr key={c.id} className="cursor-pointer hover:bg-canvas group" onClick={() => nav(`/contracts/${c.id}`)}>
+                    <td className="td"><b className="text-ink">№{c.no}</b>
+                      <span className="block text-xs text-t3">{c.start_date}-с</span></td>
+                    <td className="td"><TypePill type={c.type} /></td>
+                    <td className="td min-w-[140px]">
+                      {c.cycle ? <><div className="text-xs text-t2 mb-1">{c.cycle.days_done}/{c.cycle.days_total} хоног</div>
+                        <Prog pct={(c.cycle.days_done / c.cycle.days_total) * 100} /></> : <span className="text-xs text-t3">—</span>}
+                    </td>
+                    <td className="td text-right tabular-nums font-bold">{sayaFmt(c.balance)}₮</td>
+                    <td className="td"><StatePill state={c.state} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {tab === "invoices" && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[620px]">
+              <thead><tr><th className="th">Нэхэмжлэл</th><th className="th text-right">Дүн</th>
+                <th className="th text-right">Төлсөн</th><th className="th text-right">Алданги</th><th className="th">Төлөв</th></tr></thead>
+              <tbody>
+                {d.invoices.map((inv: any) => (
+                  <tr key={inv.id}>
+                    <td className="td"><b className="text-ink">{inv.no}</b>
+                      <span className="block text-xs text-t3">{inv.cycle_start} – {inv.cycle_end}</span></td>
+                    <td className="td text-right tabular-nums">{money(inv.total)}</td>
+                    <td className="td text-right tabular-nums">{money(inv.paid)}</td>
+                    <td className="td text-right tabular-nums text-danger">{inv.penalty > 0 ? money(inv.penalty) : "—"}</td>
+                    <td className="td"><StatePill state={inv.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {d.invoices.length === 0 && <Empty title="Нэхэмжлэл алга" />}
+          </div>
+        )}
+
+        {tab === "payments" && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px]">
+              <thead><tr><th className="th">Огноо</th><th className="th text-right">Дүн</th><th className="th">Хэлбэр</th><th className="th">Гэрээ</th></tr></thead>
+              <tbody>
+                {d.payments.map((p: any) => (
+                  <tr key={p.id}>
+                    <td className="td">{p.date}</td>
+                    <td className="td text-right tabular-nums font-bold text-ink">{money(p.amount)}</td>
+                    <td className="td">
+                      <span className={p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green" : "pill-blue"}>
+                        {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн" : "Данс"}
+                      </span>
+                    </td>
+                    <td className="td text-t2">{p.contract_no ? `№${p.contract_no}` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {d.payments.length === 0 && <Empty title="Төлбөр алга" />}
+          </div>
+        )}
+
+        {tab === "barter" && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px]">
+              <thead><tr><th className="th">Хөрөнгө</th><th className="th text-right">Орж ирсэн үнэ</th>
+                <th className="th">Төлөв</th><th className="th text-right">Ашиг / Алдагдал</th></tr></thead>
+              <tbody>
+                {(d.barter || []).map((a: any) => (
+                  <tr key={a.id}>
+                    <td className="td"><span className="font-bold text-ink">{a.name}</span>
+                      <span className="block text-xs text-t3">{a.type} · {a.date_in}</span></td>
+                    <td className="td text-right tabular-nums">{money(a.value_in)}</td>
+                    <td className="td">
+                      {a.status === "held" ? <span className="pill-blue">Хадгалагдаж буй</span> :
+                       a.status === "sold" ? <span className="pill-grey">Зарагдсан</span> :
+                       <span className="pill-green">Нөөцөд орсон</span>}
+                    </td>
+                    <td className="td text-right tabular-nums">
+                      {a.gain !== null && a.gain !== undefined
+                        ? <b className={a.gain < 0 ? "text-danger" : "text-money"}>{a.gain > 0 ? "+" : ""}{money(a.gain)}</b>
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {(d.barter || []).length === 0 && <Empty title="Бартер алга"
+              sub="Энэ харилцагчаас бартераар орж ирсэн хөрөнгө байхгүй." />}
+          </div>
+        )}
+
+        {tab === "files" && (
+          <div>
+            {d.files.map((f: any) => (
+              <div key={f.id} className="flex items-center gap-3 py-3 border-b border-sunken last:border-0">
+                <div className="w-9 h-9 rounded-[10px] bg-danger-50 text-danger grid place-items-center text-[10px] font-extrabold shrink-0">
+                  {(f.filename.split(".").pop() || "F").toUpperCase().slice(0, 4)}
+                </div>
+                <div className="min-w-0">
+                  <b className="text-[13.5px] text-ink block truncate">{f.filename}</b>
+                  <span className="text-[11.5px] text-t3">{(f.size / 1024).toFixed(0)} KB · {f.uploaded_at}</span>
+                </div>
+                <a className="btn-ghost ml-auto !min-h-9" href={`/api/files/dl/${f.id}`}
+                   onClick={async (e) => {
+                     e.preventDefault();
+                     const res = await fetch(`/api/files/dl/${f.id}`, { headers: { Authorization: `Bearer ${token()}` } });
+                     const blob = await res.blob();
+                     const a = document.createElement("a");
+                     a.href = URL.createObjectURL(blob); a.download = f.filename; a.click();
+                   }}>Татах</a>
+              </div>
+            ))}
+            {d.files.length === 0 && <Empty title="Хавсралт алга" sub="Гэрээний скан, падангийн зураг зэргийг энд хадгална." />}
+            <input type="file" ref={fileRef} className="hidden" onChange={upload} />
+            <button className="btn-secondary mt-4" onClick={() => fileRef.current?.click()}>+ Файл хавсаргах</button>
+          </div>
+        )}
+      </div>
+
+      {pay && <PayModal client_id={d.id} d={null} invoices={d.invoices} onClose={() => setPay(false)} onDone={() => { setPay(false); load(); }} />}
+    </div>
+  );
+}
+
+function Stat({ label, val, danger }: any) {
+  return (
+    <div>
+      <div className="text-[11px] text-t3 font-bold uppercase tracking-wider mb-1">{label}</div>
+      <div className={`text-lg font-extrabold tabular-nums ${danger ? "text-danger" : "text-ink"}`}>{val}</div>
+    </div>
+  );
+}

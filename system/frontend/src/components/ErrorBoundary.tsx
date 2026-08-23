@@ -1,0 +1,37 @@
+import { Component, ReactNode } from "react";
+
+type Props = { children: ReactNode };
+type State = { error: Error | null };
+
+/** Хуудас алдаа өгвөл цагаан дэлгэц гарахаас сэргийлж, ойлгомжтой мэдээлэл харуулна. */
+export default class ErrorBoundary extends Component<Props, State> {
+  state: State = { error: null };
+
+  static getDerivedStateFromError(error: Error): State {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: any) {
+    console.error("[Жигүүр] Хуудасны алдаа:", error, info);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="card p-10 text-center max-w-lg mx-auto mt-8">
+        <div className="text-4xl mb-3">⚠️</div>
+        <h3 className="font-bold text-ink text-[16px] mb-1.5">Энэ хуудсыг харуулахад алдаа гарлаа</h3>
+        <p className="text-t2 text-[13px] mb-2">
+          Таны дата аюулгүй хэвээр. Хуудсаа сэргээгээд дахин оролдоно уу.
+        </p>
+        <code className="block text-[11.5px] text-t3 bg-sunken rounded-lg px-3 py-2 mb-5 text-left overflow-x-auto">
+          {this.state.error.message}
+        </code>
+        <div className="flex gap-2.5 justify-center">
+          <button className="btn-secondary" onClick={() => this.setState({ error: null })}>Дахин оролдох</button>
+          <button className="btn-primary" onClick={() => location.reload()}>Хуудсыг сэргээх</button>
+        </div>
+      </div>
+    );
+  }
+}

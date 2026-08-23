@@ -1,0 +1,61 @@
+"""Цалин — TDD. Дүрэм (эзний хариултаас):
+- Үндсэн болон гэрээт ажилтан: сар бүр 15/15 хоногоор 2 хуваагдаж олгогдоно,
+  заримд нь НДШ суутгана.
+- Өдрийн ажилтан: ажилласан өдрөөр (өдрийн хөлс × өдөр)."""
+from datetime import date, timedelta
+
+
+def test_salary_run_half_month_calculation(client, as_role):
+    """3.0 сая цалинтай НДШ-тэй үндсэн ажилтан: хагас сард 1.5 сая, НДШ 11.5% = 172,500
+    суутгаад 1,327,500 гарт олгоно. Өдрийн ажилтан 80,000 × 10 өдөр = 800,000."""
+    h = as_role("otgoo")
+    e1 = client.post("/api/salary/employees", headers=h, json={
+        "name": "Тест Үндсэн", "role_title": "Инженер", "type": "main",
+        "monthly_salary": 3_000_000, "ndsh": True}).json()
+    e2 = client.post("/api/salary/employees", headers=h, json={
+        "name": "Тест Гэрээт", "role_title": "Засварчин", "type": "contract",
+        "monthly_salary": 1_500_000, "ndsh": False}).json()
+    e3 = client.post("/api/salary/employees", headers=h, json={
+        "name": "Тест Өдрийн", "role_title": "Туслах", "type": "daily",
+        "daily_rate": 80_000, "ndsh": False}).json()
+
+    r = client.post("/api/salary/runs", headers=h, json={
+        "period": "2026-08", "half": 1,
+        "daily_days": {str(e3["id"]): 10}})
+    assert r.status_code == 200, r.text
+    run = r.json()
+    items = {i["employee_id"]: i for i in run["items"]}
+    assert items[e1["id"]]["base"] == 1_500_000
+    assert items[e1["id"]]["ndsh_amount"] == 1_500_000 * 0.115
+    assert items[e1["id"]]["net"] == 1_500_000 - 172_500
+    assert items[e2["id"]]["base"] == 750_000 and items[e2["id"]]["ndsh_amount"] == 0
+    assert items[e3["id"]]["base"] == 800_000 and items[e3["id"]]["days"] == 10
+    # бодолт БҮХ идэвхтэй ажилтныг хамардаг тул нийт = мөрүүдийн нийлбэр
+    assert run["total_net"] == sum(i["net"] for i in run["items"])
+    assert run["total_base"] - run["total_ndsh"] == run["total_net"]
+
+
+def test_salary_run_duplicate_rejected(client, as_role):
+    h = as_role("otgoo")
+    client.post("/api/salary/employees", headers=h, json={
+        "name": "Д", "type": "main", "monthly_salary": 1_000_000, "ndsh": False})
+    r1 = client.post("/api/salary/runs", headers=h, json={"period": "2025-01", "half": 2, "daily_days": {}})
+    assert r1.status_code == 200
+    r2 = client.post("/api/salary/runs", headers=h, json={"period": "2025-01", "half": 2, "daily_days": {}})
+    assert r2.status_code == 400
+
+
+def test_salary_pay_marks_paid(client, as_role):
+    h = as_role("sanhuu")
+    client.post("/api/salary/employees", headers=h, json={
+        "name": "П", "type": "contract", "monthly_salary": 2_000_000, "ndsh": False})
+    run = client.post("/api/salary/runs", headers=h, json={"period": "2025-02", "half": 1, "daily_days": {}}).json()
+    r = client.post(f"/api/salary/runs/{run['id']}/pay", headers=h, json={"date": "2026-06-15"})
+    assert r.status_code == 200
+    lst = client.get("/api/salary/runs", headers=h).json()
+    row = next(x for x in lst if x["id"] == run["id"])
+    assert row["paid"] is True
+
+
+def test_factory_cannot_see_salary_403(client, as_role):
+    assert client.get("/api/salary/employees", headers=as_role("darga")).status_code == 403

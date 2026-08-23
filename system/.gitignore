@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/jiguur.db
+backend/jiguur.db-wal
+backend/jiguur.db-shm
+backend/backups/
+backend/uploads/
+backend/.secret
+frontend/node_modules/
+.env

@@ -1,0 +1,177 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { api, fmt, user } from "../api";
+import { Spinner, Modal, useToast, Prog, Receipt, Empty } from "../ui";
+
+export default function Warehouse() {
+  const [d, setD] = useState<any>(null);
+  const [adjust, setAdjust] = useState<any>(null);   // {m, s} — тооллогын залруулга
+  const [repair, setRepair] = useState<any>(null);   // {m, s} — засвар дуусгах
+  const [q, setQ] = useState("");
+  const toast = useToast();
+  const nav = useNavigate();
+  const u = user();
+
+  const load = () => api("/api/stock").then(setD);
+  useEffect(() => { load(); }, []);
+  if (!d) return <Spinner />;
+
+  return (
+    <div>
+      <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-extrabold text-ink tracking-tight">Агуулах</h1>
+          <p className="text-t2 text-[13.5px] mt-0.5">Амьд үлдэгдэл — хөдөлгөөн бүртгэгдэнгүүт шинэчлэгдэнэ.</p>
+        </div>
+        {u?.role !== "finance" && (
+          <button className="btn-primary" onClick={() => nav("/warehouse/stocktake")}>
+            ▣ Тооллого хийх
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-4 mb-4 max-sm:grid-cols-1">
+        <Kpi label="Агуулахад" val={fmt(d.totals.on_hand) + " ш"} />
+        <Kpi label="Түрээсэнд гарсан" val={fmt(d.totals.on_rent) + " ш"} pill={`${d.totals.utilization}%`} />
+        <Kpi label="Засварт" val={fmt(d.totals.in_repair) + " ш"} warn={d.totals.in_repair > 0} />
+      </div>
+
+      <input className="inp max-w-[320px] mb-4" placeholder="Материал хайх…" value={q}
+             onChange={(e) => setQ(e.target.value)} />
+
+      <div className="card overflow-x-auto">
+        <table className="w-full min-w-[820px]">
+          <thead><tr>
+            <th className="th">Материал</th><th className="th">Зэрэглэл бүрийн үлдэгдэл (агуулахад)</th>
+            <th className="th text-right">Түрээсэнд</th><th className="th text-right">Засварт</th>
+            <th className="th min-w-[130px]">Ашиглалт</th><th className="th"></th>
+          </tr></thead>
+          <tbody>
+            {d.rows.filter((m: any) => !q || m.name.toLowerCase().includes(q.toLowerCase())
+                                        || (m.category || "").toLowerCase().includes(q.toLowerCase()))
+                 .map((m: any) => {
+              const hand = m.on_hand_total, rent = m.on_rent_total;
+              const repair = (m.stock || []).reduce((s: number, x: any) => s + x.in_repair, 0);
+              const util = hand + rent ? (rent / (hand + rent)) * 100 : 0;
+              return (
+                <tr key={m.id}>
+                  <td className="td"><b className="text-ink">{m.name}</b>
+                    <span className="block text-xs text-t3">{m.category} · тариф {fmt(m.base_rate)}₮ · засвар {fmt(m.repair_fee)}₮/ш</span></td>
+                  <td className="td">
+                    <div className="flex gap-1.5 flex-wrap">
+                      {(m.stock || []).map((s: any) => (
+                        <button key={s.grade_id} title="Тооллогын залруулга"
+                          onClick={() => (u?.role !== "finance") && setAdjust({ m, s })}
+                          className="pill-grey hover:bg-brand-50 hover:text-brand transition cursor-pointer">
+                          {s.grade}: <b className="tabular-nums">{fmt(s.on_hand)}</b>
+                        </button>
+                      ))}
+                      {(m.stock || []).length === 0 && <span className="text-xs text-t3">—</span>}
+                    </div>
+                  </td>
+                  <td className="td text-right tabular-nums font-bold">{fmt(rent)}</td>
+                  <td className="td text-right tabular-nums">
+                    {repair > 0 ? (
+                      <span className="text-warn font-bold">{fmt(repair)}</span>
+                    ) : "—"}
+                  </td>
+                  <td className="td"><Prog pct={util} color={util > 85 ? "#EF4444" : util > 70 ? "#F5A524" : undefined} /></td>
+                  <td className="td">
+                    {repair > 0 && u?.role !== "finance" && (
+                      <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12px] text-money"
+                        onClick={() => {
+                          const s = (m.stock || []).find((x: any) => x.in_repair > 0);
+                          if (s) setRepair({ m, s });
+                        }}>Засвар дуусгах</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {adjust && (
+        <AdjustModal m={adjust.m} s={adjust.s} onClose={() => setAdjust(null)}
+                     onDone={() => { setAdjust(null); load(); }} />
+      )}
+      {repair && (
+        <RepairModal m={repair.m} s={repair.s} onClose={() => setRepair(null)}
+                     onDone={() => { setRepair(null); load(); }} />
+      )}
+    </div>
+  );
+}
+
+function RepairModal({ m, s, onClose, onDone }: any) {
+  const toast = useToast();
+  const [val, setVal] = useState(String(s.in_repair));
+  const qty = parseFloat(val) || 0;
+  const over = qty > s.in_repair;
+  return (
+    <Modal title="Засвар дуусгах" onClose={onClose}>
+      <p className="text-[13.5px] text-t2 mb-4">
+        <b className="text-ink">{m.name}</b> ({s.grade}) — засварт байгаа{" "}
+        <b className="tabular-nums">{fmt(s.in_repair)}ш</b>-аас хэдийг агуулахад буцаан оруулах вэ?
+      </p>
+      <label className="lbl">Тоо ширхэг</label>
+      <input type="number" className={`inp ${over ? "!border-danger" : ""}`} value={val} autoFocus
+             onChange={(e) => setVal(e.target.value)} />
+      {over && <p className="text-danger text-[12px] mt-1.5">Засварт байгаагаас их байна</p>}
+      <Receipt className="mt-4"
+        rows={[
+          { label: "Засварт байсан", value: `${fmt(s.in_repair)} ш` },
+          { label: "Агуулахад орох", value: `+${fmt(qty)} ш`, accent: "money" },
+        ]}
+        total={{ label: "Засварт үлдэх", value: `${fmt(Math.max(s.in_repair - qty, 0))} ш` }} />
+      <div className="flex justify-end gap-2.5 mt-5">
+        <button className="btn-secondary" onClick={onClose}>Болих</button>
+        <button className="btn-primary" disabled={!qty || over} onClick={async () => {
+          try {
+            await api("/api/stock/repair-done", { method: "POST",
+              body: JSON.stringify({ material_id: m.id, grade_id: s.grade_id, qty }) });
+            toast("Засвар дууслаа — агуулахад орлоо");
+            onDone();
+          } catch (e: any) { toast(e.message, "err"); }
+        }}>Оруулах</button>
+      </div>
+    </Modal>
+  );
+}
+
+function Kpi({ label, val, pill, warn }: any) {
+  return (
+    <div className="card p-5">
+      <div className="text-[12.5px] text-t2 font-medium mb-2">{label}</div>
+      <div className="text-[26px] font-extrabold text-ink tabular-nums leading-tight">{val}</div>
+      {pill && <div className="mt-2"><span className="pill-blue">{pill}</span></div>}
+      {warn && <div className="mt-2"><span className="pill-amber">засвар хүлээгдэж буй</span></div>}
+    </div>
+  );
+}
+
+function AdjustModal({ m, s, onClose, onDone }: any) {
+  const toast = useToast();
+  const [val, setVal] = useState(String(s.on_hand));
+  return (
+    <Modal title="Тооллогын залруулга" onClose={onClose}>
+      <p className="text-[13.5px] text-t2 mb-4">
+        <b className="text-ink">{m.name}</b> ({s.grade}) — бодит тоолсон агуулахын үлдэгдлийг оруулна уу.
+        Одоо системд: <b className="tabular-nums">{fmt(s.on_hand)}ш</b>
+      </p>
+      <input type="number" className="inp mb-5" value={val} onChange={(e) => setVal(e.target.value)} autoFocus />
+      <div className="flex justify-end gap-2.5">
+        <button className="btn-secondary" onClick={onClose}>Болих</button>
+        <button className="btn-primary" onClick={async () => {
+          try {
+            await api("/api/stock/adjust", { method: "POST",
+              body: JSON.stringify({ material_id: m.id, grade_id: s.grade_id, on_hand: +val }) });
+            toast("Үлдэгдэл залруулагдлаа");
+            onDone();
+          } catch (e: any) { toast(e.message, "err"); }
+        }}>Хадгалах</button>
+      </div>
+    </Modal>
+  );
+}
