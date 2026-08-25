@@ -1,7 +1,8 @@
 """Жигүүр Зам — түрээс, худалдааны удирдлагын систем (backend)."""
 import os
-import shutil
+import sqlite3
 import time
+from contextlib import closing
 from datetime import datetime
 
 from fastapi import Depends, FastAPI, Request
@@ -11,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .db import Base, engine, SessionLocal, get_db, BASE_DIR, DATABASE_URL, IS_SQLITE
+from .schema import migrate_schema
 from .seed import seed
 from . import models
 from .routers import (core, contracts, clients, payments, dashboard, files,
@@ -28,27 +30,35 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 # ---------- Автомат нөөцлөлт (сервер асах бүрд) ----------
-def backup_db(keep: int = 14):
-    """jiguur.db-г backups/ дотор өдрөөр хуулж, сүүлийн `keep`-ийг үлдээнэ."""
-    if not IS_SQLITE or ":memory:" in DATABASE_URL:
-        return
-    src = DATABASE_URL.replace("sqlite:///", "")
+def backup_db(keep: int = 14, src: str | None = None, bdir: str | None = None):
+    """DB-г backups/ дотор өдрөөр хуулж, сүүлийн `keep`-ийг үлдээнэ.
+
+    sqlite3-ийн backup API-г ашиглана: WAL (-wal) файлд сууж буй дата-г хуулбар руу
+    шингээж бичдэг. Өмнө нь shutil.copy2 зөвхөн үндсэн файлыг хуулдаг тул
+    нөөц бараг хоосон бүрхүүл болдог байв (үндсэн 4КБ ↔ WAL 770КБ).
+    """
+    if src is None:
+        if not IS_SQLITE or ":memory:" in DATABASE_URL:
+            return
+        src = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(src) or os.path.getsize(src) == 0:
         return
-    bdir = os.path.join(BASE_DIR, "backups")
+    bdir = bdir or os.path.join(BASE_DIR, "backups")
     os.makedirs(bdir, exist_ok=True)
     dst = os.path.join(bdir, f"jiguur-{datetime.now():%Y%m%d-%H%M}.db")
     try:
-        shutil.copy2(src, dst)
+        with closing(sqlite3.connect(src)) as s, closing(sqlite3.connect(dst)) as d:
+            s.backup(d)
         files_ = sorted(f for f in os.listdir(bdir) if f.endswith(".db"))
         for old in files_[:-keep]:
             os.unlink(os.path.join(bdir, old))
-    except OSError as e:
+    except (OSError, sqlite3.Error) as e:
         print("Нөөцлөлт амжилтгүй:", e)
 
 
 backup_db()
-Base.metadata.create_all(engine)
+Base.metadata.create_all(engine)   # ШИНЭ хүснэгтүүд
+migrate_schema(engine)             # хуучин хүснэгтийн ДУТУУ баганууд
 with SessionLocal() as db:
     seed(db)
 
