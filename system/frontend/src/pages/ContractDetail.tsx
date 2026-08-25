@@ -11,11 +11,25 @@ export default function ContractDetail() {
   const [d, setD] = useState<any>(null);
   const [grades, setGrades] = useState<any[]>([]);
   const [modal, setModal] = useState<"" | "return" | "add" | "pay" | "extend" | "deposit">("");
+  const [openMv, setOpenMv] = useState<number | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
   const toast = useToast();
   const u = user();
 
   const load = () => api(`/api/contracts/${id}`).then(setD).catch((e) => toast(e.message, "err"));
   useEffect(() => { load(); api("/api/grades").then(setGrades); }, [id]);
+
+  /* Тооцоог хөндөх засвар: сервер "дахин бодогдоно" гэвэл эхлээд зөрүүг харуулна. */
+  async function gatedPatch(path: string, body: any, okMsg: string) {
+    const r = await api(path, { method: "PATCH", body: JSON.stringify(body) });
+    if (r?.rebuild_required) {
+      setPending({ path, body, okMsg, diffs: r.diffs || [], warnings: r.warnings || [] });
+      return;
+    }
+    toast(okMsg);
+    load();
+  }
+
   if (!d) return <Spinner />;
 
   const cyc = d.cycle;
@@ -31,7 +45,15 @@ export default function ContractDetail() {
             <StatePill state={d.state} /><TypePill type={d.type} />
           </h1>
           <div className="text-t2 text-[13.5px] mt-1.5 flex items-center gap-x-4 gap-y-1.5 flex-wrap">
-            <span>Гэрээ №{d.no} · {d.start_date}-с</span>
+            <span className="inline-flex items-center gap-1.5">
+              Гэрээ №{d.no} ·{" "}
+              {u?.role === "manager" ? (
+                <InlineEdit type="date" value={d.start_date} display={`${d.start_date}-с`}
+                  confirmText="Эхлэх огноо солих уу?" width="w-36"
+                  onSave={(v) => gatedPatch(`/api/contracts/${d.id}`, { start_date: v },
+                                            "Гэрээний эхлэх огноо шинэчлэгдлээ")} />
+              ) : `${d.start_date}-с`}
+            </span>
             {u?.role !== "factory" ? (
               <>
                 <span className="inline-flex items-center gap-1.5">Дуусах:
@@ -199,27 +221,81 @@ export default function ContractDetail() {
           <div className="card p-5">
             <h3 className="font-bold text-ink text-[15.5px] mb-4">Хөдөлгөөний түүх</h3>
             <div className="relative pl-6 before:content-[''] before:absolute before:left-[7px] before:top-1.5 before:bottom-1.5 before:w-0.5 before:bg-sunken">
-              {d.movements.map((mv: any) => (
+              {d.movements.map((mv: any) => {
+                const open = openMv === mv.id;
+                return (
                 <div key={mv.id} className="relative pb-4 last:pb-0">
                   <i className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-white border-[3px] ${
                     mv.type === "ISSUE" ? "border-brand" : mv.type === "RETURN" ? "border-warn" : "border-danger"}`} />
-                  <span className="text-[11.5px] text-t3 font-semibold">{mv.date}</span>
-                  {mv.status === "pending" && <span className="pill-amber ml-2 !text-[10px]">хүлээгдэж буй</span>}
-                  <b className="block text-[13.5px] text-ink font-semibold">
-                    {mv.type === "ISSUE" ? "Ачилт" : mv.type === "RETURN" ? "Буцаалт" : "Акт"} — {fmt(mv.lines.reduce((s: number, l: any) => s + l.qty, 0))}ш
-                  </b>
-                  <div className="text-[12.5px] text-t2">
-                    {mv.lines.slice(0, 3).map((l: any, i: number) => (
-                      <span key={i}>{l.material} ({l.grade}) ×{fmt(l.qty)}{l.return_grade && l.return_grade !== l.grade ? ` → ${l.return_grade}` : ""}{i < Math.min(mv.lines.length, 3) - 1 ? " · " : ""}</span>
-                    ))}
-                    {mv.lines.some((l: any) => l.repair_fee > 0) &&
-                      <span className="block text-warn">Засвар: {money(mv.lines.reduce((s: number, l: any) => s + l.repair_fee, 0))}</span>}
-                    {mv.lines.some((l: any) => l.writeoff_fee > 0) &&
-                      <span className="block text-danger">Акт: {money(mv.lines.reduce((s: number, l: any) => s + l.writeoff_fee, 0))}</span>}
-                    {mv.note && <span className="block text-t3">{mv.note}</span>}
+                  <div className="cursor-pointer" onClick={() => setOpenMv(open ? null : mv.id)}
+                       title="Дарж дэлгэрэнгүйг нээнэ">
+                    <span className="text-[11.5px] text-t3 font-semibold">{mv.date}</span>
+                    {mv.status === "pending" && <span className="pill-amber ml-2 !text-[10px]">хүлээгдэж буй</span>}
+                    <b className="block text-[13.5px] text-ink font-semibold">
+                      <span className="text-t3 font-normal mr-1">{open ? "▾" : "›"}</span>
+                      {mv.type === "ISSUE" ? "Ачилт" : mv.type === "RETURN" ? "Буцаалт" : "Акт"} — {fmt(mv.lines.reduce((s: number, l: any) => s + l.qty, 0))}ш
+                    </b>
                   </div>
+                  {!open ? (
+                    <div className="text-[12.5px] text-t2">
+                      {mv.lines.slice(0, 3).map((l: any, i: number) => (
+                        <span key={i}>{l.material} ({l.grade}) ×{fmt(l.qty)}{l.return_grade && l.return_grade !== l.grade ? ` → ${l.return_grade}` : ""}{i < Math.min(mv.lines.length, 3) - 1 ? " · " : ""}</span>
+                      ))}
+                      {mv.lines.some((l: any) => l.repair_fee > 0) &&
+                        <span className="block text-warn">Засвар: {money(mv.lines.reduce((s: number, l: any) => s + l.repair_fee, 0))}</span>}
+                      {mv.lines.some((l: any) => l.writeoff_fee > 0) &&
+                        <span className="block text-danger">Акт: {money(mv.lines.reduce((s: number, l: any) => s + l.writeoff_fee, 0))}</span>}
+                      {mv.note && <span className="block text-t3">{mv.note}</span>}
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 rounded-2xl border border-line-strong p-3 bg-sunken/40">
+                      {u?.role === "manager" && (
+                        <div className="text-[12px] text-t2 inline-flex items-center gap-1.5 mb-2">Огноо:
+                          <InlineEdit type="date" value={mv.date} display={mv.date} width="w-36"
+                            confirmText="Огноо солих уу?"
+                            onSave={(v) => gatedPatch(`/api/movements/${mv.id}`, { date: v },
+                                                      "Хөдөлгөөний огноо шинэчлэгдлээ")} />
+                        </div>
+                      )}
+                      {mv.lines.map((l: any) => (
+                        <div key={l.id} className="flex items-center gap-2 py-1.5 border-b border-line last:border-0 flex-wrap">
+                          <div className="min-w-0">
+                            <b className="text-[12.5px] text-ink">{l.material}</b>
+                            <span className="block text-[11.5px] text-t3">
+                              {l.grade}{l.return_grade && l.return_grade !== l.grade ? ` → ${l.return_grade}` : ""}
+                              {l.repair_fee > 0 && <span className="text-warn"> · засвар {money(l.repair_fee)}</span>}
+                              {l.writeoff_fee > 0 && <span className="text-danger"> · акт {money(l.writeoff_fee)}</span>}
+                            </span>
+                          </div>
+                          <span className="ml-auto text-[12px] text-t2 inline-flex items-center gap-1.5">Тоо:
+                            {u?.role === "manager" ? (
+                              <InlineEdit type="number" right width="w-20" value={l.qty} display={fmt(l.qty)}
+                                confirmText="Тоо солих уу?"
+                                onSave={(v) => gatedPatch(`/api/movement-lines/${l.id}`,
+                                                          { qty: parseFloat(v.replace(/,/g, "")) || 0 },
+                                                          "Хөдөлгөөний тоо шинэчлэгдлээ")} />
+                            ) : fmt(l.qty)}
+                          </span>
+                          {mv.type === "ISSUE" && (
+                            <span className="text-[12px] text-t2 inline-flex items-center gap-1.5">Тариф:
+                              {u?.role === "manager" ? (
+                                <InlineEdit type="number" right width="w-20" value={l.rate ?? ""}
+                                  display={l.rate != null ? fmt(l.rate) : "—"}
+                                  confirmText="Тариф солих уу?"
+                                  onSave={(v) => gatedPatch(`/api/movement-lines/${l.id}`,
+                                                            { rate: parseFloat(v.replace(/,/g, "")) || 0 },
+                                                            "Паданны тариф шинэчлэгдлээ")} />
+                              ) : (l.rate != null ? fmt(l.rate) : "—")}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                      {mv.note && <span className="block text-[12px] text-t3 mt-2">{mv.note}</span>}
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -292,7 +368,55 @@ export default function ContractDetail() {
       {modal === "pay" && <PayModal d={d} invoices={d.invoices} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "extend" && <ExtendModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "deposit" && <DepositModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+      {pending && <RebuildModal p={pending} onClose={() => setPending(null)}
+                                onDone={() => { setPending(null); load(); }} />}
     </div>
+  );
+}
+
+/* ---------- Дахин бодох баталгаажуулалт ---------- */
+type Pending = { path: string; body: any; okMsg: string; diffs: any[]; warnings: string[] };
+
+function RebuildModal({ p, onClose, onDone }: {
+  p: Pending; onClose: () => void; onDone: () => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const oldSum = p.diffs.reduce((s, x) => s + x.old_total, 0);
+  const newSum = p.diffs.reduce((s, x) => s + x.new_total, 0);
+
+  return (
+    <Modal title="Тооцоо дахин бодогдоно" onClose={onClose}>
+      <p className="text-[13.5px] text-t2 mb-4">
+        Энэ засвар аль хэдийн нэхэмжилсэн циклүүдэд хамаарч байна. Нэхэмжлэлүүд
+        дахин бодогдож, төлбөрүүд шинэ дүнгүүд рүү дахин хуваарилагдана.
+      </p>
+      <Receipt
+        rows={p.diffs.map((x) => ({
+          label: `${x.cycle_start} – ${x.cycle_end}`,
+          value: `${money(x.old_total)} → ${money(x.new_total)}`,
+          accent: x.new_total < x.old_total ? "danger" as const
+                : x.new_total > x.old_total ? "money" as const : undefined,
+        }))}
+        total={{ label: "Нэхэмжлэлийн нийт", value: `${money(oldSum)} → ${money(newSum)}`,
+                 accent: newSum < oldSum ? "danger" : newSum > oldSum ? "money" : undefined }} />
+      {p.warnings.length > 0 && (
+        <div className="mt-3 text-[12.5px] text-warn space-y-1">
+          {p.warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}
+        </div>
+      )}
+      <div className="flex justify-end gap-2.5 mt-5">
+        <button className="btn-secondary" onClick={onClose}>Болих</button>
+        <button className="btn-primary" disabled={busy} onClick={async () => {
+          setBusy(true);
+          try {
+            await api(p.path, { method: "PATCH", body: JSON.stringify({ ...p.body, confirm: true }) });
+            toast(p.okMsg + " — тооцоо дахин бодогдлоо");
+            onDone();
+          } catch (e: any) { toast(e.message, "err"); setBusy(false); }
+        }}>{busy ? "…" : "Баталгаажуулж дахин бодох"}</button>
+      </div>
+    </Modal>
   );
 }
 

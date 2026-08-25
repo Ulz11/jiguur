@@ -1,5 +1,6 @@
 """Гэрээ, хөдөлгөөн, нэхэмжлэл."""
 from datetime import date
+from datetime import date as _date_t
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -7,6 +8,7 @@ from ..db import get_db
 from .. import models, schemas, serializers, auth
 from ..services import billing, pdfgen
 from ..services import audit
+from ..services import rebuild as rebuild_svc
 
 router = APIRouter(prefix="/api")
 
@@ -155,6 +157,133 @@ class ContractPatch(_BM):
     note: str | None = None
     end_date: date | None = None
     clear_end_date: bool = False
+    # Тооцоог бүхэлд нь хөдөлгөх талбарууд — зөвхөн менежер, дахин бодолттой
+    start_date: date | None = None
+    cycle_days: int | None = None
+    confirm: bool = False
+
+
+class MovementPatch(_BM):
+    # `date` талбарын нэр нь `date` төрлийг далдалдаг тул alias-аар зарлана
+    date: _date_t | None = None
+    note: str | None = None
+    confirm: bool = False
+
+
+class MovementLinePatch(_BM):
+    qty: float | None = None
+    rate: float | None = None
+    confirm: bool = False
+
+
+TIMELINE_ERR = "Хөдөлгөөний он цагийн дараалал зөрчигдөнө — үлдэгдэл сөрөг болно"
+
+
+def _timeline_ok(c: models.Contract, affected: set,
+                 mv_dates: dict | None = None, line_qty: dict | None = None) -> bool:
+    """Санал болгож буй засварын дараа үлдэгдэл ХЭЗЭЭ Ч сөрөг болохгүй эсэх.
+
+    Хамаарах (материал, зэрэглэл) бүрээр баталгаажсан хөдөлгөөнүүдийн огноот
+    өөрчлөлтийг дарааллаар нь нэмж явна. Ямар нэг үе шатанд 0-ээс доош унавал
+    тэр засвар бодит биш — 400.
+    """
+    mv_dates = mv_dates or {}
+    line_qty = line_qty or {}
+    evs: dict[tuple, list] = {}
+    for m in c.movements:
+        if m.status != "done":
+            continue
+        d = mv_dates.get(m.id, m.date)
+        for ln in m.lines:
+            key = (ln.material_id, ln.grade_id)
+            if key not in affected:
+                continue
+            q = line_qty.get(ln.id, ln.qty)
+            evs.setdefault(key, []).append(
+                (d, m.id, ln.id or 0, (1 if m.type == "ISSUE" else -1) * q))
+    for lst in evs.values():
+        lst.sort(key=lambda e: e[:3])
+        run = 0.0
+        for _d, _m, _l, dq in lst:
+            run += dq
+            if run < -0.001:
+                return False
+    return True
+
+
+def _touches_invoiced(c: models.Contract, days: list[date]) -> bool:
+    """Заасан огноонууд НЭХЭМЖЛЭГДСЭН тооцоонд нөлөөлөх үү?
+
+    Бараа гарсан/буцсан огноо нь ТҮҮНЭЭС ХОЙШ дуусах бүх циклийн ш×хоногийг
+    өөрчилдөг тул `cycle_end > огноо` бүхэн нөлөөлнө. Худалдааны нэхэмжлэл
+    (цикл нь нэг өдөр) тухайн өдрөөрөө таарна.
+    """
+    wins = [(i.cycle_start, i.cycle_end) for i in c.invoices if not i.no.startswith("OB-")]
+    for d in days:
+        for cs, ce in wins:
+            if ce > d or (cs == ce and cs == d):
+                return True
+    return False
+
+
+def _recompute_fees(db: Session, mv: models.Movement, ln: models.MovementLine):
+    """Буцаалт/актын мөрийн засвар, актын дүнг каталогоос ДАХИН бодно —
+    `add_movement`-тэй яг ижил томьёогоор."""
+    price = db.query(models.MaterialGradePrice).filter_by(
+        material_id=ln.material_id, grade_id=ln.grade_id).first()
+    if mv.type == "RETURN":
+        m = db.get(models.Material, ln.material_id)
+        ln.repair_fee = ln.repair_qty * (m.repair_fee if m else 0)
+        ln.writeoff_fee = ln.writeoff_qty * (price.nb_price if price else 0)
+    elif mv.type == "WRITEOFF":
+        ln.writeoff_fee = ln.qty * (price.nb_price if price else 0)
+
+
+def _apply_movement_edit(db: Session, mv: models.Movement, new_date=None, note=None,
+                         line: models.MovementLine | None = None,
+                         qty: float | None = None, rate: float | None = None):
+    """Хөдөлгөөнийг зас: нөөцөөс БУЦААЖ хас → утга сольж → дахин тусга."""
+    done = mv.status == "done"
+    if done:
+        billing.unapply_movement_stock(db, mv)
+    if new_date is not None:
+        mv.date = new_date
+    if note is not None:
+        mv.note = note
+    if line is not None:
+        if qty is not None:
+            line.qty = qty
+        if rate is not None:
+            line.rate = rate
+        _recompute_fees(db, mv, line)
+    if done:
+        billing.apply_movement_stock(db, mv)
+
+
+def _gated(db: Session, user, c: models.Contract, mutate, days: list[date],
+           confirm: bool, label: str):
+    """Засварын хаалга: нэхэмжлэгдээгүй бол чөлөөтэй, тэгэхгүй бол
+    баталгаажуулалт хүсэж (хуурай ажиллагаа) эсвэл дахин бодоно.
+
+    Буцна: (rebuilt | None, preview_response | None).
+    """
+    today = date.today()
+    if not _touches_invoiced(c, days):
+        mutate()
+        db.commit()
+        return None, None
+    if not confirm:
+        res = rebuild_svc.preview_rebuild(db, c, today, mutate)
+        return None, {"rebuild_required": True, "diffs": res["diffs"],
+                      "warnings": res["warnings"]}
+    mutate()
+    db.commit()
+    out = rebuild_svc.rebuild_contract_invoices(db, c, today)
+    audit.log(db, user, "rebuild", "invoice", c.id,
+              f"№{c.no}: {label} · {out['deleted']} нэхэмжлэл устгаж "
+              f"{out['created']} шинээр бодов"
+              + ("; " + " · ".join(out["warnings"]) if out["warnings"] else ""))
+    return out, None
 
 
 class ItemPatch(_BM):
@@ -170,21 +299,131 @@ class ItemPatch(_BM):
 @router.patch("/contracts/{cid}")
 def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
                    user=Depends(auth.require_roles("manager", "finance"))):
-    """Inline засвар — гэрээний нөхцөлүүд."""
+    """Inline засвар — гэрээний нөхцөлүүд.
+
+    `start_date` / `cycle_days` нь БҮХ тооцоог хөдөлгөнө: нэхэмжлэлтэй гэрээнд
+    эхлээд зөрүүг харуулж (rebuild_required), `confirm` ирсэн үед л дахин бодно.
+    """
     c = db.get(models.Contract, cid)
     if not c:
         raise HTTPException(404, "Гэрээ олдсонгүй")
     data = body.model_dump(exclude_unset=True)
     data.pop("clear_end_date", None)
-    before = {k: getattr(c, k) for k in data}
-    for k, v in data.items():
-        setattr(c, k, v)
-    if body.clear_end_date:
-        c.end_date = None
+    confirm = bool(data.pop("confirm", False))
+    heavy = {k: data.pop(k) for k in ("start_date", "cycle_days")
+             if data.get(k) is not None}
+    if heavy and getattr(user, "role", "") != "manager":
+        raise HTTPException(403, "Гэрээний эхлэх огноо, циклийг зөвхөн менежер өөрчилнө")
+    if heavy.get("cycle_days") is not None and heavy["cycle_days"] < 1:
+        raise HTTPException(400, "Циклийн хоног 1-ээс бага байж болохгүй")
+    fields = {**data, **heavy}
+    before = {k: getattr(c, k) for k in fields}
+
+    def mutate():
+        for k, v in data.items():
+            setattr(c, k, v)
+        if body.clear_end_date:
+            c.end_date = None
+        for k, v in heavy.items():
+            setattr(c, k, v)
+
+    if heavy:
+        rebuilt, preview = _gated(db, user, c, mutate, [date.min], confirm,
+                                  "гэрээний огноо/цикл")
+        if preview:
+            return preview
+        audit.log(db, user, "update", "contract", c.id,
+                  f"№{c.no}: " + (audit.changes_text(before, fields) or "clear_end_date"))
+        row = serializers.contract_row(c, date.today())
+        return {**row, "rebuilt": rebuilt} if rebuilt else row
+
+    mutate()
     db.commit()
     audit.log(db, user, "update", "contract", c.id,
-              f"№{c.no}: " + (audit.changes_text(before, data) or "clear_end_date"))
+              f"№{c.no}: " + (audit.changes_text(before, fields) or "clear_end_date"))
     return serializers.contract_row(c, date.today())
+
+
+@router.patch("/movements/{mid}")
+def patch_movement(mid: int, body: MovementPatch, db: Session = Depends(get_db),
+                   user=Depends(auth.require_roles("manager", "factory"))):
+    """Хөдөлгөөний огноо / тэмдэглэлийг засна (огноог зөвхөн менежер)."""
+    mv = db.get(models.Movement, mid)
+    if not mv:
+        raise HTTPException(404, "Хөдөлгөөн олдсонгүй")
+    c = mv.contract
+    new_date = body.date if body.date is not None else mv.date
+    moved = new_date != mv.date
+    if moved and getattr(user, "role", "") != "manager":
+        raise HTTPException(403, "Хөдөлгөөний огноог зөвхөн менежер өөрчилнө")
+    if moved and mv.status == "done":
+        keys = {(ln.material_id, ln.grade_id) for ln in mv.lines}
+        if not _timeline_ok(c, keys, mv_dates={mv.id: new_date}):
+            raise HTTPException(400, TIMELINE_ERR)
+    before = {"date": mv.date, "note": mv.note}
+    after = {"date": new_date, "note": body.note if body.note is not None else mv.note}
+    gmap, mmap = _maps(db)
+    # Хүлээгдэж буй ачилт тооцоо ч, нөөц ч хөдөлгөөгүй тул үргэлж чөлөөтэй.
+    days = [mv.date, new_date] if mv.status == "done" else []
+
+    def mutate():
+        _apply_movement_edit(db, mv, new_date=body.date, note=body.note)
+
+    rebuilt, preview = _gated(db, user, c, mutate, days, body.confirm,
+                              f"хөдөлгөөн #{mv.id}")
+    if preview:
+        return preview
+    audit.log(db, user, "update", "movement", mv.id,
+              f"№{c.no}: " + (audit.changes_text(before, after) or "өөрчлөлтгүй"))
+    db.refresh(mv)
+    out = serializers.movement(mv, gmap, mmap)
+    return {**out, "rebuilt": rebuilt} if rebuilt else out
+
+
+@router.patch("/movement-lines/{lid}")
+def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends(get_db),
+                        user=Depends(auth.require_roles("manager"))):
+    """Хөдөлгөөний мөрийн тоо / тарифыг засна (падан загварын гол засвар)."""
+    ln = db.get(models.MovementLine, lid)
+    if not ln:
+        raise HTTPException(404, "Мөр олдсонгүй")
+    mv = ln.movement
+    c = mv.contract
+    if body.qty is not None and body.qty <= 0:
+        raise HTTPException(400, "Тоо 0-ээс их байх ёстой")
+    if body.rate is not None:
+        if body.rate < 0:
+            raise HTTPException(400, "Тариф сөрөг байж болохгүй")
+        if mv.type != "ISSUE":
+            raise HTTPException(400, "Тариф зөвхөн олголтын мөрд тавигдана")
+    new_qty = body.qty if body.qty is not None else ln.qty
+    if mv.type == "RETURN" and ln.repair_qty + ln.writeoff_qty > new_qty + 0.001:
+        raise HTTPException(400, "Засвар + акт нь буцаалтын тооноос их байна")
+    if mv.status == "done" and body.qty is not None:
+        if not _timeline_ok(c, {(ln.material_id, ln.grade_id)}, line_qty={ln.id: new_qty}):
+            raise HTTPException(400, TIMELINE_ERR)
+        if mv.type == "ISSUE" and new_qty > ln.qty:
+            st = db.query(models.Stock).filter_by(material_id=ln.material_id,
+                                                  grade_id=ln.grade_id).first()
+            if not st or st.on_hand < new_qty - ln.qty:
+                raise HTTPException(400, "Агуулахад хүрэлцэхгүй")
+    before = {"qty": ln.qty, "rate": ln.rate}
+    after = {"qty": new_qty, "rate": body.rate if body.rate is not None else ln.rate}
+    gmap, mmap = _maps(db)
+    days = [mv.date] if mv.status == "done" else []
+
+    def mutate():
+        _apply_movement_edit(db, mv, line=ln, qty=body.qty, rate=body.rate)
+
+    rebuilt, preview = _gated(db, user, c, mutate, days, body.confirm,
+                              f"хөдөлгөөн #{mv.id} мөр #{lid}")
+    if preview:
+        return preview
+    audit.log(db, user, "update", "movement", mv.id,
+              f"№{c.no} мөр #{lid}: " + (audit.changes_text(before, after) or "өөрчлөлтгүй"))
+    db.refresh(mv)
+    out = serializers.movement(mv, gmap, mmap)
+    return {**out, "rebuilt": rebuilt} if rebuilt else out
 
 
 @router.patch("/contracts/{cid}/items")

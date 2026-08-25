@@ -219,57 +219,86 @@ def cycles_of(contract: models.Contract, today: date):
     return out
 
 
-def ensure_invoices(db: Session, contract: models.Contract, today: date | None = None):
-    """Дууссан цикл бүрд нэхэмжлэл автоматаар үүсгэнэ (байхгүй бол)."""
+def cycle_index(contract: models.Contract, cycle_start: date) -> int:
+    """Циклийн дугаар — гэрээний эхлэлээс тоологдоно (1-ээс эхэлнэ).
+
+    Байрлалаас (хэдэн нэхэмжлэл үүссэнээс) БИШ огнооноос гарна: иймд
+    нэхэмжлэлүүдийг устгаад дахин үүсгэхэд дугаар нь ЯГ ХЭВЭЭР үлдэнэ.
+    """
+    return (cycle_start - contract.start_date).days // contract.cycle_days + 1
+
+
+def derivable_invoice_specs(contract: models.Contract, today: date | None = None) -> list[dict]:
+    """Гэрээний өгөгдлөөс ГАРГАЖ БОЛОХ бүх нэхэмжлэлийн ЦЭВЭР жагсаалт.
+
+    DB-д юу ч бичихгүй — зөвхөн тооцоолно. `ensure_invoices` (нэмэх) ба
+    `services/rebuild.py` (дахин үүсгэх) хоёул ЭНЭ ЖАГСААЛТААС ажиллана, тул
+    "нэмэгдсэн" ба "дахин бодогдсон" нэхэмжлэл ялгаагүй байхыг баталгаажуулна.
+
+    Мөр бүр: no, cycle_start, cycle_end, due_date, rent_amount, charge_amount,
+    vat_amount, total, detail_json — models.Invoice-ийн талбарууд.
+    """
     today = today or date.today()
-    created = []
+    specs: list[dict] = []
     if contract.type == "sale":
+        # мөр бүр өөрийн нэгж үнэтэй; байхгүй бол гэрээний мөрийнхөөр
+        prices = default_rates(contract)
         for mv in contract.movements:
             if mv.type != "ISSUE" or mv.status != "done":
                 continue
-            no = f"S-{contract.no}-{mv.id}"
-            if any(i.no == no for i in contract.invoices):
-                continue
-            prices = {(it.material_id, it.grade_id): it.unit_price for it in contract.items}
-            amount = sum(ln.qty * prices.get((ln.material_id, ln.grade_id), 0) for ln in mv.lines)
+            amount = sum(ln.qty * line_rate(contract, ln, prices) for ln in mv.lines)
             detail = [{"material_id": ln.material_id, "grade_id": ln.grade_id, "qty": ln.qty,
-                       "rate": prices.get((ln.material_id, ln.grade_id), 0),
-                       "amount": ln.qty * prices.get((ln.material_id, ln.grade_id), 0)} for ln in mv.lines]
+                       "rate": line_rate(contract, ln, prices),
+                       "amount": ln.qty * line_rate(contract, ln, prices)} for ln in mv.lines]
             vat = amount * contract.vat_percent / 100
-            inv = models.Invoice(contract_id=contract.id, no=no, cycle_start=mv.date,
-                                 cycle_end=mv.date, due_date=mv.date,
-                                 rent_amount=amount, charge_amount=0, vat_amount=vat,
-                                 total=amount + vat, detail_json=json.dumps(detail))
-            # relationship-д нэмнэ — эс бөгөөс тухайн session дотор ачаалагдсан
-            # contract.invoices цуглуулга хуучирч, авлага буруу тооцогдоно.
-            contract.invoices.append(inv)
-            created.append(inv)
-        db.commit()
-        if created:
-            apply_client_credit(db, contract.client_id)
-        return created
+            specs.append({"no": f"S-{contract.no}-{mv.id}", "cycle_start": mv.date,
+                          "cycle_end": mv.date, "due_date": mv.date,
+                          "rent_amount": amount, "charge_amount": 0.0, "vat_amount": vat,
+                          "total": amount + vat, "detail_json": json.dumps(detail)})
+        return specs
 
-    existing = {(i.cycle_start, i.cycle_end) for i in contract.invoices}
-    seq = len(contract.invoices)
     for cs, ce, complete in cycles_of(contract, today):
-        if not complete or (cs, ce) in existing:
+        if not complete:
             continue
         rent, lines = accrue_rent(contract, cs, ce)
         charge, charge_items = charges_in(contract, cs, ce)
         if rent == 0 and charge == 0:
             continue
         vat = (rent + charge) * contract.vat_percent / 100
-        seq += 1
-        inv = models.Invoice(
-            contract_id=contract.id, no=f"R-{contract.no}-{seq}",
-            cycle_start=cs, cycle_end=ce, due_date=ce,
-            rent_amount=rent, charge_amount=charge, vat_amount=vat,
-            total=rent + charge + vat,
-            detail_json=json.dumps({"lines": lines, "charges": charge_items}))
-        contract.invoices.append(inv)      # session доторх цуглуулгыг шинэчилнэ
+        specs.append({"no": f"R-{contract.no}-{cycle_index(contract, cs)}",
+                      "cycle_start": cs, "cycle_end": ce, "due_date": ce,
+                      "rent_amount": rent, "charge_amount": charge, "vat_amount": vat,
+                      "total": rent + charge + vat,
+                      "detail_json": json.dumps({"lines": lines, "charges": charge_items})})
+    return specs
+
+
+def spec_key(contract: models.Contract, cycle_start: date, cycle_end: date, no: str):
+    """Нэхэмжлэлийн ӨВӨРМӨЦ түлхүүр: түрээс → цикл, худалдаа → дугаар."""
+    return no if contract.type == "sale" else (cycle_start, cycle_end)
+
+
+def ensure_invoices(db: Session, contract: models.Contract, today: date | None = None):
+    """Дууссан цикл бүрд нэхэмжлэл автоматаар үүсгэнэ (байхгүй бол).
+
+    ⚠ ЗӨВХӨН НЭМНЭ (append-only) — байгаа нэхэмжлэлд хэзээ ч хүрэхгүй, тул
+    олон GET зам дээр давтан дуудагдахад аюулгүй. Дахин бодолт (устгаад дахин
+    үүсгэх) нь `services/rebuild.py`-ийн ажил, зөвхөн засварын endpoint-оос.
+    """
+    today = today or date.today()
+    created = []
+    existing = {spec_key(contract, i.cycle_start, i.cycle_end, i.no) for i in contract.invoices}
+    for sp in derivable_invoice_specs(contract, today):
+        if spec_key(contract, sp["cycle_start"], sp["cycle_end"], sp["no"]) in existing:
+            continue
+        # relationship-д нэмнэ — эс бөгөөс тухайн session дотор ачаалагдсан
+        # contract.invoices цуглуулга хуучирч, авлага буруу тооцогдоно.
+        inv = models.Invoice(contract_id=contract.id, **sp)
+        contract.invoices.append(inv)
         created.append(inv)
-    if created:
+    if created or contract.type == "sale":
         db.commit()
+    if created:
         apply_client_credit(db, contract.client_id)
     return created
 
@@ -526,6 +555,32 @@ def apply_movement_stock(db: Session, mv: models.Movement):
         elif mv.type == "WRITEOFF":
             st.on_rent -= ln.qty
             st.written_off += ln.qty
+    db.commit()
+
+
+def unapply_movement_stock(db: Session, mv: models.Movement):
+    """`apply_movement_stock`-ийн ЯГ УРВУУ үйлдэл — хөдөлгөөнийг засахын өмнө.
+
+    Мөр бүрийн салбар (буцах зэрэглэл, засвар, акт, худалдаа) толин тусгал
+    байх ёстой: эс бөгөөс засварын дараа агуулахын үлдэгдэл гажина.
+    """
+    sale = mv.contract.type == "sale"
+    for ln in mv.lines:
+        st = _stock(db, ln.material_id, ln.grade_id)
+        if mv.type == "ISSUE":
+            st.on_hand += ln.qty
+            if not sale:
+                st.on_rent -= ln.qty
+        elif mv.type == "RETURN":
+            st.on_rent += ln.qty
+            back = ln.qty - ln.repair_qty - ln.writeoff_qty
+            tgt = _stock(db, ln.material_id, ln.return_grade_id or ln.grade_id)
+            tgt.on_hand -= max(back, 0)
+            tgt.in_repair -= ln.repair_qty
+            tgt.written_off -= ln.writeoff_qty
+        elif mv.type == "WRITEOFF":
+            st.on_rent += ln.qty
+            st.written_off -= ln.qty
     db.commit()
 
 

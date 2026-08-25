@@ -69,9 +69,10 @@ def contract_row(c: models.Contract, today: date):
 def movement(mv: models.Movement, gmap: dict, mmap: dict):
     return {"id": mv.id, "type": mv.type, "date": str(mv.date), "note": mv.note,
             "status": mv.status,
-            "lines": [{"material_id": l.material_id, "material": mmap.get(l.material_id, "?"),
+            "lines": [{"id": l.id,
+                       "material_id": l.material_id, "material": mmap.get(l.material_id, "?"),
                        "grade_id": l.grade_id, "grade": gmap.get(l.grade_id, "?"),
-                       "qty": l.qty,
+                       "qty": l.qty, "rate": l.rate,
                        "return_grade": gmap.get(l.return_grade_id) if l.return_grade_id else None,
                        "repair_qty": l.repair_qty, "repair_fee": l.repair_fee,
                        "writeoff_qty": l.writeoff_qty, "writeoff_fee": l.writeoff_fee}

@@ -219,6 +219,172 @@ def test_contract_detail_groups_items_by_rate(client, as_role):
 
 # ---------- Хөдөлгөөн засах (X5) ----------
 
+def _movements(client, h, cid):
+    return client.get(f"/api/contracts/{cid}", headers=h).json()["movements"]
+
+
+def test_movement_line_edit_free_when_uninvoiced(client, as_role):
+    """Нэхэмжлэгдээгүй циклийн хөдөлгөөнийг ЧӨЛӨӨТЭЙ засна — дахин бодолт хэрэггүй.
+
+    100ш → 120ш: агуулахын нөөц (on_rent) шууд дагана, өдрийн тооцоо шинэчлэгдэнэ.
+    Буцаалтын мөр засагдахад засварын дүн каталогоос ДАХИН бодогдоно.
+    """
+    h = as_role("otgoo")
+    _, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    _confirm_pending(client, as_role, cid)
+    before = next(s for s in next(x for x in client.get("/api/materials", headers=h).json()
+                                  if x["id"] == m["id"])["stock"] if s["grade"] == "А")
+    assert before["on_rent"] >= 100
+
+    issue = next(x for x in _movements(client, h, cid) if x["type"] == "ISSUE")
+    r = client.patch(f"/api/movement-lines/{issue['lines'][0]['id']}", headers=h,
+                     json={"qty": 120})
+    assert r.status_code == 200, r.text
+    assert "rebuild_required" not in r.json()
+
+    after = next(s for s in next(x for x in client.get("/api/materials", headers=h).json()
+                                 if x["id"] == m["id"])["stock"] if s["grade"] == "А")
+    assert after["on_rent"] == before["on_rent"] + 20
+    assert after["on_hand"] == before["on_hand"] - 20
+    det = client.get(f"/api/contracts/{cid}", headers=h).json()
+    assert det["day_amount"] == 120 * 330
+    assert det["invoices"] == []
+
+    # буцаалтын мөр: 40ш буцав, 10 нь засварт → 150,000₮
+    grades = client.get("/api/grades", headers=h).json()
+    gB = next(g["id"] for g in grades if g["code"] == "В")
+    bB = next(s for s in next(x for x in client.get("/api/materials", headers=h).json()
+                              if x["id"] == m["id"])["stock"] if s["grade"] == "В")
+    assert client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": iso(0),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 40,
+                   "return_grade_id": gB, "repair_qty": 10}]}).status_code == 200
+    ret = next(x for x in _movements(client, h, cid) if x["type"] == "RETURN")
+    assert ret["lines"][0]["repair_fee"] == 10 * 15000
+
+    r2 = client.patch(f"/api/movement-lines/{ret['lines'][0]['id']}", headers=h,
+                      json={"qty": 30})
+    assert r2.status_code == 200, r2.text
+    det2 = client.get(f"/api/contracts/{cid}", headers=h).json()
+    ret2 = next(x for x in det2["movements"] if x["type"] == "RETURN")
+    assert ret2["lines"][0]["qty"] == 30
+    assert ret2["lines"][0]["repair_fee"] == 10 * 15000     # каталогоос дахин бодогдов
+    assert det2["items"][0]["qty"] == 90                    # 120 − 30
+    # нөөц ЯГ УРВУУГААР буцаж дахин тусгагдав (30 = 20 бүтэн + 10 засварт)
+    mat = next(x for x in client.get("/api/materials", headers=h).json() if x["id"] == m["id"])
+    sA = next(s for s in mat["stock"] if s["grade"] == "А")
+    sB = next(s for s in mat["stock"] if s["grade"] == "В")
+    assert sA["on_rent"] == before["on_rent"] + 20 - 30
+    assert sB["in_repair"] == bB["in_repair"] + 10
+    assert sB["on_hand"] == bB["on_hand"] + 20
+
+
+def test_movement_edit_into_invoiced_cycle_dry_run_then_confirm(client, as_role):
+    """Нэхэмжлэгдсэн циклийн тоог засахад ЭХЛЭЭД зөрүүг харуулна (юу ч хадгалахгүй),
+    зөвхөн баталгаажуулсны дараа нэхэмжлэл дахин бодогдоно.
+
+    100ш → 90ш: 990,000₮ → 891,000₮. Төлсөн мөнгө шинэ нэхэмжлэлдээ дагаж очно."""
+    h = as_role("otgoo")
+    hf = as_role("sanhuu")
+    _, cid, m, st = make_contract(client, as_role, days_ago=40, qty=100)
+    _confirm_pending(client, as_role, cid)
+    client_id = client.get(f"/api/contracts/{cid}", headers=h).json()["client_id"]
+    inv = _invoices(client, h, cid)[0]
+    assert inv["total"] == 990_000
+    assert client.post("/api/payments", headers=hf, json={
+        "client_id": client_id, "contract_id": cid, "date": iso(0),
+        "amount": 990_000, "method": "BANK"}).status_code == 200
+    assert _invoices(client, h, cid)[0]["paid"] == 990_000
+
+    issue = next(x for x in _movements(client, h, cid) if x["type"] == "ISSUE")
+    lid = issue["lines"][0]["id"]
+
+    dry = client.patch(f"/api/movement-lines/{lid}", headers=h, json={"qty": 90})
+    assert dry.status_code == 200, dry.text
+    assert dry.json()["rebuild_required"] is True
+    d = dry.json()["diffs"]
+    assert len(d) == 1 and d[0]["old_total"] == 990_000 and d[0]["new_total"] == 891_000
+    # ХУУРАЙ ажиллагаа — DB хөндөгдөөгүй
+    assert _invoices(client, h, cid)[0]["total"] == 990_000
+    assert client.get(f"/api/contracts/{cid}", headers=h).json()["day_amount"] == 100 * 330
+
+    ok = client.patch(f"/api/movement-lines/{lid}", headers=h,
+                      json={"qty": 90, "confirm": True})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["rebuilt"]["created"] == 1 and ok.json()["rebuilt"]["deleted"] == 1
+    inv2 = _invoices(client, h, cid)[0]
+    assert inv2["total"] == 891_000
+    assert inv2["paid"] == 891_000            # төлбөр дагав
+    with db_session() as db:
+        from app import models
+        assert db.query(models.PaymentAllocation).count() >= 1
+
+
+def test_movement_date_edit_rejects_negative_timeline(client, as_role):
+    """Огноог урагшлуулбал буцаалт нь олголтоос ӨМНӨ болж үлдэгдэл сөрөг болно —
+    ийм засварыг систем хүлээж авахгүй (нягт → цэвэрхэн)."""
+    h = as_role("otgoo")
+    _, cid, m, st = make_contract(client, as_role, days_ago=20, qty=100)
+    _confirm_pending(client, as_role, cid)
+    assert client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": iso(10),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 40}]
+    }).status_code == 200
+
+    issue = next(x for x in _movements(client, h, cid) if x["type"] == "ISSUE")
+    r = client.patch(f"/api/movements/{issue['id']}", headers=h, json={"date": iso(5)})
+    assert r.status_code == 400
+    assert "он цагийн дараалал" in r.json()["detail"]
+    again = next(x for x in _movements(client, h, cid) if x["type"] == "ISSUE")
+    assert again["date"] == issue["date"]          # огноо хөндөгдөөгүй
+
+
+def test_contract_start_date_gated(client, as_role):
+    """Гэрээний эхлэх огноо: нэхэмжлэлтэй бол баталгаажуулалт шаардана,
+    нэхэмжлэлгүй бол шууд солигдоно."""
+    h = as_role("otgoo")
+    _, cid, m, st = make_contract(client, as_role, days_ago=40, qty=100)
+    _confirm_pending(client, as_role, cid)
+    assert _invoices(client, h, cid)[0]["total"] == 990_000
+
+    dry = client.patch(f"/api/contracts/{cid}", headers=h,
+                       json={"start_date": iso(45)})
+    assert dry.status_code == 200, dry.text
+    assert dry.json()["rebuild_required"] is True
+    assert any(x["new_total"] == 825_000 for x in dry.json()["diffs"])   # 100×330×25
+    assert client.get(f"/api/contracts/{cid}", headers=h).json()["start_date"] == iso(40)
+
+    ok = client.patch(f"/api/contracts/{cid}", headers=h,
+                      json={"start_date": iso(45), "confirm": True})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["rebuilt"]["created"] >= 1
+    det = client.get(f"/api/contracts/{cid}", headers=h).json()
+    assert det["start_date"] == iso(45)
+    assert sorted(i["total"] for i in det["invoices"])[0] == 825_000
+
+    # нэхэмжлэлгүй гэрээнд шууд
+    _, cid2, *_ = make_contract(client, as_role, days_ago=5, qty=10)
+    free = client.patch(f"/api/contracts/{cid2}", headers=h, json={"start_date": iso(8)})
+    assert free.status_code == 200 and "rebuild_required" not in free.json()
+    assert client.get(f"/api/contracts/{cid2}", headers=h).json()["start_date"] == iso(8)
+
+
+def test_audit_entities_movement_invoice(client, as_role):
+    """Хөдөлгөөний засвар ба дахин бодолт БҮГД аудитад үлдэнэ."""
+    h = as_role("otgoo")
+    _, cid, m, st = make_contract(client, as_role, days_ago=40, qty=100)
+    _confirm_pending(client, as_role, cid)
+    _invoices(client, h, cid)
+    issue = next(x for x in _movements(client, h, cid) if x["type"] == "ISSUE")
+    assert client.patch(f"/api/movement-lines/{issue['lines'][0]['id']}", headers=h,
+                        json={"qty": 90, "confirm": True}).status_code == 200
+
+    mvs = client.get("/api/audit?entity=movement", headers=h).json()
+    invs = client.get("/api/audit?entity=invoice", headers=h).json()
+    assert any(r["action"] == "update" for r in mvs)
+    assert any(r["action"] == "rebuild" for r in invs)
+
+
 # ---------- Төлбөр ----------
 
 def test_payment_validation(client, as_role):

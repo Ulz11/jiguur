@@ -9,11 +9,13 @@ const ACTIONS: Record<string, [string, string]> = {
   confirm: ["Баталгаажуулсан", "pill-green"],
   stocktake: ["Тооллого", "pill-amber"],
   settle_deposit: ["Барьцаа тооцсон", "pill-violet"],
+  rebuild: ["Дахин бодсон", "pill-violet"],
 };
 const ENTITIES: Record<string, string> = {
   contract: "Гэрээ", contract_item: "Гэрээний мөр", payment: "Төлбөр", stock: "Агуулах",
   collection_note: "Тэмдэглэл", loan: "Зээл", barter: "Бартер", salary: "Цалин",
   material: "Материал", grade: "Зэрэглэл", settings: "Тохиргоо", client: "Харилцагч",
+  movement: "Хөдөлгөөн", invoice: "Нэхэмжлэл",
 };
 
 export default function Audit() {
