@@ -91,7 +91,12 @@ def month_bounds(y: int, m: int):
 
 def cashflow_series(db: Session, today: date, n: int = 6):
     """Сүүлийн n сарын мөнгөн урсгал: орсон (харилцагчийн төлбөр + механизм)
-    ба гарсан (механизмын зарлага + хүү + олгосон цалин)."""
+    ба гарсан (механизмын зарлага + хүү + олгосон цалин).
+
+    Орсон дүн нь төлбөрийн хэлбэрээр задарна: бэлэн / данс / бартер.
+    Механизмын ажлын хэлбэргүй ("") хуучин бичлэг → данс; INTERNAL (дотоод
+    ажил) нь урсгалд ОГТ ОРОХГҮЙ (өмнөх зан төлөв хэвээр).
+    `cash_in` = гурван задаргааны нийлбэр (хуучин хэрэглэгчид эвдрэхгүй)."""
     keys = []
     y, m = today.year, today.month
     for _ in range(n):
@@ -101,13 +106,21 @@ def cashflow_series(db: Session, today: date, n: int = 6):
             y, m = y - 1, 12
     keys.reverse()
     months, cin, cout = [], [], []
+    f_cash, f_bank, f_barter = [], [], []
     for (y, m) in keys:
         d1, d2 = month_bounds(y, m)
-        pay_in = sum(p.amount for p in db.query(models.Payment).filter(
-            models.Payment.date >= d1, models.Payment.date <= d2).all())
+        pays = db.query(models.Payment).filter(
+            models.Payment.date >= d1, models.Payment.date <= d2).all()
         logs = db.query(models.MachineLog).filter(
             models.MachineLog.date >= d1, models.MachineLog.date <= d2).all()
-        mach_in = sum(l.amount for l in logs if l.entry == "job" and l.method != "INTERNAL")
+        jobs = [l for l in logs if l.entry == "job" and l.method != "INTERNAL"]
+        in_cash = (sum(p.amount for p in pays if p.method == "CASH")
+                   + sum(l.amount for l in jobs if l.method == "CASH"))
+        in_barter = (sum(p.amount for p in pays if p.method == "BARTER")
+                     + sum(l.amount for l in jobs if l.method == "BARTER"))
+        # Данс = BANK + аль ч ангилалд хамаарахгүй үлдсэн нь (хэлбэргүй хуучин бичлэг)
+        in_bank = (sum(p.amount for p in pays if p.method not in ("CASH", "BARTER"))
+                   + sum(l.amount for l in jobs if l.method not in ("CASH", "BARTER")))
         mach_out = sum(l.amount for l in logs if l.entry == "expense")
         interest = sum(p.amount for p in db.query(models.LoanPayment).filter(
             models.LoanPayment.part == "interest",
@@ -117,6 +130,10 @@ def cashflow_series(db: Session, today: date, n: int = 6):
             if run.paid_date and d1 <= run.paid_date <= d2:
                 sal += sum(i.net for i in run.items)
         months.append(f"{m}-р")
-        cin.append(round(pay_in + mach_in))
+        f_cash.append(round(in_cash))
+        f_bank.append(round(in_bank))
+        f_barter.append(round(in_barter))
+        cin.append(f_cash[-1] + f_bank[-1] + f_barter[-1])
         cout.append(round(mach_out + interest + sal))
-    return {"months": months, "cash_in": cin, "cash_out": cout}
+    return {"months": months, "cash_in": cin, "cash_out": cout,
+            "inflow_cash": f_cash, "inflow_bank": f_bank, "inflow_barter": f_barter}

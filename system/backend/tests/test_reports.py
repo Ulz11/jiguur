@@ -157,6 +157,57 @@ def test_opening_balance_not_counted_as_income(db):
     assert p["net"] == 8_000_000
 
 
+def test_cashflow_split_by_method_controlled(db):
+    """Мөнгөн урсгалын ОРСОН дүн төлбөрийн хэлбэрээр задарна: бэлэн / данс / бартер.
+    Механизмын ажил ч мөн адил (INTERNAL = дотоод ажил, огт тооцогдохгүй;
+    хэлбэргүй ("") хуучин бичлэг → данс). cash_in нь гурвын НИЙЛБЭР хэвээр."""
+    from app.services import reports as R
+
+    today = date(2026, 7, 15)
+    d0 = date(2026, 7, 1)
+
+    cl = models.Client(name="Хэлбэрийн тест")
+    db.add(cl)
+    db.flush()
+    c = models.Contract(no="r7", client_id=cl.id, type="rent",
+                        start_date=date(2026, 6, 1), penalty_percent=0.5)
+    db.add(c)
+    db.flush()
+    # Харилцагчийн төлбөр: бэлэн 1.0 сая, данс 2.5 сая, бартер 0.7 сая
+    db.add(models.Payment(client_id=cl.id, contract_id=c.id, date=d0,
+                          amount=1_000_000, method="CASH"))
+    db.add(models.Payment(client_id=cl.id, contract_id=c.id, date=d0,
+                          amount=2_500_000, method="BANK"))
+    db.add(models.Payment(client_id=cl.id, contract_id=c.id, date=d0,
+                          amount=700_000, method="BARTER",
+                          barter_desc="Автомашин 9957УКК"))
+    # Механизм
+    m = models.Machine(name="Экскаватор")
+    db.add(m)
+    db.flush()
+    db.add(models.MachineLog(machine_id=m.id, date=d0, entry="job",
+                             label="Хагас өдөр", amount=300_000, method="CASH"))
+    db.add(models.MachineLog(machine_id=m.id, date=d0, entry="job",
+                             label="Дотоод", amount=400_000, method="INTERNAL"))
+    db.add(models.MachineLog(machine_id=m.id, date=d0, entry="job",
+                             label="Бүтэн өдөр", amount=200_000, method=""))
+    db.add(models.MachineLog(machine_id=m.id, date=d0, entry="expense",
+                             label="Түлш", amount=500_000))
+    db.commit()
+
+    s = R.cashflow_series(db, today)
+    i = len(s["months"]) - 1                       # энэ сар = цувралын сүүлийн нүд
+    assert s["inflow_cash"][i] == 1_300_000        # 1.0 сая төлбөр + 0.3 сая механизм
+    assert s["inflow_bank"][i] == 2_700_000        # 2.5 сая төлбөр + 0.2 сая ("" → данс)
+    assert s["inflow_barter"][i] == 700_000
+    assert s["cash_in"][i] == 4_700_000            # INTERNAL 0.4 сая ОРООГҮЙ
+    assert s["cash_in"][i] == (s["inflow_cash"][i] + s["inflow_bank"][i]
+                               + s["inflow_barter"][i])
+    assert s["cash_out"][i] == 500_000
+    for k in ("inflow_cash", "inflow_bank", "inflow_barter"):
+        assert len(s[k]) == len(s["months"])
+
+
 def test_reports_api_and_export(client, as_role):
     h = as_role("otgoo")
     r = client.get("/api/reports?months=6", headers=h)

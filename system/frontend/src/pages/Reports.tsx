@@ -125,14 +125,8 @@ export default function Reports() {
         <div className="card p-6 col-span-7 max-lg:col-span-12">
           <div className="flex items-center justify-between mb-1">
             <h3 className="font-bold text-ink text-[14px] flex items-center gap-2"><span className="cdot" />Мөнгөн урсгал — сүүлийн 6 сар</h3>
-            <div className="flex gap-4">
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-t2">
-                <i className="w-2.5 h-2.5 rounded-[3px]" style={{ background: "#2BBA82" }} />Орсон</span>
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-t2">
-                <i className="w-2.5 h-2.5 rounded-[3px]" style={{ background: "#E5484D" }} />Гарсан</span>
-            </div>
           </div>
-          <p className="text-[11.5px] text-t3 mb-4">Орсон: харилцагчийн төлбөр + механизм · Гарсан: зарлага + хүү + цалин</p>
+          <p className="text-[11.5px] text-t3 mb-3">Орсон: харилцагчийн төлбөр + механизм · Гарсан: зарлага + хүү + цалин</p>
           <CashBars s={d.series} />
         </div>
       </div>
@@ -162,39 +156,89 @@ function Total({ label, val, tone }: any) {
   );
 }
 
-function CashBars({ s }: { s: { months: string[]; cash_in: number[]; cash_out: number[] } }) {
+const CASH_C = "#1f8b69", BANK_C = "#253886", BARTER_C = "#f88712", OUT_C = "#E5484D";
+
+function CashBars({ s }: {
+  s: {
+    months: string[]; cash_in: number[]; cash_out: number[];
+    inflow_cash?: number[]; inflow_bank?: number[]; inflow_barter?: number[];
+  }
+}) {
+  // Задаргаагүй хуучин payload ирвэл нэг бүхэл “орсон” багана харагдана — хуудас унахгүй
+  const fc = s.inflow_cash || [], fb = s.inflow_bank || [], fr = s.inflow_barter || [];
+  const split = fc.length > 0 || fb.length > 0 || fr.length > 0;
+  const sum = (a: number[]) => a.reduce((x, v) => x + (v || 0), 0);
+  const moneyIn = sum(fc) + sum(fb), barterIn = sum(fr);
+
   const max = Math.max(...s.cash_in, ...s.cash_out, 1);
   const W = 620, H = 250, P = { l: 54, r: 10, t: 14, b: 28 };
   const bw = (W - P.l - P.r) / s.months.length;
   const y = (v: number) => H - P.b - (v / (max * 1.15)) * (H - P.t - P.b);
+  const hOf = (v: number) => Math.max(H - P.b - y(v), 0);
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block">
-      {[0, 1, 2, 3].map((g) => {
-        const gy = P.t + (g * (H - P.t - P.b)) / 3;
-        const gv = max * 1.15 * (1 - g / 3);
-        return (
-          <g key={g}>
-            <line x1={P.l} x2={W - P.r} y1={gy} y2={gy} stroke="var(--color-line)" strokeDasharray="3 4" />
-            <text x={P.l - 8} y={gy + 4} textAnchor="end" fontSize="10" fill="var(--color-t3)">{sayaFmt(gv)}</text>
-          </g>
-        );
-      })}
-      {s.months.map((m, i) => {
-        const x0 = P.l + i * bw;
-        return (
-          <g key={m + i}>
-            <rect x={x0 + bw * 0.16} y={y(s.cash_in[i])} width={bw * 0.3}
-                  height={Math.max(H - P.b - y(s.cash_in[i]), 0)} rx="5" fill="#2BBA82">
-              <title>{`${m}: орсон ${money(s.cash_in[i])}`}</title>
-            </rect>
-            <rect x={x0 + bw * 0.54} y={y(s.cash_out[i])} width={bw * 0.3}
-                  height={Math.max(H - P.b - y(s.cash_out[i]), 0)} rx="5" fill="#E5484D" opacity="0.85">
-              <title>{`${m}: гарсан ${money(s.cash_out[i])}`}</title>
-            </rect>
-            <text x={x0 + bw / 2} y={H - 8} textAnchor="middle" fontSize="11" fill="var(--color-t3)">{m}</text>
-          </g>
-        );
-      })}
-    </svg>
+    <>
+      <div className="flex items-center gap-x-4 gap-y-1.5 flex-wrap mb-2">
+        {[["Бэлэн", CASH_C], ["Данс", BANK_C], ["Бартер", BARTER_C], ["Гарсан", OUT_C]].map(([lb, c]) => (
+          <span key={lb} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-t2">
+            <i className="w-2.5 h-2.5 rounded-[3px]" style={{ background: c }} />{lb}
+          </span>
+        ))}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block">
+        {[0, 1, 2, 3].map((g) => {
+          const gy = P.t + (g * (H - P.t - P.b)) / 3;
+          const gv = max * 1.15 * (1 - g / 3);
+          return (
+            <g key={g}>
+              <line x1={P.l} x2={W - P.r} y1={gy} y2={gy} stroke="var(--color-line)" strokeDasharray="3 4" />
+              <text x={P.l - 8} y={gy + 4} textAnchor="end" fontSize="10" fill="var(--color-t3)">{sayaFmt(gv)}</text>
+            </g>
+          );
+        })}
+        {s.months.map((m, i) => {
+          const x0 = P.l + i * bw, ix = x0 + bw * 0.16, iw = bw * 0.3;
+          const segs = split
+            ? [{ lb: "бэлэн", c: CASH_C, v: fc[i] || 0 },
+               { lb: "данс", c: BANK_C, v: fb[i] || 0 },
+               { lb: "бартер", c: BARTER_C, v: fr[i] || 0 }]
+            : [{ lb: "орсон", c: CASH_C, v: s.cash_in[i] || 0 }];
+          const inTot = segs.reduce((x, sg) => x + sg.v, 0);
+          let acc = 0;
+          return (
+            <g key={m + i}>
+              {/* Багана бүрийг нэг бүхэл дугуй ирмэгт багтаана — сегментүүд эвгүй тасрахгүй */}
+              <clipPath id={`cin${i}`}>
+                <rect x={ix} y={y(inTot)} width={iw} height={hOf(inTot)} rx="5" />
+              </clipPath>
+              <g clipPath={`url(#cin${i})`}>
+                {segs.map((sg) => {
+                  const h = hOf(sg.v);
+                  if (h <= 0) return null;
+                  const sy = H - P.b - acc - h;
+                  acc += h;
+                  return (
+                    <rect key={sg.lb} x={ix} y={sy} width={iw} height={h} fill={sg.c}>
+                      <title>{`${m}: ${sg.lb} ${money(sg.v)}`}</title>
+                    </rect>
+                  );
+                })}
+              </g>
+              <rect x={x0 + bw * 0.54} y={y(s.cash_out[i])} width={bw * 0.3}
+                    height={Math.max(H - P.b - y(s.cash_out[i]), 0)} rx="5" fill={OUT_C} opacity="0.85">
+                <title>{`${m}: гарсан ${money(s.cash_out[i])}`}</title>
+              </rect>
+              <text x={x0 + bw / 2} y={H - 8} textAnchor="middle" fontSize="11" fill="var(--color-t3)">{m}</text>
+            </g>
+          );
+        })}
+      </svg>
+      {split && (
+        <p className="text-[11.5px] text-t3 mt-2 tabular-nums">
+          мөнгөн (бэлэн+данс): <b className="text-t2">{sayaFmt(moneyIn)}₮</b>
+          {" · "}бартер: <b className="text-t2">{sayaFmt(barterIn)}₮</b>
+        </p>
+      )}
+    </>
   );
 }
