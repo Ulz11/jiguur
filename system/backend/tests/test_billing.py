@@ -305,3 +305,128 @@ def test_sale_invoice_uses_line_rate(db):
 
 # ---------- Бүртгэгдсэн (booked) алданги ----------
 
+def _overdue_invoice(db, today=date(2026, 4, 29)):
+    """3.20-нд 100ш×330₮ гарсан → 4.19-нд дуусах 990,000₮-ийн нэхэмжлэл."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20), [dict(material_id=m.id, grade_id=ga.id, qty=100)])
+    billing.ensure_invoices(db, c, today)
+    db.refresh(c)
+    inv = c.invoices[0]
+    assert inv.total == pytest.approx(990_000) and inv.due_date == date(2026, 4, 19)
+    return c, inv
+
+
+def test_penalty_booking_crystallizes(db):
+    """Алданги БҮРТГЭГДЭХДЭЭ хөлддөг: 4.29-нд бүртгэхэд 990,000×0.005×10 = 49,500₮.
+    Дараа нь 500,000₮ төлөөд 5.9-нд дахин бүртгэхэд үлдэгдлээр нь 24,500₮ нэмэгдэж
+    НИЙТ 74,000₮ болно — хуучин амьд томьёо бол 490,000×0.005×20 = 49,000₮ болж
+    БУУРАХ байсан (хэсэгчилсэн төлөлт өнгөрсний алдангийг УСТГАДАГ байв)."""
+    c, inv = _overdue_invoice(db)
+
+    billing.book_penalties(db, c.client_id, date(2026, 4, 29))
+    db.refresh(inv)
+    assert inv.penalty_booked == pytest.approx(49_500)
+    assert inv.penalty_booked_until == date(2026, 4, 29)
+
+    p = models.Payment(client_id=c.client_id, contract_id=c.id, date=date(2026, 4, 29),
+                       amount=500_000, method="BANK")
+    db.add(p)
+    db.commit()
+    billing.allocate_payment(db, p)
+    db.refresh(inv)
+    assert billing.invoice_outstanding(inv) == pytest.approx(490_000)
+
+    billing.book_penalties(db, c.client_id, date(2026, 5, 9))
+    db.refresh(inv)
+    assert inv.penalty_booked == pytest.approx(49_500 + 490_000 * 0.005 * 10)
+    assert inv.penalty_booked == pytest.approx(74_000)
+    assert billing.invoice_penalty_due(inv) == pytest.approx(74_000)
+    assert billing.invoice_penalty(inv, date(2026, 5, 9)) == pytest.approx(74_000)
+    # хоёр дахь удаа тэр өдрөөрөө бүртгэхэд ЮУ Ч нэмэгдэхгүй (idempotent)
+    billing.book_penalties(db, c.client_id, date(2026, 5, 9))
+    db.refresh(inv)
+    assert inv.penalty_booked == pytest.approx(74_000)
+
+
+def test_penalty_display_booked_plus_live(db):
+    """Харагдац = БҮРТГЭГДСЭН + бүртгэсэн өдрөөс хойшхи АМЬД алданги.
+    4.29-нд 49,500₮ бүртгэгдсэн бол 5.4-нд 49,500 + 990,000×0.005×5 = 74,250₮."""
+    c, inv = _overdue_invoice(db)
+    billing.book_penalties(db, c.client_id, date(2026, 4, 29))
+    db.refresh(inv)
+    assert billing.invoice_penalty(inv, date(2026, 5, 4)) == pytest.approx(
+        49_500 + 990_000 * 0.005 * 5)
+    assert billing.invoice_penalty(inv, date(2026, 5, 4)) == pytest.approx(74_250)
+
+
+def test_booked_penalty_survives_full_principal_payment(db):
+    """Үндсэн төлбөрөө БҮТЭН төлсөн ч бүртгэгдсэн алданги арилахгүй —
+    нэхэмжлэл 'penalty' (Алданги үлдсэн) төлөвт орно."""
+    c, inv = _overdue_invoice(db)
+    billing.book_penalties(db, c.client_id, date(2026, 4, 29))
+    p = models.Payment(client_id=c.client_id, contract_id=c.id, date=date(2026, 4, 29),
+                       amount=990_000, method="BANK")
+    db.add(p)
+    db.commit()
+    billing.allocate_payment(db, p)
+    db.refresh(inv)
+
+    assert billing.invoice_outstanding(inv) == pytest.approx(0)
+    assert billing.invoice_penalty_due(inv) == pytest.approx(49_500)
+    assert billing.invoice_status(inv, date(2026, 4, 29)) == "penalty"
+    assert inv.status == "penalty"
+    # үндсэн дүн хаагдсан тул алданги ЦААШ ӨСӨХГҮЙ
+    assert billing.invoice_penalty(inv, date(2026, 5, 9)) == pytest.approx(49_500)
+
+
+def test_allocation_per_invoice_closure(db):
+    """Хуваарилалт нэхэмжлэл БҮРИЙГ БҮТНЭЭР хаана: хуучин нэхэмжлэлийн үндсэн дүн →
+    ТҮҮНИЙ алданги → дараагийн нэхэмжлэл. 5.29-нд 1-р нэхэмжлэл 40 хоног (198,000₮),
+    2-р нь 10 хоног (49,500₮) хэтэрсэн. 990,000 + 198,000 + 30,000 = 1,218,000₮
+    төлөхөд 1-р нэхэмжлэл алдангитайгаа бүрэн хаагдаж, 30,000₮ нь 2-р нэхэмжлэлийн
+    ҮНДСЭН дүн рүү орно (алданги руу нь ОРОХГҮЙ)."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20), [dict(material_id=m.id, grade_id=ga.id, qty=100)])
+    billing.ensure_invoices(db, c, date(2026, 5, 25))
+    db.refresh(c)
+    inv1, inv2 = sorted(c.invoices, key=lambda i: i.due_date)
+    assert (inv1.due_date, inv2.due_date) == (date(2026, 4, 19), date(2026, 5, 19))
+
+    billing.book_penalties(db, c.client_id, date(2026, 5, 29))
+    db.refresh(inv1); db.refresh(inv2)
+    assert inv1.penalty_booked == pytest.approx(198_000)   # 990,000 × 0.005 × 40
+    assert inv2.penalty_booked == pytest.approx(49_500)    # 990,000 × 0.005 × 10
+
+    p = models.Payment(client_id=c.client_id, contract_id=c.id, date=date(2026, 5, 29),
+                       amount=990_000 + 198_000 + 30_000, method="BANK")
+    db.add(p)
+    db.commit()
+    billing.allocate_payment(db, p)
+    db.refresh(inv1); db.refresh(inv2)
+
+    rows = sorted(p.allocations, key=lambda a: a.id)
+    assert [(r.invoice_id, r.part) for r in rows] == [
+        (inv1.id, "principal"), (inv1.id, "penalty"), (inv2.id, "principal")]
+    assert [r.amount for r in rows] == [pytest.approx(990_000), pytest.approx(198_000),
+                                        pytest.approx(30_000)]
+    assert all(r.manual == 0 for r in rows)
+    assert billing.invoice_status(inv1, date(2026, 5, 29)) == "paid"   # алданги нь ч хаагдсан
+    assert inv2.paid == pytest.approx(30_000)
+    assert inv2.penalty_paid == pytest.approx(0)
+
+
+def test_ob_contract_books_zero(db):
+    """Хуучин системээс шилжсэн үлдэгдэлд (OB, penalty_percent=0) алданги
+    БҮРТГЭГДЭХГҮЙ — 500 сая авлага 50 хоног хэвтсэн ч 0 хэвээр."""
+    from app.services import migration as M
+    cl = models.Client(name="Хуучин харилцагч")
+    db.add(cl)
+    db.commit()
+    inv = M.create_opening_balance(db, cl, 500_000_000, date(2026, 3, 20))
+
+    billing.book_penalties(db, cl.id, date(2026, 5, 9))
+    db.refresh(inv)
+
+    assert inv.penalty_booked == pytest.approx(0)
+    assert inv.penalty_booked_until is None
+    assert billing.invoice_penalty(inv, date(2026, 5, 9)) == pytest.approx(0)

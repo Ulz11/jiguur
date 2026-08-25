@@ -88,6 +88,7 @@ export function StatePill({ state }: { state: string }) {
     ending: ["pill-amber", "Дуусах дөхсөн"],
     closed: ["pill-grey", "Хаагдсан"],
     paid: ["pill-green", "Төлөгдсөн"],
+    penalty: ["pill-amber", "Алданги үлдсэн"],
     partial: ["pill-amber", "Хэсэгчлэн"],
     open: ["pill-blue", "Нээлттэй"],
     pending: ["pill-amber", "Хүлээгдэж буй"],

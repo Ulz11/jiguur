@@ -44,7 +44,11 @@ def settle_deposit(cid: int, body: DepositSettleIn, db: Session = Depends(get_db
                            note=f"Барьцаанаас суутгав (гэрээ №{c.no})")
         db.add(p)
         db.commit()
-        billing.allocate_payment(db, p)
+        # Барьцаа нь ч гэсэн төлбөр — суутгахаас ӨМНӨ алдангийг тэр өдрөөр бүртгэж
+        # хөлдөөнө (эс бөгөөс хэсэгчилсэн суутгал өнгөрсний алдангийг устгана).
+        billing.book_penalties(db, c.client_id, body.date)
+        # Суутгал зөвхөн ҮНДСЭН өрийг хаана: "6 сая суутгав" → авлага яг 6 саяар буурна.
+        billing.allocate_payment(db, p, principal_only=True)
 
     c.deposit_applied = body.apply_amount
     c.deposit_returned = body.return_amount

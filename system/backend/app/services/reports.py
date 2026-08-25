@@ -33,6 +33,14 @@ def pnl(db: Session, d_from: date, d_to: date):
             if d_from <= inv.cycle_start <= d_to:
                 sale_income += base
 
+    # Алдангийн орлого — КАССЫН зарчмаар (бодит төлөгдсөн, төлбөрийн огноогоор).
+    # Түрээс/худалдаа аккруэл боловч алданги бол цуглуулсан цагтаа л орлого.
+    penalty_income = sum(
+        a.amount for a in db.query(models.PaymentAllocation)
+        .join(models.Payment, models.PaymentAllocation.payment_id == models.Payment.id)
+        .filter(models.PaymentAllocation.part == "penalty",
+                models.Payment.date >= d_from, models.Payment.date <= d_to).all())
+
     logs = db.query(models.MachineLog).filter(
         models.MachineLog.date >= d_from, models.MachineLog.date <= d_to).all()
     machine_income = sum(l.amount for l in logs if l.entry == "job")
@@ -62,11 +70,12 @@ def pnl(db: Session, d_from: date, d_to: date):
         if cur:
             accruing += cur["accrued"]
 
-    total_income = rent_income + sale_income + machine_income
+    total_income = rent_income + sale_income + machine_income + penalty_income
     total_expense = machine_expense + salary_expense + interest_expense
     return {"from": str(d_from), "to": str(d_to), "accruing": round(accruing),
             "rent_income": round(rent_income), "sale_income": round(sale_income),
             "machine_income": round(machine_income),
+            "penalty_income": round(penalty_income),
             "machine_expense": round(machine_expense),
             "salary_expense": round(salary_expense),
             "interest_expense": round(interest_expense),

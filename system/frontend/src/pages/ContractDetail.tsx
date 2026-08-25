@@ -473,19 +473,46 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   const [method, setMethod] = useState("BANK");
   const [barter, setBarter] = useState("");
   const [busy, setBusy] = useState(false);
+  // null = автомат хуваарилалт (хуучин зам). Object = дарга гараар чиглүүлж байна.
+  const [manual, setManual] = useState<Record<number, string> | null>(null);
   const amt = parseFloat(amount.replace(/,/g, "")) || 0;
-  const preview = allocationPreview(amt, (invoices || []).map((i: any) => ({
-    id: i.id, no: i.no, outstanding: i.outstanding, due_date: i.due_date })));
+  // penalty = бүртгэгдсэн + амьд алданги; төлбөр бүртгэх агшинд яг энэ дүн хөлдөнө
+  const list = (invoices || []).map((i: any) => ({
+    id: i.id, no: i.no, outstanding: i.outstanding, due_date: i.due_date,
+    penalty_due: i.penalty || 0 }));
+  const preview = allocationPreview(amt, list);
+  const cand = list
+    .filter((i: any) => i.outstanding > 0 || i.penalty_due > 0)
+    .sort((a: any, b: any) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : a.id - b.id));
+  const auto: Record<number, number> = {};
+  preview.rows.forEach((r) => { auto[r.id] = (auto[r.id] || 0) + r.take; });
+  const manualSum = manual
+    ? Object.values(manual).reduce((s, v) => s + (parseFloat(v) || 0), 0) : 0;
+  const manualLeft = amt - manualSum;
+
+  function startManual() {
+    const init: Record<number, string> = {};
+    cand.forEach((i: any) => { init[i.id] = String(Math.round(auto[i.id] || 0)); });
+    setManual(init);
+  }
 
   async function submit() {
     const amt = parseFloat(amount.replace(/,/g, ""));
     if (!amt || amt <= 0) { toast("Дүн оруулна уу", "err"); return; }
     if (method === "BARTER" && !barter.trim()) { toast("Бартераар юу орж ирснийг бичнэ үү", "err"); return; }
+    const body: any = { client_id: client_id ?? d.client_id, contract_id: d?.id ?? null,
+                        date, amount: amt, method, barter_desc: barter };
+    if (manual) {
+      if (manualSum > amt + 0.01) {
+        toast("Хуваарилсан дүн төлбөрөөс их байна", "err"); return;
+      }
+      body.allocations = Object.entries(manual)
+        .map(([id, v]) => ({ invoice_id: +id, amount: parseFloat(v) || 0 }))
+        .filter((a) => a.amount > 0);
+    }
     setBusy(true);
     try {
-      const r = await api("/api/payments", { method: "POST", body: JSON.stringify({
-        client_id: client_id ?? d.client_id, contract_id: d?.id ?? null,
-        date, amount: amt, method, barter_desc: barter }) });
+      const r = await api("/api/payments", { method: "POST", body: JSON.stringify(body) });
       toast(`Төлбөр бүртгэгдлээ — ${money(r.allocated)} нэхэмжлэлүүдэд хуваарилагдав`);
       onDone();
     } catch (e: any) { toast(e.message, "err"); setBusy(false); }
@@ -518,16 +545,52 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
           <p className="text-[12px] text-t3 mt-1.5">Үнэлсэн дүнгээр нь авлагаас хасагдана. Бартер модуль Үе 2-т бүрэн болно.</p>
         </div>
       )}
-      {amt > 0 ? (
-        <Receipt className="mb-1"
-          rows={[
-            ...preview.rows.map((r: any) => ({ label: `Нэхэмжлэл ${r.no}`, value: money(r.take) })),
-            ...(preview.remainder > 0
-              ? [{ label: "Илүү — кредит болно (дараагийнхад автоматаар хаагдана)",
-                   value: money(preview.remainder), accent: "money" as const }] : []),
-          ]}
-          total={{ label: method === "BARTER" ? "Бартерын үнэлгээ" : "Нийт төлбөр", value: money(amt) }} />
+      {amt > 0 ? (manual ? (
+        <div className="rounded-2xl border border-line-strong p-3.5 mb-1">
+          <div className="flex items-center justify-between mb-2.5">
+            <b className="text-[13px] text-ink">Хуваарилалт — гараар</b>
+            <button className="text-[12.5px] font-semibold text-brand hover:underline"
+                    onClick={() => setManual(null)}>Автоматаар</button>
+          </div>
+          {cand.length === 0 && <p className="text-[12.5px] text-t2">Нээлттэй нэхэмжлэл алга — бүх дүн кредит болно.</p>}
+          {cand.map((i: any) => (
+            <div key={i.id} className="flex items-center justify-between gap-3 py-1.5">
+              <div className="min-w-0">
+                <div className="text-[13px] text-ink truncate">Нэхэмжлэл {i.no}</div>
+                <div className="text-[11.5px] text-t3">
+                  Үлдэгдэл {money(i.outstanding)}
+                  {i.penalty_due > 0 && <> · алданги {money(i.penalty_due)}</>}
+                </div>
+              </div>
+              <input type="number" min={0} className="inp !min-h-10 !py-2 w-36 text-right"
+                     value={manual[i.id] ?? "0"}
+                     onChange={(e) => setManual({ ...manual, [i.id]: e.target.value })} />
+            </div>
+          ))}
+          <div className={`flex items-center justify-between pt-2.5 mt-1.5 border-t border-line text-[13px] font-semibold ${
+                manualLeft < 0 ? "text-danger" : "text-t2"}`}>
+            <span>{manualLeft < 0 ? "Төлбөрөөс хэтэрсэн" : "Хуваарилагдаагүй"}</span>
+            <b className="tabular-nums">{money(Math.abs(manualLeft))}</b>
+          </div>
+          <p className="text-[11.5px] text-t3 mt-1.5">
+            Хуваарилагдаагүй үлдсэн дүн хамгийн хуучин нэхэмжлэлээс эхэлж автоматаар хаагдана.
+          </p>
+        </div>
       ) : (
+        <>
+          <Receipt className="mb-1"
+            rows={[
+              ...preview.rows.map((r) => ({
+                label: r.part === "penalty" ? `Алданги ${r.no}` : `Нэхэмжлэл ${r.no}`,
+                value: money(r.take) })),
+              ...(preview.remainder > 0
+                ? [{ label: "Илүү — кредит болно (дараагийнхад автоматаар хаагдана)",
+                     value: money(preview.remainder), accent: "money" as const }] : []),
+            ]}
+            total={{ label: method === "BARTER" ? "Бартерын үнэлгээ" : "Нийт төлбөр", value: money(amt) }} />
+          <button className="btn-ghost mt-2.5" onClick={startManual}>Хуваарилалт өөрчлөх</button>
+        </>
+      )) : (
         <p className="text-[12.5px] text-t2">Төлбөр хамгийн хуучин нэхэмжлэлээс эхэлж автоматаар хуваарилагдана.</p>
       )}
       <div className="flex justify-end gap-2.5 mt-5">

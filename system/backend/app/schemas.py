@@ -99,6 +99,12 @@ class ExtendIn(BaseModel):
     end_date: date
 
 
+class AllocationIn(BaseModel):
+    """Гараар чиглүүлсэн хуваарилалт — тухайн нэхэмжлэлд хэдэн төгрөг явуулах вэ."""
+    invoice_id: int
+    amount: float
+
+
 class PaymentIn(BaseModel):
     client_id: int
     contract_id: int | None = None
@@ -107,6 +113,8 @@ class PaymentIn(BaseModel):
     method: str = "BANK"         # CASH | BANK | BARTER
     barter_desc: str = ""
     note: str = ""
+    # байхгүй (None) бол автомат хуваарилалт — хуучин зан төлөв хэвээр
+    allocations: list[AllocationIn] | None = None
 
 
 class SettingsIn(BaseModel):

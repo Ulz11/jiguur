@@ -298,25 +298,85 @@ def invoice_outstanding(inv: models.Invoice) -> float:
     return max(inv.total - inv.paid, 0.0)
 
 
+def invoice_penalty_due(inv: models.Invoice) -> float:
+    """БҮРТГЭГДСЭН алдангийн үлдэгдэл — хуваарилалт ЗӨВХӨН үүнийг хааж чадна.
+
+    Амьд (бүртгэгдээгүй) алданги хараахан төлөгдөх боломжгүй: тэр төлбөр
+    бүртгэх агшинд `book_penalties`-аар хөлдөж байж мөнгө хүлээж авна.
+    """
+    return max((inv.penalty_booked or 0.0) - (inv.penalty_paid or 0.0), 0.0)
+
+
+def _penalty_since(inv: models.Invoice) -> date:
+    """Амьд алданги хаанаас хойш бодогдох вэ — хугацаа хэтэрсэн өдөр эсвэл
+    хамгийн сүүлд бүртгэсэн өдрөөс (аль хожуу нь)."""
+    until = inv.penalty_booked_until
+    return until if until and until > inv.due_date else inv.due_date
+
+
 def invoice_penalty(inv: models.Invoice, today: date | None = None) -> float:
+    """Харагдах алданги = БҮРТГЭГДСЭН үлдэгдэл + бүртгэсэн өдрөөс хойшхи АМЬД дүн.
+
+    Хэзээ ч бүртгэгдээгүй нэхэмжлэлд энэ нь хуучин томьёотой ЯГ ижил
+    (booked = 0, since = due_date).
+    """
     today = today or date.today()
+    pen = invoice_penalty_due(inv)
     out = invoice_outstanding(inv)
     if out <= 0:
-        return 0.0
-    days = (today - inv.due_date).days
+        return pen
+    days = (today - _penalty_since(inv)).days
     if days <= 0:
-        return 0.0
-    return out * inv.contract.penalty_percent / 100 * days
+        return pen
+    return pen + out * inv.contract.penalty_percent / 100 * days
 
 
 def invoice_status(inv: models.Invoice, today: date | None = None) -> str:
     today = today or date.today()
     out = invoice_outstanding(inv)
     if out <= 0.005:
+        # үндсэн дүн хаагдсан ч бүртгэгдсэн алданги үлдсэн бол ТӨЛӨГДӨӨГҮЙ хэвээр
+        if invoice_penalty_due(inv) > 0.005:
+            return "penalty"
         return "paid"
     if today > inv.due_date:
         return "overdue"
     return "partial" if inv.paid > 0 else "open"
+
+
+def book_penalties(db: Session, client_id: int, as_of: date) -> float:
+    """Харилцагчийн хэтэрсэн нэхэмжлэлүүдийн алдангийг `as_of` өдрөөр БҮРТГЭНЭ.
+
+    ⚠ АНХААР — ЭНЭ ФУНКЦ БИЧДЭГ. `ensure_invoices`-оос болон ямар ч GET
+    (унших) замаас ДУУДАЖ БОЛОХГҮЙ: тэдгээр нь өдөрт олон удаа ажилладаг тул
+    алданги хуудас сэргээх бүрд хөлдөж эхэлнэ. Зөвхөн:
+      · POST /api/payments (төлбөр бүртгэх агшин, as_of = төлбөрийн огноо)
+      · барьцааны тооцоо (settle_deposit)
+      · (хожим) нэхэмжлэл дахин үүсгэх replay
+    Монотон: `penalty_booked_until` зөвхөн УРАГШ явна (нэмэгдэл 0 байсан ч
+    тэмдэглэнэ); `as_of` нь бүртгэсэн өдрөөс хойш байвал юу ч хийхгүй.
+    Буцна: нийт нэмэгдсэн алданги.
+    """
+    invoices = (db.query(models.Invoice).join(models.Contract)
+                .filter(models.Contract.client_id == client_id).all())
+    added = 0.0
+    for inv in invoices:
+        if inv.contract.penalty_percent <= 0:      # OB болон алдангигүй гэрээ
+            continue
+        if invoice_outstanding(inv) <= 0.005:      # үндсэн дүн хаагдсан → өсөхгүй
+            continue
+        if as_of <= inv.due_date:
+            continue
+        since = _penalty_since(inv)
+        if as_of < since:                          # ХОЙШОО явахгүй
+            continue
+        inc = (invoice_outstanding(inv) * inv.contract.penalty_percent / 100
+               * (as_of - since).days)
+        inv.penalty_booked = (inv.penalty_booked or 0.0) + inc
+        inv.penalty_booked_until = as_of
+        added += inc
+    db.commit()
+    return added
 
 
 def contract_balance(contract: models.Contract, today: date | None = None):
@@ -350,8 +410,46 @@ def apply_client_credit(db: Session, client_id: int) -> float:
     return applied
 
 
-def _fill_invoices(db: Session, payment: models.Payment, remain: float) -> float:
-    """Нэг төлбөрийн `remain` дүнг тохирох нэхэмжлэлүүдэд хуваарилна."""
+def _stored_status(inv: models.Invoice) -> str:
+    """`inv.status` талбарт хадгалагдах төлөв (invoice_status-тай нэг утгатай)."""
+    if inv.total - inv.paid > 0.005:
+        return "partial"
+    return "penalty" if invoice_penalty_due(inv) > 0.005 else "paid"
+
+
+def _fill_one(db: Session, payment: models.Payment, inv: models.Invoice,
+              remain: float, manual: int = 0, principal_only: bool = False) -> float:
+    """Нэг нэхэмжлэлийг ХААХ: эхлээд ҮНДСЭН дүн, дараа нь ТҮҮНИЙ бүртгэгдсэн алданги."""
+    filled = 0.0
+    out = invoice_outstanding(inv)
+    if out > 0 and remain > 0:
+        take = min(out, remain)
+        db.add(models.PaymentAllocation(payment_id=payment.id, invoice_id=inv.id,
+                                        amount=take, part="principal", manual=manual))
+        inv.paid += take
+        remain -= take
+        filled += take
+    due = 0.0 if principal_only else invoice_penalty_due(inv)
+    if due > 0 and remain > 0:
+        take = min(due, remain)
+        db.add(models.PaymentAllocation(payment_id=payment.id, invoice_id=inv.id,
+                                        amount=take, part="penalty", manual=manual))
+        inv.penalty_paid = (inv.penalty_paid or 0.0) + take
+        remain -= take
+        filled += take
+    if filled:
+        inv.status = _stored_status(inv)
+    return filled
+
+
+def _fill_invoices(db: Session, payment: models.Payment, remain: float,
+                   principal_only: bool = False) -> float:
+    """Нэг төлбөрийн `remain` дүнг тохирох нэхэмжлэлүүдэд хуваарилна.
+
+    Дараалал: хамгийн хуучин нэхэмжлэлийг БҮТНЭЭР хаана (үндсэн → алданги),
+    дараа нь дараагийнх руу. Хаана ч алданги бүртгэгдээгүй үед энэ нь
+    хуучин зан төлөвтэй яг ижил.
+    """
     q = db.query(models.Invoice).join(models.Contract).filter(
         models.Contract.client_id == payment.client_id)
     if payment.contract_id:
@@ -360,21 +458,40 @@ def _fill_invoices(db: Session, payment: models.Payment, remain: float) -> float
     for inv in sorted(q.all(), key=lambda i: (i.due_date, i.id)):
         if remain <= 0:
             break
-        out = invoice_outstanding(inv)
-        if out <= 0:
+        if invoice_outstanding(inv) <= 0 and (principal_only or invoice_penalty_due(inv) <= 0):
             continue
-        take = min(out, remain)
-        db.add(models.PaymentAllocation(payment_id=payment.id, invoice_id=inv.id, amount=take))
-        inv.paid += take
-        inv.status = "paid" if inv.total - inv.paid <= 0.005 else "partial"
-        remain -= take
-        filled += take
+        took = _fill_one(db, payment, inv, remain, principal_only=principal_only)
+        remain -= took
+        filled += took
     return filled
 
 
-def allocate_payment(db: Session, payment: models.Payment):
-    """Хамгийн хуучин нэхэмжлэлээс эхэлж автоматаар хаана. Буцна: хуваарилагдсан дүн."""
-    filled = _fill_invoices(db, payment, payment.amount)
+def allocate_payment(db: Session, payment: models.Payment,
+                     manual: list[dict] | None = None,
+                     principal_only: bool = False):
+    """Төлбөрийг нэхэмжлэлүүдэд хуваарилна. Буцна: хуваарилагдсан дүн.
+
+    `manual` = [{invoice_id, amount}] — гараар чиглүүлсэн хуваарилалт; өгсөн
+    дарааллаар нь ЭХЛЭЭД хийгдэнэ (мөр бүр manual=1), үлдсэн мөнгө хуучин
+    журмаараа (хамгийн хуучнаас) автоматаар хуваарилагдана.
+
+    `principal_only` — БАРЬЦААНЫ суутгалд: суутгасан дүн зөвхөн ҮНДСЭН өрийг
+    бууруулна (дарга "6 сая суутгав" гэвэл авлага яг 6 саяар буурч харагдана).
+    Алданги нь бүртгэгдсэн хэвээр үлдэж, бодит төлбөрөөр хаагдана.
+    """
+    filled = 0.0
+    remain = payment.amount
+    for row in manual or []:
+        if remain <= 0:
+            break
+        inv = db.get(models.Invoice, int(row["invoice_id"]))
+        if inv is None:
+            continue
+        took = _fill_one(db, payment, inv, min(float(row["amount"]), remain), manual=1,
+                         principal_only=principal_only)
+        remain -= took
+        filled += took
+    filled += _fill_invoices(db, payment, remain, principal_only=principal_only)
     db.commit()
     return filled
 

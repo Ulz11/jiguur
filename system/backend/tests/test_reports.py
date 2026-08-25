@@ -89,6 +89,48 @@ def test_pnl_controlled_numbers(db):
     assert p6["rent_income"] == 0
 
 
+def test_pnl_penalty_income_cash_basis(db):
+    """Алдангийн орлого КАССЫН зарчмаар: алданги хэсэгт хуваарилагдсан төлбөр
+    ТӨЛӨГДСӨН сарынхаа орлогод орно. 7 сард 500,000₮ төлсөн алданги 7 сард,
+    8 сард төлсөн 200,000₮ нь 7 сард ОРОХГҮЙ."""
+    from app.services import reports as R
+
+    cl = models.Client(name="Алданги төлөгч")
+    db.add(cl)
+    db.flush()
+    c = models.Contract(no="r9", client_id=cl.id, type="rent",
+                        start_date=date(2026, 6, 1), penalty_percent=0.5)
+    db.add(c)
+    db.flush()
+    inv = models.Invoice(contract_id=c.id, no="R-9-1", cycle_start=date(2026, 6, 10),
+                         cycle_end=date(2026, 7, 10), due_date=date(2026, 7, 10),
+                         rent_amount=10_000_000, total=10_000_000, paid=10_000_000,
+                         penalty_booked=700_000, penalty_paid=700_000)
+    db.add(inv)
+    db.flush()
+    p7 = models.Payment(client_id=cl.id, contract_id=c.id, date=date(2026, 7, 25),
+                        amount=10_500_000, method="BANK")
+    p8 = models.Payment(client_id=cl.id, contract_id=c.id, date=date(2026, 8, 3),
+                        amount=200_000, method="CASH")
+    db.add_all([p7, p8])
+    db.flush()
+    db.add(models.PaymentAllocation(payment_id=p7.id, invoice_id=inv.id,
+                                    amount=10_000_000, part="principal"))
+    db.add(models.PaymentAllocation(payment_id=p7.id, invoice_id=inv.id,
+                                    amount=500_000, part="penalty"))
+    db.add(models.PaymentAllocation(payment_id=p8.id, invoice_id=inv.id,
+                                    amount=200_000, part="penalty"))
+    db.commit()
+
+    p = R.pnl(db, date(2026, 7, 1), date(2026, 7, 31))
+    assert p["penalty_income"] == 500_000
+    assert p["rent_income"] == 10_000_000            # үндсэн хэсэг нь давхардаж орохгүй
+    assert p["total_income"] == 10_500_000           # алдангийн орлого НИЙТ орлогод орно
+    assert p["net"] == 10_500_000
+    p8r = R.pnl(db, date(2026, 8, 1), date(2026, 8, 31))
+    assert p8r["penalty_income"] == 200_000
+
+
 def test_opening_balance_not_counted_as_income(db):
     """РЕГРЕСС: хуучин системээс шилжсэн үлдэгдэл (OB-) нь ТУХАЙН ҮЕИЙН ОРЛОГО БИШ.
     Эс бөгөөс тайлан хэдэн тэрбумын хуурамч ашиг харуулна."""

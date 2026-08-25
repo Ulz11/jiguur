@@ -184,7 +184,12 @@ class Invoice(Base):
     vat_amount: Mapped[float] = mapped_column(Float, default=0)
     total: Mapped[float] = mapped_column(Float, default=0)
     paid: Mapped[float] = mapped_column(Float, default=0)
-    status: Mapped[str] = mapped_column(String(12), default="open")  # open|partial|paid
+    # Алданги БҮРТГЭГДЭНЭ (booked): төлбөр бүртгэх агшинд тухайн өдрөөр хөлдөнө —
+    # дараа нь хэсэгчилсэн төлөлт өнгөрсний алдангийг устгахгүй.
+    penalty_booked: Mapped[float] = mapped_column(Float, default=0)
+    penalty_paid: Mapped[float] = mapped_column(Float, default=0)
+    penalty_booked_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default="open")  # open|partial|paid|penalty
     detail_json: Mapped[str] = mapped_column(Text, default="[]")     # мөрүүдийн задаргаа
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -215,6 +220,8 @@ class PaymentAllocation(Base):
     payment_id: Mapped[int] = mapped_column(ForeignKey("payments.id"))
     invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id"))
     amount: Mapped[float] = mapped_column(Float)
+    part: Mapped[str] = mapped_column(String(10), default="principal")  # principal | penalty
+    manual: Mapped[int] = mapped_column(Integer, default=0)  # 1 = гараар чиглүүлсэн
 
     payment: Mapped["Payment"] = relationship(back_populates="allocations")
     invoice: Mapped["Invoice"] = relationship()

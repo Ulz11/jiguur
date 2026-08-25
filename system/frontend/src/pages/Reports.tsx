@@ -90,6 +90,7 @@ export default function Reports() {
           <Row label="Түрээсийн орлого" val={p.rent_income} />
           <Row label="Худалдааны орлого" val={p.sale_income} />
           <Row label="Механизмын орлого" val={p.machine_income} />
+          <Row label="Алдангийн орлого" val={p.penalty_income} />
           <Total label="Нийт орлого" val={p.total_income} tone="money" />
           <Sect label="Зардал" cls="mt-5" />
           <Row label="Цалин" val={-p.salary_expense} />

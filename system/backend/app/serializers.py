@@ -88,7 +88,8 @@ def invoice(inv: models.Invoice, today: date):
             "vat_amount": round(inv.vat_amount), "total": round(inv.total),
             "paid": round(inv.paid),
             "outstanding": round(billing.invoice_outstanding(inv)),
-            "penalty": round(billing.invoice_penalty(inv, today)),
+            "penalty": round(billing.invoice_penalty(inv, today)),      # бүртгэгдсэн + амьд
+            "penalty_due": round(billing.invoice_penalty_due(inv)),     # бүртгэгдсэн — төлж болно
             "status": billing.invoice_status(inv, today),
             "detail": json.loads(inv.detail_json or "[]")}
 

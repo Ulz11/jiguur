@@ -4,6 +4,7 @@
 тэр нь санамсаргүй эвдрэл гэсэн үг. Шинэ feature бүр эхлээд ЭНД унадаг тестээ
 авч байж кодлогдоно (TESTING.md-г үз).
 """
+import contextlib
 from datetime import date, timedelta
 
 
@@ -228,6 +229,110 @@ def test_payment_validation(client, as_role):
     no_desc = client.post("/api/payments", headers=h, json={
         "client_id": 1, "date": iso(0), "amount": 100, "method": "BARTER", "barter_desc": ""})
     assert no_desc.status_code == 400
+
+
+def _invoices(client, h, cid):
+    """Гэрээний нэхэмжлэлүүд, due_date-аар эрэмбэлэгдсэн (GET нь ensure_invoices-ыг хөдөлгөнө)."""
+    d = client.get(f"/api/contracts/{cid}", headers=h).json()
+    return sorted(d["invoices"], key=lambda i: i["due_date"])
+
+
+@contextlib.contextmanager
+def db_session():
+    """Тестийн DB session — хуваарилалтын мөрүүдийг шууд шалгахад."""
+    from app.db import get_db
+    from app.main import app
+    gen = app.dependency_overrides[get_db]()
+    db = next(gen)
+    try:
+        yield db
+    finally:
+        gen.close()
+
+
+def test_payment_endpoint_books_before_allocating(client, as_role):
+    """Төлбөр бүртгэх агшинд алданги ЭХЛЭЭД бүртгэгдэнэ: 10 хоног хэтэрсэн
+    990,000₮-ийн нэхэмжлэлийг бүтэн төлөхөд 49,500₮ алданги ҮЛДЭНЭ
+    (хуучин амьд томьёогоор бол төлөнгүүт 0 болж УСТАХ байсан)."""
+    h = as_role("sanhuu")
+    _, cid, m, st = make_contract(client, as_role, days_ago=40, qty=100)
+    _confirm_pending(client, as_role, cid)
+    inv = _invoices(client, h, cid)[0]
+    assert inv["total"] == 990_000 and inv["outstanding"] == 990_000
+
+    r = client.post("/api/payments", headers=h, json={
+        "client_id": client.get(f"/api/contracts/{cid}", headers=h).json()["client_id"],
+        "contract_id": cid, "date": iso(0), "amount": 990_000, "method": "BANK"})
+    assert r.status_code == 200, r.text
+    assert r.json()["allocated"] == 990_000
+
+    after = _invoices(client, h, cid)[0]
+    assert after["outstanding"] == 0
+    assert after["penalty"] == 49_500          # 990,000 × 0.005 × 10 хоног
+    assert after["penalty_due"] == 49_500      # бүртгэгдсэн — хуваарилж болно
+    assert after["status"] == "penalty"
+
+
+def test_manual_allocation_directed(client, as_role):
+    """Гараар чиглүүлсэн хуваарилалт: ШИНЭ нэхэмжлэл рүү заавал явуулахад
+    хуучин нь нээлттэй байсан ч тэр нэхэмжлэл хаагдана; үлдсэн 10,000₮
+    автоматаар ХУУЧИН нэхэмжлэл рүү орно."""
+    h = as_role("sanhuu")
+    _, cid, m, st = make_contract(client, as_role, days_ago=70, qty=100)
+    _confirm_pending(client, as_role, cid)
+    client_id = client.get(f"/api/contracts/{cid}", headers=h).json()["client_id"]
+    old, new = _invoices(client, h, cid)
+    assert old["total"] == 990_000 and new["total"] == 990_000
+
+    r = client.post("/api/payments", headers=h, json={
+        "client_id": client_id, "contract_id": cid, "date": iso(0),
+        "amount": 1_000_000, "method": "BANK",
+        "allocations": [{"invoice_id": new["id"], "amount": 990_000}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["allocated"] == 1_000_000
+
+    old2, new2 = _invoices(client, h, cid)
+    assert new2["outstanding"] == 0 and new2["paid"] == 990_000
+    assert old2["paid"] == 10_000                    # үлдсэн нь автоматаар хуучин руу
+    assert old2["outstanding"] == 980_000
+    with db_session() as db:
+        from app import models
+        rows = db.query(models.PaymentAllocation).filter_by(payment_id=r.json()["id"]).all()
+        directed = [a for a in rows if a.invoice_id == new2["id"]]
+        assert [a.manual for a in directed] == [1]
+        assert [a.manual for a in rows if a.invoice_id == old2["id"]] == [0]
+
+
+def test_manual_allocation_validation(client, as_role):
+    """Гараар хуваарилалт нягт байх ёстой: өөр харилцагчийн нэхэмжлэл,
+    төлбөрөөс их нийлбэр, өртэй дүнгээс их хуваарилалт — бүгд 400."""
+    h = as_role("sanhuu")
+    _, cid, *_ = make_contract(client, as_role, days_ago=40, qty=100)
+    _confirm_pending(client, as_role, cid)
+    client_id = client.get(f"/api/contracts/{cid}", headers=h).json()["client_id"]
+    inv = _invoices(client, h, cid)[0]
+    # өөр харилцагчийн гэрээ
+    _, other_cid, *_ = make_contract(client, as_role, days_ago=41, qty=100)
+    _confirm_pending(client, as_role, other_cid)
+    other_inv = _invoices(client, h, other_cid)[0]
+
+    foreign = client.post("/api/payments", headers=h, json={
+        "client_id": client_id, "date": iso(0), "amount": 100_000, "method": "CASH",
+        "allocations": [{"invoice_id": other_inv["id"], "amount": 100_000}]})
+    assert foreign.status_code == 400
+    assert "харилцагч" in foreign.json()["detail"]
+
+    over_sum = client.post("/api/payments", headers=h, json={
+        "client_id": client_id, "date": iso(0), "amount": 100_000, "method": "CASH",
+        "allocations": [{"invoice_id": inv["id"], "amount": 150_000}]})
+    assert over_sum.status_code == 400
+
+    over_due = client.post("/api/payments", headers=h, json={
+        "client_id": client_id, "date": iso(0), "amount": 5_000_000, "method": "CASH",
+        "allocations": [{"invoice_id": inv["id"], "amount": 2_000_000}]})
+    assert over_due.status_code == 400
+    # 400 буусан хүсэлт төлбөр ҮЛДЭЭХГҮЙ
+    assert client.get(f"/api/payments?client_id={client_id}", headers=h).json() == []
 
 
 def test_payment_allocates_oldest_first(client, as_role):
