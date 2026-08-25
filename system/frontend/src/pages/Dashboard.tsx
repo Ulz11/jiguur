@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, sayaFmt, user } from "../api";
 import { Spinner, Prog, useToast } from "../ui";
 import { useScope } from "../App";
+import { useLive } from "../lib/live";
 import RevChart from "../components/RevChart";
 
 export default function Dashboard() {
@@ -14,7 +15,9 @@ export default function Dashboard() {
   const u = user();
 
   const load = () => api(`/api/dashboard?scope=${scope}`).then(setD).catch((e) => toast(e.message, "err"));
-  useEffect(() => { setD(null); load(); }, [scope]);
+  /** Фонд шинэчлэх — эргэлдэгч гаргахгүй, алдааг чимээгүй залгина. */
+  const refresh = () => api(`/api/dashboard?scope=${scope}`).then(setD).catch(() => {});
+  useLive((bg) => { if (bg) refresh(); else { setD(null); load(); } }, [scope]);
 
   if (!d) return <Spinner />;
   const k = d.kpi;

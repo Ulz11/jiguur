@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, Modal, useToast, Empty } from "../ui";
+import { useLive } from "../lib/live";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const KINDS: [string, string][] = [["call", "Утсаар"], ["visit", "Уулзсан"],
@@ -15,7 +16,9 @@ export default function Collections() {
   const nav = useNavigate();
 
   const load = () => api("/api/collections").then(setD).catch((e) => toast(e.message, "err"));
-  useEffect(() => { load(); }, []);
+  /** Фонд шинэчлэх — эргэлдэгч гаргахгүй, алдааг чимээгүй залгина. */
+  const refresh = () => api("/api/collections").then(setD).catch(() => {});
+  useLive((bg) => (bg ? refresh() : load()), []);
   if (!d) return <Spinner />;
 
   const FILTERS: [string, string, (r: any) => boolean][] = [

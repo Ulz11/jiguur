@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, useToast, Prog, Empty } from "../ui";
+import { useLive } from "../lib/live";
 
 /** Материалын ашигт байдал + мөнгөний урсгалын прогноз. */
 export default function Analytics() {
@@ -10,11 +11,13 @@ export default function Analytics() {
   const [fc, setFc] = useState<any>(null);
   const toast = useToast();
 
-  useEffect(() => {
-    setMat(null);
-    api(`/api/reports/materials?months=${months}`).then(setMat).catch((e) => toast(e.message, "err"));
+  // Хоёр эх сурвалж хоёулаа амьд: сар солигдоход эргэлдэгчтэй, фонд чимээгүй.
+  useLive((bg) => {
+    if (!bg) setMat(null);
+    api(`/api/reports/materials?months=${months}`).then(setMat)
+      .catch((e) => { if (!bg) toast(e.message, "err"); });
   }, [months]);
-  useEffect(() => { api("/api/reports/forecast").then(setFc).catch(() => {}); }, []);
+  useLive(() => { api("/api/reports/forecast").then(setFc).catch(() => {}); }, []);
 
   return (
     <div>

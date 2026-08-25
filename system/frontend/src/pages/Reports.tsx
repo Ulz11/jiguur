@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, money, sayaFmt, token } from "../api";
 import { Spinner, useToast } from "../ui";
+import { useLive } from "../lib/live";
 
 export default function Reports() {
   const [months, setMonths] = useState(6);
@@ -8,7 +9,9 @@ export default function Reports() {
   const toast = useToast();
 
   const load = (m: number) => { setD(null); api(`/api/reports?months=${m}`).then(setD).catch((e) => toast(e.message, "err")); };
-  useEffect(() => { load(months); }, [months]);
+  /** Фонд шинэчлэх — эргэлдэгч гаргахгүй, алдааг чимээгүй залгина. */
+  const refresh = (m: number) => api(`/api/reports?months=${m}`).then(setD).catch(() => {});
+  useLive((bg) => (bg ? refresh(months) : load(months)), [months]);
   if (!d) return <Spinner />;
   const p = d.pnl;
 
