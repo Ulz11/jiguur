@@ -72,8 +72,9 @@ def create_active_contract(db: Session, client: models.Client, no: str, as_of: d
         g = _grade(db, it.get("grade", "А"))
         db.add(models.ContractItem(contract_id=c.id, material_id=m.id, grade_id=g.id,
                                    daily_rate=float(it["daily_rate"])))
+        # Падан: шилжүүлсэн үлдэгдэл ч гэсэн өөрийн тарифтайгаа орж ирнэ
         db.add(models.MovementLine(movement_id=mv.id, material_id=m.id, grade_id=g.id,
-                                   qty=float(it["qty"])))
+                                   qty=float(it["qty"]), rate=float(it["daily_rate"])))
         st = db.query(models.Stock).filter_by(material_id=m.id, grade_id=g.id).first()
         if not st:
             st = models.Stock(material_id=m.id, grade_id=g.id)

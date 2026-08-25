@@ -81,6 +81,8 @@ class MovementLineIn(BaseModel):
     material_id: int
     grade_id: int
     qty: float
+    rate: float | None = None          # олголтын тариф/нэгж үнэ (падан)
+    issue_line_id: int | None = None   # буцаалт аль паданг хааж буй
     return_grade_id: int | None = None
     repair_qty: float = 0
     writeoff_qty: float = 0

@@ -16,6 +16,37 @@ def _has_tables(conn, *names) -> bool:
     return True
 
 
+def backfill_movement_line_rates(engine):
+    """Үе 1 (падан загвар): хуучин ОЛГОЛТЫН мөрүүдэд тарифыг тамгална.
+
+    Гэрээний мөрөөс (contract_items) авна — түрээс бол daily_rate, худалдаа бол
+    unit_price. `contract_items`-д давхардлыг хориглосон индекс байхгүй тул
+    LIMIT 1. Зөвхөн `rate IS NULL` мөрүүдэд хүрнэ (idempotent); буцаалт/актын
+    мөр тариф авч явдаггүй тул хөндөгдөхгүй.
+    """
+    with engine.begin() as conn:
+        if not _has_tables(conn, "movement_lines", "movements", "contracts", "contract_items"):
+            return
+        conn.exec_driver_sql("""
+            UPDATE movement_lines SET rate = (
+                SELECT CASE WHEN c.type = 'sale' THEN ci.unit_price ELSE ci.daily_rate END
+                  FROM movements m
+                  JOIN contracts c ON c.id = m.contract_id
+                  JOIN contract_items ci ON ci.contract_id = c.id
+                       AND ci.material_id = movement_lines.material_id
+                       AND ci.grade_id = movement_lines.grade_id
+                 WHERE m.id = movement_lines.movement_id
+                 LIMIT 1)
+            WHERE rate IS NULL
+              AND movement_id IN (SELECT id FROM movements WHERE type = 'ISSUE')
+        """)
+
+
+# Үе шат бүрийн дата нөхөлт энд бүртгэгдэнэ: fn(engine).
+# ALTER-үүд дууссаны ДАРАА дарааллаараа ажиллана. Функц бүр өөрөө idempotent байх ёстой.
+BACKFILLS: list = [backfill_movement_line_rates]
+
+
 def _default_sql(col) -> str:
     """Тогтмол анхны утгыг DEFAULT болгож буулгана.
 
@@ -57,4 +88,6 @@ def migrate_schema(engine) -> list[str]:
                 added.append(f"{name}.{col.name}")
                 print(f"Схем шинэчлэв: {name}.{col.name}")
 
+    for fn in BACKFILLS:
+        fn(engine)
     return added

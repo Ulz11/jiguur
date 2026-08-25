@@ -69,13 +69,59 @@ def create_contract(body: schemas.ContractIn, db: Session = Depends(get_db),
     db.add(mv)
     db.flush()
     for it in body.items:
+        # Падан: эхний ачилтын мөр бүр гэрээнд тохирсон тарифаа өөртөө авч явна
         db.add(models.MovementLine(movement_id=mv.id, material_id=it.material_id,
-                                   grade_id=it.grade_id, qty=it.qty))
+                                   grade_id=it.grade_id, qty=it.qty,
+                                   rate=it.unit_price if c.type == "sale" else it.daily_rate))
     db.commit()
     audit.log(db, user, "create", "contract", c.id,
               f"№{c.no} · {client.name} · {'түрээс' if c.type == 'rent' else 'худалдаа'} · "
               f"{len(body.items)} мөр")
     return {"id": c.id, "no": c.no}
+
+
+def _live_items(db: Session, c: models.Contract, today: date, gmap: dict, mmap: dict):
+    """Материалын хүснэгт — ПАДАНГААР бүлэглэсэн мөрүүд.
+
+    Бүлэглэх түлхүүр: (материал, зэрэглэл, ТАРИФ). Иймд нэг материал өөр өөр
+    тарифаар гарсан бол ХОЁР мөр болж харагдана (Отгоогийн Numbers дэвтэр шиг).
+    Талбарын нэрс хэвээр — UI өөрчлөлтгүй уншина.
+    """
+    order = {(it.material_id, it.grade_id): i for i, it in enumerate(c.items)}
+    sale = c.type == "sale"
+    groups: dict[tuple, dict] = {}
+    for lot in billing.lot_qty_on(c, today):
+        key = (lot["material_id"], lot["grade_id"], lot["rate"])
+        row = groups.get(key)
+        if row is None:
+            row = groups[key] = {"qty": 0.0, "rate": lot["rate"], "date": lot["date"],
+                                 "material_id": lot["material_id"], "grade_id": lot["grade_id"]}
+        row["qty"] += lot["qty_left"]
+        row["date"] = min(row["date"], lot["date"])
+    # огт олгогдоогүй (эсвэл хүлээгдэж буй) гэрээний мөр 0-оор харагдана
+    for it in c.items:
+        if not any(k[0] == it.material_id and k[1] == it.grade_id for k in groups):
+            groups[(it.material_id, it.grade_id, None)] = {
+                "qty": 0.0, "rate": it.unit_price if sale else it.daily_rate,
+                "date": c.start_date, "material_id": it.material_id, "grade_id": it.grade_id}
+
+    live = []
+    for row in sorted(groups.values(), key=lambda r: (
+            order.get((r["material_id"], r["grade_id"]), 999), r["date"], r["rate"])):
+        it = next((x for x in c.items if x.material_id == row["material_id"]
+                   and x.grade_id == row["grade_id"]), None)
+        mat = db.get(models.Material, row["material_id"])
+        price = db.query(models.MaterialGradePrice).filter_by(
+            material_id=row["material_id"], grade_id=row["grade_id"]).first()
+        daily_rate = row["rate"] if not sale else (it.daily_rate if it else 0)
+        unit_price = row["rate"] if sale else (it.unit_price if it else 0)
+        live.append({"material_id": row["material_id"], "material": mmap.get(row["material_id"]),
+                     "grade_id": row["grade_id"], "grade": gmap.get(row["grade_id"]),
+                     "qty": row["qty"], "daily_rate": daily_rate, "unit_price": unit_price,
+                     "day_amount": round(row["qty"] * daily_rate),
+                     "repair_fee": mat.repair_fee if mat else 0,
+                     "writeoff_price": price.nb_price if price else 0})
+    return live
 
 
 @router.get("/contracts/{cid}")
@@ -87,20 +133,7 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
     billing.ensure_invoices(db, c, today)
     db.refresh(c)
     gmap, mmap = _maps(db)
-    # одоо түрээсэнд байгаа тоо (материал+зэрэглэл бүрээр)
-    live = []
-    rates = billing.rate_map(c)
-    for it in c.items:
-        q = billing.qty_on(c, it.material_id, it.grade_id, today)
-        mat = db.get(models.Material, it.material_id)
-        price = db.query(models.MaterialGradePrice).filter_by(
-            material_id=it.material_id, grade_id=it.grade_id).first()
-        live.append({"material_id": it.material_id, "material": mmap.get(it.material_id),
-                     "grade_id": it.grade_id, "grade": gmap.get(it.grade_id),
-                     "qty": q, "daily_rate": it.daily_rate, "unit_price": it.unit_price,
-                     "day_amount": round(q * it.daily_rate),
-                     "repair_fee": mat.repair_fee if mat else 0,
-                     "writeoff_price": price.nb_price if price else 0})
+    live = _live_items(db, c, today, gmap, mmap)
     return {**serializers.contract_row(c, today),
             "vat_percent": c.vat_percent, "cycle_days": c.cycle_days,
             "items": live,
@@ -129,6 +162,9 @@ class ItemPatch(_BM):
     grade_id: int
     daily_rate: float | None = None
     unit_price: float | None = None
+    # Аль ПАДАНГИЙН тарифыг засаж байгаа: зөвхөн энэ тарифтай (эсвэл тамгалагдаагүй)
+    # олголтын мөрүүд шинэчлэгдэнэ. Заагаагүй бол — бүгд (хуучин зан төлөв).
+    old_rate: float | None = None
 
 
 @router.patch("/contracts/{cid}")
@@ -159,12 +195,30 @@ def patch_item(cid: int, body: ItemPatch, db: Session = Depends(get_db),
         contract_id=cid, material_id=body.material_id, grade_id=body.grade_id).first()
     if not it:
         raise HTTPException(404, "Гэрээний мөр олдсонгүй")
-    if body.daily_rate is not None:
-        if body.daily_rate < 0:
-            raise HTTPException(400, "Тариф сөрөг байж болохгүй")
-        it.daily_rate = body.daily_rate
-    if body.unit_price is not None:
-        it.unit_price = body.unit_price
+    if body.daily_rate is not None and body.daily_rate < 0:
+        raise HTTPException(400, "Тариф сөрөг байж болохгүй")
+    sale = it.contract.type == "sale"
+    new_rate = body.unit_price if sale else body.daily_rate
+
+    # 1) Тухайн тарифтай ПАДАНГУУД шинэчлэгдэнэ (тамгалагдаагүй мөрүүд ч мөн адил).
+    if new_rate is not None:
+        lines = (db.query(models.MovementLine).join(models.Movement)
+                 .filter(models.Movement.contract_id == cid,
+                         models.Movement.type == "ISSUE",
+                         models.MovementLine.material_id == body.material_id,
+                         models.MovementLine.grade_id == body.grade_id).all())
+        for ln in lines:
+            if (body.old_rate is None or ln.rate is None
+                    or abs(ln.rate - body.old_rate) < 0.005):
+                ln.rate = new_rate
+
+    # 2) Гэрээний үндсэн тариф — зөвхөн ТҮҮНИЙ тарифыг заасан үед солигдоно.
+    cur = it.unit_price if sale else it.daily_rate
+    if body.old_rate is None or abs(cur - body.old_rate) < 0.005:
+        if body.daily_rate is not None:
+            it.daily_rate = body.daily_rate
+        if body.unit_price is not None:
+            it.unit_price = body.unit_price
     db.commit()
     m = db.get(models.Material, body.material_id)
     audit.log(db, user, "update", "contract_item", cid,
@@ -186,8 +240,12 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
                          note=body.note, status=status)
     db.add(mv)
     db.flush()
+    defaults = billing.default_rates(c)
     for ln in body.lines:
+        rate = None
         if body.type == "ISSUE":
+            # Падан: хүсэлтийн тариф, эс бөгөөс гэрээний мөрийн тариф тамгална
+            rate = ln.rate if ln.rate is not None else defaults.get((ln.material_id, ln.grade_id))
             st = db.query(models.Stock).filter_by(material_id=ln.material_id, grade_id=ln.grade_id).first()
             if not st or st.on_hand < ln.qty:
                 raise HTTPException(400, "Агуулахад хүрэлцэхгүй")
@@ -206,7 +264,8 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
                 material_id=ln.material_id, grade_id=ln.grade_id).first()
             writeoff_fee = ln.qty * (price.nb_price if price else 0)
         db.add(models.MovementLine(movement_id=mv.id, material_id=ln.material_id,
-                                   grade_id=ln.grade_id, qty=ln.qty,
+                                   grade_id=ln.grade_id, qty=ln.qty, rate=rate,
+                                   issue_line_id=ln.issue_line_id,
                                    return_grade_id=ln.return_grade_id,
                                    repair_qty=ln.repair_qty, repair_fee=repair_fee,
                                    writeoff_qty=ln.writeoff_qty, writeoff_fee=writeoff_fee))

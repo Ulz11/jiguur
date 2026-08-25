@@ -43,32 +43,144 @@ def rate_map(contract: models.Contract) -> dict[tuple[int, int], float]:
     return {(it.material_id, it.grade_id): it.daily_rate for it in contract.items}
 
 
-def accrue_rent(contract: models.Contract, d_from: date, d_to: date):
-    """[d_from, d_to) хоорондох түрээсийн хуримтлал. Буцна: (нийт, мөрийн задаргаа)."""
-    rates = rate_map(contract)
-    deltas = _deltas(contract)
-    lines: dict[tuple[int, int], dict] = {}
+# ---------- падан (lot) загвар ----------
+
+def default_rates(contract: models.Contract) -> dict[tuple[int, int], float]:
+    """Гэрээний мөрийн үндсэн тариф — мөрд тариф тамгалагдаагүй үед унах утга."""
+    if contract.type == "sale":
+        return {(it.material_id, it.grade_id): it.unit_price for it in contract.items}
+    return {(it.material_id, it.grade_id): it.daily_rate for it in contract.items}
+
+
+def line_rate(contract: models.Contract, ln: models.MovementLine,
+              defaults: dict[tuple[int, int], float] | None = None) -> float:
+    """Мөрийн тариф: өөрийн тариф, байхгүй бол гэрээний мөрийн үндсэн тариф.
+
+    Хуучин (тамгалагдаагүй) мөрүүд болон тестийн туслахууд тарифгүй бичдэг тул
+    энэ уналт ХЭРЭГТЭЙ — тэдгээр нь гэрээний тарифаараа хэвээр бодогдоно.
+    """
+    if ln.rate is not None:
+        return ln.rate
+    if defaults is None:
+        defaults = default_rates(contract)
+    return defaults.get((ln.material_id, ln.grade_id), 0.0)
+
+
+def _lots(contract: models.Contract) -> list[dict]:
+    """Гэрээний бүх падан — баталгаажсан (done) ОЛГОЛТЫН мөр бүр нэг падан.
+
+    Падан бүр өөрийн тариф, огноо, тоотой. Буцаалт/акт паданг ХААНА:
+    эхлээд `issue_line_id`-аар заасан падангаас (тухайн өдрийн үлдэгдлээр
+    хязгаарлаж), үлдсэнийг нь (material, grade) дотор FIFO-гоор.
+    Хамаарал нь ХАДГАЛАГДАХГҮЙ, бодогдоно — тул хоёр паданг дамнасан буцаалт
+    өөрөө хуваагдана. Хүлээгдэж буй (pending) олголт ХЭЗЭЭ Ч тооцоонд орохгүй.
+    """
+    defaults = default_rates(contract)
+    lots: list[dict] = []
+    eats: list[tuple] = []
+    for mv in contract.movements:
+        if mv.status != "done":
+            continue
+        for ln in mv.lines:
+            key = (mv.date, mv.id, ln.id or 0)
+            if mv.type == "ISSUE":
+                lots.append({"line_id": ln.id, "material_id": ln.material_id,
+                             "grade_id": ln.grade_id, "date": mv.date, "qty": ln.qty,
+                             "rate": line_rate(contract, ln, defaults),
+                             "left": ln.qty, "consumed": [], "_key": key})
+            else:
+                eats.append((key, ln))
+    lots.sort(key=lambda l: l["_key"])
+
+    for key, ln in sorted(eats, key=lambda e: e[0]):
+        day = key[0]
+        remain = ln.qty
+        pool = [l for l in lots if l["material_id"] == ln.material_id
+                and l["grade_id"] == ln.grade_id and l["date"] <= day]
+        # 1) заасан падан — тухайн өдрийн үлдэгдлээс ИЛҮҮГ авахгүй
+        if ln.issue_line_id:
+            pinned = next((l for l in pool if l["line_id"] == ln.issue_line_id), None)
+            if pinned:
+                take = min(remain, pinned["left"])
+                if take > 0:
+                    pinned["left"] -= take
+                    pinned["consumed"].append((day, take))
+                    remain -= take
+        # 2) үлдсэнийг FIFO — хамгийн хуучин падангаас
+        for lot in pool:
+            if remain <= 0.0000001:
+                break
+            take = min(remain, lot["left"])
+            if take <= 0:
+                continue
+            lot["left"] -= take
+            lot["consumed"].append((day, take))
+            remain -= take
+
+    for lot in lots:
+        lot.pop("_key")
+        lot["consumed"].sort(key=lambda e: e[0])
+    return lots
+
+
+def _lot_qty_days(lot: dict, d_from: date, d_to: date) -> float:
+    """[d_from, d_to) дотор тухайн паданд хэдэн ш×хоног гадаа байсан бэ."""
+    start = max(lot["date"], d_from)
+    if start >= d_to:
+        return 0.0
+    q = lot["qty"]
+    cur = start
     total = 0.0
-    for key, changes in deltas.items():
-        rate = rates.get(key, 0.0)
+    for ed, eq in lot["consumed"]:
+        if ed <= start:
+            q -= eq
+            continue
+        seg_end = min(ed, d_to)
+        if seg_end > cur:
+            total += max(q, 0.0) * (seg_end - cur).days
+            cur = seg_end
+        q -= eq
+        if cur >= d_to:
+            break
+    if cur < d_to:
+        total += max(q, 0.0) * (d_to - cur).days
+    return total
+
+
+def lot_qty_on(contract: models.Contract, day: date) -> list[dict]:
+    """Өнөөдрийн байдлаар падан бүрийн үлдэгдэл (гэрээний дэлгэрэнгүйд)."""
+    out = []
+    for lot in _lots(contract):
+        if lot["date"] > day:
+            continue
+        q = lot["qty"] - sum(eq for ed, eq in lot["consumed"] if ed <= day)
+        out.append({**lot, "qty_left": max(q, 0.0)})
+    return out
+
+
+def accrue_rent(contract: models.Contract, d_from: date, d_to: date):
+    """[d_from, d_to) хоорондох түрээсийн хуримтлал. Буцна: (нийт, мөрийн задаргаа).
+
+    Падан бүрээр явна; задаргааны мөр (material, grade, ТАРИФ)-аар бүлэглэгдэнэ —
+    иймд нэг материал өөр өөр тарифтай хоёр мөр болж гарч ирж болно.
+    """
+    lines: dict[tuple[int, int, float], dict] = {}
+    total = 0.0
+    for lot in _lots(contract):
+        rate = lot["rate"]
         if rate <= 0:
             continue
-        # өдөр бүрийн qty — өөрчлөлтийн цэгүүдээр сегментчилж тоолно
-        day = d_from
-        qty_days = 0.0
-        while day < d_to:
-            q = 0.0
-            for cd, dq in changes:
-                if cd <= day:
-                    q += dq
-            q = max(q, 0.0)
-            qty_days += q
-            day += timedelta(days=1)
-        amt = qty_days * rate
-        if qty_days > 0:
-            lines[key] = {"material_id": key[0], "grade_id": key[1],
-                          "qty_days": qty_days, "rate": rate, "amount": amt}
-            total += amt
+        qty_days = _lot_qty_days(lot, d_from, d_to)
+        if qty_days <= 0:
+            continue
+        key = (lot["material_id"], lot["grade_id"], rate)
+        row = lines.get(key)
+        if row is None:
+            row = lines[key] = {"material_id": key[0], "grade_id": key[1],
+                                "qty_days": 0.0, "rate": rate, "amount": 0.0}
+        row["qty_days"] += qty_days
+        row["amount"] += qty_days * rate
+        total += qty_days * rate
     return total, list(lines.values())
 
 

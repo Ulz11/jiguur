@@ -1,4 +1,5 @@
 """Billing engine — бодит файлын тоон дээр шалгана (Блүүмийн кейс)."""
+import json
 import os
 import sys
 from datetime import date
@@ -169,3 +170,138 @@ def test_sale_invoice_from_issue(db):
     created = billing.ensure_invoices(db, c, date(2026, 6, 30))
     assert len(created) == 1
     assert created[0].total == pytest.approx(1200 * 58000)
+
+
+# ---------- Падан (lot) загвар — олголт бүр өөрийн тарифаа мөнхөд хадгална ----------
+
+def test_lot_rates_bill_independently(db):
+    """Отгоогийн Numbers дэвтрийн дүрэм: 3.20-нд 100ш 330₮-өөр, 4.1-нд 50ш 300₮-өөр
+    гарвал ЭХНИЙ падан 330-аараа, ХОЁРДАХЬ падан 300-аараа тусад нь бодогдоно."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100, rate=330)])
+    mv(db, c, "ISSUE", date(2026, 4, 1),
+       [dict(material_id=m.id, grade_id=ga.id, qty=50, rate=300)])
+
+    total, lines = billing.accrue_rent(c, date(2026, 3, 20), date(2026, 4, 19))
+
+    # 100ш × 330 × 30 хоног + 50ш × 300 × 18 хоног
+    assert total == pytest.approx(100 * 330 * 30 + 50 * 300 * 18)
+    assert total == pytest.approx(990_000 + 270_000)
+    assert total == pytest.approx(1_260_000)
+    # нэг материал+зэрэглэл ХОЁР мөр болж задарна — тариф бүрээр
+    assert len(lines) == 2
+    assert {ln["rate"] for ln in lines} == {330, 300}
+    assert all(ln["material_id"] == m.id and ln["grade_id"] == ga.id for ln in lines)
+    by_rate = {ln["rate"]: ln for ln in lines}
+    assert by_rate[330]["qty_days"] == pytest.approx(100 * 30)
+    assert by_rate[300]["qty_days"] == pytest.approx(50 * 18)
+    assert by_rate[300]["amount"] == pytest.approx(270_000)
+
+
+def test_return_fifo_consumes_oldest_lot(db):
+    """Аль паданг хаасныг заагаагүй буцаалт ХАМГИЙН ХУУЧИН паданг иднэ (FIFO):
+    4.5-нд 60ш буцахад 330₮-ийн падангаас хасагдана, 300₮-ийн падан бүрэн үлдэнэ."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100, rate=330)])
+    mv(db, c, "ISSUE", date(2026, 4, 1),
+       [dict(material_id=m.id, grade_id=ga.id, qty=50, rate=300)])
+    mv(db, c, "RETURN", date(2026, 4, 5),
+       [dict(material_id=m.id, grade_id=ga.id, qty=60, return_grade_id=gb.id)])
+
+    total, lines = billing.accrue_rent(c, date(2026, 3, 20), date(2026, 4, 19))
+
+    by_rate = {ln["rate"]: ln for ln in lines}
+    # хуучин падан: 100ш × 16 хоног (3.20–4.5) + 40ш × 14 хоног (4.5–4.19)
+    assert by_rate[330]["qty_days"] == pytest.approx(100 * 16 + 40 * 14)
+    assert by_rate[330]["amount"] == pytest.approx(2160 * 330)
+    # шинэ падан хөндөгдөөгүй: 50ш × 18 хоног
+    assert by_rate[300]["qty_days"] == pytest.approx(50 * 18)
+    assert total == pytest.approx(2160 * 330 + 900 * 300)
+    assert total == pytest.approx(712_800 + 270_000)
+
+
+def test_return_pinned_to_lot(db):
+    """Дарга 'энэ буцаалт ХОЁРДАХЬ паданг хааж байна' гэж заавал (issue_line_id)
+    FIFO-г тойрч ЯГ тэр падангаас хасагдана — хуучин падан бүрэн үлдэнэ."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100, rate=330)])
+    second = mv(db, c, "ISSUE", date(2026, 4, 1),
+                [dict(material_id=m.id, grade_id=ga.id, qty=50, rate=300)])
+    mv(db, c, "RETURN", date(2026, 4, 5),
+       [dict(material_id=m.id, grade_id=ga.id, qty=40, return_grade_id=gb.id,
+             issue_line_id=second.lines[0].id)])
+
+    total, lines = billing.accrue_rent(c, date(2026, 3, 20), date(2026, 4, 19))
+
+    by_rate = {ln["rate"]: ln for ln in lines}
+    # хуучин падан ХӨНДӨГДӨӨГҮЙ: 100ш × 30 хоног
+    assert by_rate[330]["qty_days"] == pytest.approx(100 * 30)
+    assert by_rate[330]["amount"] == pytest.approx(990_000)
+    # заасан падан: 50ш × 4 хоног (4.1–4.5) + 10ш × 14 хоног (4.5–4.19)
+    assert by_rate[300]["qty_days"] == pytest.approx(50 * 4 + 10 * 14)
+    assert by_rate[300]["amount"] == pytest.approx(340 * 300)
+    assert total == pytest.approx(990_000 + 102_000)
+    assert total == pytest.approx(1_092_000)
+
+
+def test_pending_issue_lot_not_billed(db):
+    """Дарга баталгаажуулаагүй ачилт ПАДАН БОЛОХГҮЙ — тооцоонд ер нь орохгүй."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100, rate=330)])
+    mv(db, c, "ISSUE", date(2026, 4, 1),
+       [dict(material_id=m.id, grade_id=ga.id, qty=50, rate=300)], status="pending")
+
+    lots = billing._lots(c)
+    assert len(lots) == 1
+    assert lots[0]["qty"] == 100 and lots[0]["rate"] == 330
+
+    total, lines = billing.accrue_rent(c, date(2026, 3, 20), date(2026, 4, 19))
+    assert len(lines) == 1
+    assert total == pytest.approx(100 * 330 * 30)
+    assert total == pytest.approx(990_000)
+
+
+def test_lot_rate_fallback_to_item_default(db):
+    """Тариф тамгалагдаагүй (хуучин) мөр гэрээний тарифаараа бодогдоно —
+    тамгалагдсан мөр өөрийнхөөрөө. Хоёул нэг өдөр гарсан ч ТУСДАА бодогдоно."""
+    c, m, ga, gb = setup_contract(db)          # гэрээний тариф 330
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100),                  # тарифгүй → 330
+        dict(material_id=m.id, grade_id=ga.id, qty=50, rate=300)])        # өөрийн тариф
+
+    total, lines = billing.accrue_rent(c, date(2026, 3, 20), date(2026, 4, 19))
+
+    by_rate = {ln["rate"]: ln for ln in lines}
+    assert set(by_rate) == {330, 300}
+    assert by_rate[330]["qty_days"] == pytest.approx(100 * 30)
+    assert by_rate[300]["qty_days"] == pytest.approx(50 * 30)
+    assert total == pytest.approx(100 * 330 * 30 + 50 * 300 * 30)
+    assert total == pytest.approx(990_000 + 450_000)
+    assert total == pytest.approx(1_440_000)
+
+
+def test_sale_invoice_uses_line_rate(db):
+    """Худалдаанд ч мөн адил: ачилтын мөр өөрийн нэгж үнэтэй бол ТҮҮГЭЭР
+    нэхэмжлэгдэнэ (гэрээний 58,000₮ биш, тохирсон 60,000₮-өөр)."""
+    c, m, ga, gb = setup_contract(db, ctype="sale")     # гэрээний нэгж үнэ 58,000
+    mv(db, c, "ISSUE", date(2026, 6, 29),
+       [dict(material_id=m.id, grade_id=ga.id, qty=1200, rate=60000),
+        dict(material_id=m.id, grade_id=gb.id, qty=100)])   # үнэгүй мөр → гэрээнийхээр
+
+    created = billing.ensure_invoices(db, c, date(2026, 6, 30))
+
+    assert len(created) == 1
+    inv = created[0]
+    assert inv.total == pytest.approx(1200 * 60000)     # gb-д гэрээний мөр алга → 0
+    assert inv.total == pytest.approx(72_000_000)
+    detail = json.loads(inv.detail_json)
+    assert detail[0]["rate"] == 60000
+    assert detail[0]["amount"] == pytest.approx(72_000_000)
+
+
+# ---------- Бүртгэгдсэн (booked) алданги ----------
+

@@ -153,6 +153,71 @@ def test_close_with_goods_out_400(client, as_role):
     assert r.status_code == 400
 
 
+def _confirm_pending(client, as_role, cid):
+    """Тухайн гэрээний хүлээгдэж буй бүх ачилтыг баталгаажуулна."""
+    h = as_role("darga")
+    dash = client.get("/api/dashboard", headers=h).json()
+    for p in dash["pending_shipments"]:
+        if p["contract_id"] == cid:
+            assert client.post(f"/api/movements/{p['id']}/confirm", headers=h).status_code == 200
+
+
+def test_add_movement_stamps_and_accepts_rate(client, as_role):
+    """Нэмэлт олголт өөрийн тарифтай бүртгэгдэнэ; тариф заагаагүй мөр гэрээний
+    тарифаар ТАМГАЛАГДАНА — тул хожим гэрээний тариф өөрчлөгдөхөд хөдлөхгүй."""
+    h = as_role("otgoo")
+    _, cid, m, st = make_contract(client, as_role, days_ago=40, qty=100)   # тариф 330
+    _confirm_pending(client, as_role, cid)
+
+    # 1) тарифтай нэмэлт олголт — 500₮
+    r = client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "ISSUE", "date": iso(10), "note": "Нэмэлт олголт",
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 50, "rate": 500}]})
+    assert r.status_code == 200, r.text
+    # 2) тарифгүй нэмэлт олголт — гэрээний 330-аар тамгалагдана
+    r2 = client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "ISSUE", "date": iso(5),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 30}]})
+    assert r2.status_code == 200, r2.text
+    _confirm_pending(client, as_role, cid)
+
+    d = client.get(f"/api/contracts/{cid}", headers=h).json()
+    assert d["day_amount"] == 130 * 330 + 50 * 500        # 42,900 + 25,000
+    assert d["day_amount"] == 67_900
+
+    # гэрээний тарифыг ТААРАХГҮЙ old_rate-аар солиход тамгалагдсан мөрүүд хэвээр
+    assert client.patch(f"/api/contracts/{cid}/items", headers=h, json={
+        "material_id": m["id"], "grade_id": st["grade_id"],
+        "daily_rate": 700, "old_rate": 999}).status_code == 200
+    d2 = client.get(f"/api/contracts/{cid}", headers=h).json()
+    assert d2["day_amount"] == 67_900
+
+
+def test_contract_detail_groups_items_by_rate(client, as_role):
+    """Материалын хүснэгт ПАДАНГААР задарна: нэг материал өөр тарифтай хоёр мөр."""
+    h = as_role("otgoo")
+    _, cid, m, st = make_contract(client, as_role, days_ago=40, qty=100)   # тариф 330
+    _confirm_pending(client, as_role, cid)
+    client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "ISSUE", "date": iso(10), "note": "Нэмэлт олголт",
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 50, "rate": 300}]})
+    _confirm_pending(client, as_role, cid)
+
+    rows = client.get(f"/api/contracts/{cid}", headers=h).json()["items"]
+    assert len(rows) == 2
+    by_rate = {r["daily_rate"]: r for r in rows}
+    assert set(by_rate) == {330, 300}
+    assert by_rate[330]["qty"] == 100 and by_rate[330]["day_amount"] == 33_000
+    assert by_rate[300]["qty"] == 50 and by_rate[300]["day_amount"] == 15_000
+    # UI-ийн талбарууд ХЭВЭЭР (ContractDetail.tsx өөрчлөлтгүй уншина)
+    assert {"material_id", "material", "grade_id", "grade", "qty", "daily_rate",
+            "unit_price", "day_amount", "repair_fee", "writeoff_price"} <= set(rows[0])
+    assert rows[0]["material"] == m["name"] and rows[0]["grade"] == "А"
+    assert rows[0]["repair_fee"] == 15000 and rows[0]["writeoff_price"] == 69500
+
+
+# ---------- Хөдөлгөөн засах (X5) ----------
+
 # ---------- Төлбөр ----------
 
 def test_payment_validation(client, as_role):

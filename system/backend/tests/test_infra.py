@@ -110,6 +110,53 @@ def test_schema_migrate_renders_scalar_defaults(tmp_path):
     engine.dispose()
 
 
+def test_backfill_movement_line_rates(tmp_path):
+    """Хуучин мөрүүдэд ПАДАНГИЙН тариф тамгалагдана.
+
+    Түрээсийн олголт → гэрээний daily_rate (330), худалдааных → unit_price
+    (58,000). Буцаалт NULL хэвээр (буцаалт тариф авч явдаггүй). Дахин
+    ажиллуулахад аль хэдийн бичигдсэн тарифыг ДАРЖ БИЧИХГҮЙ.
+    """
+    engine = create_engine("sqlite:///" + str(tmp_path / "old.db"))
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as s:
+        s.add_all([models.Grade(id=1, code="А", name="А", sort=1),
+                   models.Material(id=1, name="Хэв хашмал 6012", category="Хэв",
+                                   base_rate=330, repair_fee=15000),
+                   models.Client(id=1, name="БЛҮҮМ")])
+        s.flush()
+        for cid, no, typ in ((1, "24/03", "rent"), (2, "26/06", "sale")):
+            s.add(models.Contract(id=cid, no=no, client_id=1, type=typ,
+                                  start_date=date(2026, 3, 20)))
+            s.add(models.ContractItem(contract_id=cid, material_id=1, grade_id=1,
+                                      daily_rate=330, unit_price=58000))
+            s.add(models.Movement(id=cid, contract_id=cid, type="ISSUE",
+                                  date=date(2026, 3, 20), status="done"))
+            s.flush()
+            s.add(models.MovementLine(movement_id=cid, material_id=1, grade_id=1, qty=100))
+        # буцаалт — тарифгүй үлдэх ёстой
+        s.add(models.Movement(id=3, contract_id=1, type="RETURN",
+                              date=date(2026, 3, 21), status="done"))
+        s.flush()
+        s.add(models.MovementLine(movement_id=3, material_id=1, grade_id=1, qty=30))
+        s.commit()
+
+    migrate_schema(engine)
+
+    def rates():
+        with engine.connect() as c:
+            return {r[0]: r[1] for r in c.exec_driver_sql(
+                "SELECT id, rate FROM movement_lines ORDER BY id")}
+
+    assert rates() == {1: 330.0, 2: 58000.0, 3: None}
+    # idempotent — гараар засварласан тариф хэвээр үлдэнэ
+    with engine.begin() as c:
+        c.exec_driver_sql("UPDATE movement_lines SET rate = 400 WHERE id = 1")
+    migrate_schema(engine)
+    assert rates() == {1: 400.0, 2: 58000.0, 3: None}
+    engine.dispose()
+
+
 def test_schema_migrate_skips_non_sqlite():
     """Postgres дээр юу ч хийхгүй — тэнд схемийг гараар шинэчилнэ."""
     fake = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))

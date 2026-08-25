@@ -136,8 +136,14 @@ def _seed_demo(db: Session, mats, g_new, g_a, g_b):
         mv = models.Movement(contract_id=c.id, type=mtype, date=d, status=status, note=note)
         db.add(mv)
         db.flush()
+        # Падан: олголтын мөр бүр гэрээний тарифаа өөртөө авч явна
+        rates = {(i.material_id, i.grade_id): (i.unit_price if c.type == "sale" else i.daily_rate)
+                 for i in c.items}
         for ln in lines:
-            db.add(models.MovementLine(movement_id=mv.id, **ln))
+            row = dict(ln)
+            if mtype == "ISSUE" and row.get("rate") is None:
+                row["rate"] = rates.get((row["material_id"], row["grade_id"]))
+            db.add(models.MovementLine(movement_id=mv.id, **row))
         db.flush()
         db.refresh(mv)
         if status == "done":

@@ -141,6 +141,7 @@ export default function ContractDetail() {
                             const num = parseFloat(v.replace(/,/g, "")) || 0;
                             await api(`/api/contracts/${d.id}/items`, { method: "PATCH",
                               body: JSON.stringify({ material_id: it.material_id, grade_id: it.grade_id,
+                                old_rate: d.type === "rent" ? it.daily_rate : it.unit_price,
                                 ...(d.type === "rent" ? { daily_rate: num } : { unit_price: num }) }) });
                             toast("Үнэ шинэчлэгдлээ — одоогийн циклээс шинэ утгаар бодогдоно");
                             load();
@@ -402,12 +403,14 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
 function AddModal({ d, onClose, onDone }: any) {
   const toast = useToast();
   const [date, setDate] = useState(today());
-  const [rows, setRows] = useState<any[]>(d.items.map((i: any) => ({ ...i, add: 0 })));
+  const rent = d.type === "rent";
+  const [rows, setRows] = useState<any[]>(
+    d.items.map((i: any) => ({ ...i, add: 0, rate: rent ? i.daily_rate : i.unit_price })));
   const [busy, setBusy] = useState(false);
 
   async function submit() {
     const lines = rows.filter((r) => r.add > 0).map((r) => ({
-      material_id: r.material_id, grade_id: r.grade_id, qty: r.add }));
+      material_id: r.material_id, grade_id: r.grade_id, qty: r.add, rate: r.rate }));
     if (!lines.length) { toast("Нэмэх тоо оруулна уу", "err"); return; }
     setBusy(true);
     try {
@@ -422,18 +425,27 @@ function AddModal({ d, onClose, onDone }: any) {
     <Modal title="Нэмэлт олголт" onClose={onClose}>
       <label className="lbl">Огноо</label>
       <input type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
+      <div className="flex items-center gap-3 pb-1">
+        <span className="lbl !mb-0 ml-auto w-28 text-right">{rent ? "Тариф ₮/ш/хоног" : "Нэгж үнэ"}</span>
+        <span className="lbl !mb-0 w-24 text-right">Нэмэх тоо</span>
+      </div>
       {rows.map((r, i) => (
         <div key={i} className="flex items-center gap-3 py-2 border-b border-sunken last:border-0">
           <div className="min-w-0">
             <b className="text-[13.5px] text-ink">{r.material}</b>
-            <span className="block text-xs text-t3">{r.grade} · тариф {fmt(r.daily_rate)}₮</span>
+            <span className="block text-xs text-t3">{r.grade}</span>
           </div>
-          <input type="number" min={0} className="inp !min-h-10 !py-2 w-24 ml-auto" value={r.add}
+          <input type="number" min={0} className="inp !min-h-10 !py-2 w-28 ml-auto text-right" value={r.rate}
+                 onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, rate: +e.target.value } : x))} />
+          <input type="number" min={0} className="inp !min-h-10 !py-2 w-24 text-right" value={r.add}
                  onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, add: +e.target.value } : x))} />
         </div>
       ))}
+      <p className="text-[12px] text-t3 mt-2">
+        Олголт бүр өөрийн тарифаа хадгална — өмнөх олголтын тариф хэвээр үлдэнэ.
+      </p>
       {(() => {
-        const addDay = rows.reduce((s, r) => s + (r.add > 0 ? r.add * r.daily_rate : 0), 0);
+        const addDay = rows.reduce((s, r) => s + (r.add > 0 ? r.add * r.rate : 0), 0);
         const addQty = rows.reduce((s, r) => s + (r.add > 0 ? r.add : 0), 0);
         if (!addQty) return null;
         return (

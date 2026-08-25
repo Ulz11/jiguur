@@ -29,6 +29,48 @@ def test_patch_item_rate_changes_day_amount(client, as_role):
     assert d2["day_amount"] == old_day + it["qty"] * 100
 
 
+def test_patch_item_rate_propagates_to_lots_at_old_default(client, as_role):
+    """Тариф засахад ЗӨВХӨН тэр тарифтай падан шинэчлэгдэнэ.
+
+    330₮-ийн 100ш + 300₮-ийн 50ш падантай гэрээнд 330 → 400 болгоход:
+    330-ийн падан 400 болж, 300-ийн падан ХЭВЭЭР үлдэнэ."""
+    h = as_role("otgoo")
+    cl = client.post("/api/clients", json={"name": "Падан тариф ХХК"}, headers=h).json()
+    mats = client.get("/api/materials", headers=h).json()
+    m = next(x for x in mats if x["name"] == "Хэв хашмал 6012")
+    st = next(s for s in m["stock"] if s["grade"] == "А")
+    cid = client.post("/api/contracts", headers=h, json={
+        "client_id": cl["id"], "type": "rent", "start_date": iso(40),
+        "items": [{"material_id": m["id"], "grade_id": st["grade_id"],
+                   "qty": 100, "daily_rate": 330}]}).json()["id"]
+
+    def confirm():
+        hd = as_role("darga")
+        for p in client.get("/api/dashboard", headers=hd).json()["pending_shipments"]:
+            if p["contract_id"] == cid:
+                client.post(f"/api/movements/{p['id']}/confirm", headers=hd)
+
+    confirm()
+    client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "ISSUE", "date": iso(10), "note": "Нэмэлт олголт",
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 50, "rate": 300}]})
+    confirm()
+    assert client.get(f"/api/contracts/{cid}", headers=h).json()["day_amount"] == 48_000
+
+    r = client.patch(f"/api/contracts/{cid}/items", headers=h, json={
+        "material_id": m["id"], "grade_id": st["grade_id"],
+        "daily_rate": 400, "old_rate": 330})
+    assert r.status_code == 200
+    assert r.json()["daily_rate"] == 400          # гэрээний үндсэн тариф ч шинэчлэгдэв
+
+    rows = client.get(f"/api/contracts/{cid}", headers=h).json()
+    by_rate = {x["daily_rate"]: x for x in rows["items"]}
+    assert set(by_rate) == {400, 300}
+    assert by_rate[400]["qty"] == 100 and by_rate[300]["qty"] == 50
+    assert rows["day_amount"] == 100 * 400 + 50 * 300      # 40,000 + 15,000
+    assert rows["day_amount"] == 55_000
+
+
 def test_patch_loan_rate(client, as_role):
     h = as_role("sanhuu")
     l = client.get("/api/loans", headers=h).json()["loans"][0]

@@ -153,6 +153,12 @@ class MovementLine(Base):
     material_id: Mapped[int] = mapped_column(ForeignKey("materials.id"))
     grade_id: Mapped[int] = mapped_column(ForeignKey("grades.id"))          # гарсан зэрэглэл
     qty: Mapped[float] = mapped_column(Float)
+    # Падан (lot) загвар: олголт бүр өөрийн тарифаа мөнхөд хадгална. NULL бол
+    # гэрээний мөрийн (ContractItem) тариф руу унана — хуучин мөрүүдийн зан төлөв.
+    rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Буцаалт/акт аль паданг хаасныг ЗААЖ өгч болно; NULL бол FIFO-гоор өөрөө олно.
+    issue_line_id: Mapped[int | None] = mapped_column(
+        ForeignKey("movement_lines.id"), nullable=True)
     return_grade_id: Mapped[int | None] = mapped_column(ForeignKey("grades.id"), nullable=True)  # буцаж ирэхдээ ямар зэрэглэл болсон (дарга тогтооно)
     repair_qty: Mapped[float] = mapped_column(Float, default=0)     # засварт орсон тоо
     repair_fee: Mapped[float] = mapped_column(Float, default=0)     # клиентэд тооцох засварын дүн
