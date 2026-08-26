@@ -17,6 +17,9 @@ system/backend/migration/real_data.json
 system/frontend/node_modules/
 system/frontend/tsconfig.tsbuildinfo
 
+# graphify knowledge-graph output (томоохон artifact — дахин үүсгэж болно)
+graphify-out/
+
 # OS
 .DS_Store
 Thumbs.db
