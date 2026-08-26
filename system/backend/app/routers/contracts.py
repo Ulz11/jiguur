@@ -1,4 +1,5 @@
 """Гэрээ, хөдөлгөөн, нэхэмжлэл."""
+import re
 from datetime import date
 from datetime import date as _date_t
 from fastapi import APIRouter, Depends, HTTPException
@@ -6,7 +7,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from ..db import get_db
 from .. import models, schemas, serializers, auth
-from ..services import billing, pdfgen
+from ..services import billing, pdfappendix, pdfgen
 from ..services import audit
 from ..services import rebuild as rebuild_svc
 
@@ -17,6 +18,11 @@ def _maps(db: Session):
     gmap = {g.id: g.code for g in db.query(models.Grade).all()}
     mmap = {m.id: m.name for m in db.query(models.Material).all()}
     return gmap, mmap
+
+
+def _safe(name: str) -> str:
+    """Файлын нэрэнд оруулж болох тэмдэгт л үлдээнэ (R-25/01-3 → R-25-01-3)."""
+    return re.sub(r"[^0-9A-Za-z._-]+", "-", name).strip("-") or "file"
 
 
 @router.get("/contracts")
@@ -576,7 +582,26 @@ def invoice_pdf(iid: int, db: Session = Depends(get_db), user=Depends(auth.curre
     gmap, mmap = _maps(db)
     pdf = pdfgen.invoice_pdf(db, inv, gmap, mmap)
     return Response(pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'inline; filename="invoice-{inv.no}.pdf"'})
+                    headers={"Content-Disposition":
+                             f'inline; filename="invoice-{_safe(inv.no)}.pdf"'})
+
+
+@router.get("/invoices/{iid}/appendix-pdf")
+def invoice_appendix_pdf(iid: int, db: Session = Depends(get_db),
+                         user=Depends(auth.current_user)):
+    """Нэхэмжлэлийн ТҮРЭЭСИЙН ТООЦООНЫ ХАВСРАЛТ — зурвас бүрээр задалсан хуудас."""
+    inv = db.get(models.Invoice, iid)
+    if not inv:
+        raise HTTPException(404, "Олдсонгүй")
+    # Худалдааны нэхэмжлэл (мөн шилжилтийн OB- нэхэмжлэл) нь хоосон цонхтой
+    # (cycle_end == cycle_start) тул хоногоор задлах юм үгүй.
+    if inv.contract.type != "rent" or inv.cycle_end <= inv.cycle_start:
+        raise HTTPException(400, "Энэ нэхэмжлэлд түрээсийн хавсралт гаргах боломжгүй")
+    gmap, mmap = _maps(db)
+    pdf = pdfappendix.invoice_appendix_pdf(db, inv, gmap, mmap)
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             f'inline; filename="havsralt-{_safe(inv.no)}.pdf"'})
 
 
 @router.get("/contracts/{cid}/pdf")
@@ -589,7 +614,7 @@ def contract_pdf(cid: int, db: Session = Depends(get_db), user=Depends(auth.curr
     pdf = pdfgen.contract_pdf(db, c, gmap, mmap)
     return Response(pdf, media_type="application/pdf",
                     headers={"Content-Disposition":
-                             f'inline; filename="geree-{c.no.replace("/", "-")}.pdf"'})
+                             f'inline; filename="geree-{_safe(c.no)}.pdf"'})
 
 
 @router.get("/contracts/{cid}/act-pdf")
@@ -602,4 +627,25 @@ def act_pdf(cid: int, db: Session = Depends(get_db), user=Depends(auth.current_u
     gmap, mmap = _maps(db)
     pdf = pdfgen.act_pdf(db, c, gmap, mmap)
     return Response(pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'inline; filename="act-{c.no.replace("/", "-")}.pdf"'})
+                    headers={"Content-Disposition": f'inline; filename="act-{_safe(c.no)}.pdf"'})
+
+
+@router.get("/contracts/{cid}/cycle-appendix-pdf")
+def cycle_appendix_pdf(cid: int, db: Session = Depends(get_db),
+                       user=Depends(auth.current_user)):
+    """ЯВАГДАЖ БУЙ циклийн хавсралт — нэхэмжлэл хараахан үүсээгүй байхад.
+
+    Дээрх `act-pdf`-ээс ЯЛГААТАЙ нь `ensure_invoices`-ыг ЗОРИУДААР дуудахгүй:
+    `current_cycle_accrual` нь огноо ба хөдөлгөөнөөс шууд бодогддог тул энэ зам
+    үнэхээр УНШИХ хэвээр үлдэнэ.
+    """
+    c = db.get(models.Contract, cid)
+    if not c:
+        raise HTTPException(404, "Гэрээ олдсонгүй")
+    gmap, mmap = _maps(db)
+    pdf = pdfappendix.cycle_appendix_pdf(db, c, gmap, mmap)
+    if pdf is None:
+        raise HTTPException(400, "Явагдаж буй цикл алга")
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             f'inline; filename="havsralt-{_safe(c.no)}-idevhtei.pdf"'})

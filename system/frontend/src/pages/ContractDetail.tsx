@@ -102,6 +102,12 @@ export default function ContractDetail() {
         <div className="flex gap-2.5 flex-wrap">
           <button className="btn-secondary" onClick={() => openPdf(`/api/contracts/${d.id}/pdf`)}>Гэрээ PDF</button>
           <button className="btn-secondary" onClick={() => openPdf(`/api/contracts/${d.id}/act-pdf`)}>Акт PDF</button>
+          {/* `cyc` нь явагдаж буй цикл — сервер яг үүн дээр л хавсралт гаргана.
+              `openPdf` алдааг ШИДДЭГ, дуудагч нь барьдаггүй тул товчийг нуух нь засвар. */}
+          {d.type === "rent" && cyc && (
+            <button className="btn-secondary"
+                    onClick={() => openPdf(`/api/contracts/${d.id}/cycle-appendix-pdf`)}>Энэ циклийн хавсралт</button>
+          )}
           {u?.role !== "factory" && (
             <button className="btn-secondary" onClick={() => setModal("pay")}>Төлбөр бүртгэх</button>
           )}
@@ -205,8 +211,16 @@ export default function ContractDetail() {
                     <td className="td text-right tabular-nums">{money(inv.paid)}</td>
                     <td className="td"><StatePill state={inv.status} /></td>
                     <td className="td">
-                      <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px]"
-                              onClick={() => openPdf(`/api/invoices/${inv.id}/pdf`)}>PDF</button>
+                      <div className="flex gap-1">
+                        <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px]"
+                                onClick={() => openPdf(`/api/invoices/${inv.id}/pdf`)}>PDF</button>
+                        {/* Хавсралт нь ЗӨВХӨН түрээст: худалдааны нэхэмжлэлд
+                            хоногийн цонх байхгүй тул сервер 400 буцаана. */}
+                        {d.type === "rent" && (
+                          <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px]"
+                                  onClick={() => openPdf(`/api/invoices/${inv.id}/appendix-pdf`)}>Хавсралт</button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -529,6 +529,57 @@ def test_invoice_and_act_pdf(client, as_role):
     assert p2.status_code == 200 and p2.content[:4] == b"%PDF"
 
 
+def test_invoice_appendix_pdf(client, as_role):
+    """Нэхэмжлэлийн түрээсийн хавсралт — зурвас бүрээр задарсан хуудас."""
+    h = as_role("sanhuu")
+    det = client.get("/api/contracts/1", headers=h).json()
+    inv = det["invoices"][0]
+    r = client.get(f"/api/invoices/{inv['id']}/appendix-pdf", headers=h)
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+
+
+def test_cycle_appendix_pdf(client, as_role):
+    """Явагдаж буй циклийн хавсралт — гэрээ 1 (24/03) нээлттэй, 155 хоногтой
+    тул сүүлийн цикл нь дуусаагүй байна."""
+    h = as_role("sanhuu")
+    assert client.get("/api/contracts/1", headers=h).json()["cycle"], "амьд цикл байх ёстой"
+    r = client.get("/api/contracts/1/cycle-appendix-pdf", headers=h)
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+
+
+def test_appendix_pdf_rejects_an_invoice_without_a_cycle(client, as_role):
+    """Худалдааны нэхэмжлэлд түрээсийн цонх байхгүй (cycle_end == cycle_start)."""
+    h = as_role("sanhuu")
+    det = client.get("/api/contracts/5", headers=h).json()
+    assert det["type"] == "sale"
+    inv = det["invoices"][0]
+    assert client.get(f"/api/invoices/{inv['id']}/appendix-pdf", headers=h).status_code == 400
+    assert client.get("/api/contracts/5/cycle-appendix-pdf", headers=h).status_code == 400
+
+
+def test_appendix_pdf_filename_has_no_slash(client, as_role):
+    """Гэрээний дугаар `24/03` тул нэхэмжлэл нь `R-24/03-1` — түүхий `/`
+    Content-Disposition-д орвол хөтөч файлын нэрийг таслана."""
+    h = as_role("sanhuu")
+    det = client.get("/api/contracts/1", headers=h).json()
+    inv = det["invoices"][0]
+    assert "/" in inv["no"], "seed-ийн гэрээний дугаар ташуу зураастай байх ёстой"
+    r = client.get(f"/api/invoices/{inv['id']}/appendix-pdf", headers=h)
+    assert r.status_code == 200
+    assert "/" not in r.headers["content-disposition"]
+
+
+def test_invoice_pdf_filename_has_no_slash(client, as_role):
+    """Хуучин нэхэмжлэлийн PDF зам ч ижил алдаатай байсан — `_safe()` засна."""
+    h = as_role("sanhuu")
+    det = client.get("/api/contracts/1", headers=h).json()
+    inv = det["invoices"][0]
+    assert "/" in inv["no"]
+    r = client.get(f"/api/invoices/{inv['id']}/pdf", headers=h)
+    assert r.status_code == 200
+    assert "/" not in r.headers["content-disposition"]
+
+
 # ---------- Дашбоард ----------
 
 def test_dashboard_scope_sums(client, as_role):
