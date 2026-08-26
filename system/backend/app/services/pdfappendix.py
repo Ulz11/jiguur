@@ -133,16 +133,19 @@ def build_appendix(c, gmap: dict, mmap: dict, d_from: date, d_to: date, *,
 # ---------- зурах ----------
 
 def _table_header(doc: Doc) -> None:
-    """Баганы толгой. Мөрийн давталтын үед `doc.on_new_page` болж бүртгэгдэх тул
-    үргэлжлэл хуудас бүр толгойтой нээгдэнэ."""
+    """Баганы толгой — БҮРЭН нүдтэй. Мөрийн давталтын үед `doc.on_new_page` болж
+    бүртгэгдэх тул үргэлжлэл хуудас бүр толгойтой (мөн хүрээтэй) нээгдэнэ.
+
+    Толгойн шошго нь МОНГОН БАРИМТЫН чухал шошго тул тод (INK), бүдүүн, ≥9 pt —
+    урьд нь бүдэг (MUTED) 8 pt байсныг тодруулав."""
     top = doc.y
     move_down(doc, CELL_PAD_TOP)   # текстийн baseline руу бууна
-    text(doc, "Материал", size=8, bold=True, color=MUTED)
-    text(doc, "Зэрэглэл", size=8, bold=True, color=MUTED, x=COL_GRADE, width=60)
-    text(doc, "Тоо", size=8, bold=True, color=MUTED, x=COL_QTY, width=38, align="right")
-    text(doc, "Өдрийн үнэ", size=8, bold=True, color=MUTED, x=COL_RATE, width=62, align="right")
-    text(doc, "Хоног", size=8, bold=True, color=MUTED, x=COL_DAYS, width=38, align="right")
-    text(doc, "Дүн", size=8, bold=True, color=MUTED, x=COL_TOTAL, width=RIGHT - COL_TOTAL,
+    text(doc, "Материал", size=9, bold=True, color=INK)
+    text(doc, "Зэрэглэл", size=9, bold=True, color=INK, x=COL_GRADE, width=60)
+    text(doc, "Тоо", size=9, bold=True, color=INK, x=COL_QTY, width=38, align="right")
+    text(doc, "Өдрийн үнэ", size=9, bold=True, color=INK, x=COL_RATE, width=62, align="right")
+    text(doc, "Хоног", size=9, bold=True, color=INK, x=COL_DAYS, width=38, align="right")
+    text(doc, "Дүн", size=9, bold=True, color=INK, x=COL_TOTAL, width=RIGHT - COL_TOTAL,
          align="right")
     bottom = doc.y + CELL_PAD_BOT
     cell_row(doc, COLS, top, bottom)
@@ -150,14 +153,17 @@ def _table_header(doc: Doc) -> None:
 
 
 def _total_row(doc: Doc, label: str, value: float, strong: bool = False) -> None:
-    """Дүнгийн мөр — шошго нь тарифын баганаас 40 цэг зүүн талд, 110 цэгийн
-    өргөнөөр баруун тэгшилнэ (эх сурвалжийн геометр)."""
+    """Дүнгийн мөр — БҮРЭН нүдтэй (шошго | дүн).
+
+    Эдгээр нь мөнгөн дүнгийн шошго тул бүгд ТОД (INK): Дэд дүн, НӨАТ нь бүдүүн
+    бус ≥10 pt, «Нийт» нь бүдүүн, илүү том (12 pt) — урьд нь Дэд дүн/НӨАТ бүдэг
+    (MUTED) байсныг тодруулав. Шошго нь дүнгийн баганы зүүн ирмэг рүү тэгшилж,
+    хоосон зайг багасгав."""
     advance = 18 if strong else 14
     top = doc.y - CELL_PAD_TOP
-    text(doc, label, size=10 if strong else 9, bold=strong,
-         color=INK if strong else MUTED,
-         x=COL_RATE - 40, width=110, align="right")
-    text(doc, _money(value), size=11 if strong else 9, bold=strong,
+    text(doc, label, size=12 if strong else 10, bold=strong, color=INK,
+         x=COL_QTY, width=COL_TOTAL - COL_QTY - 8, align="right")
+    text(doc, _money(value), size=12 if strong else 10, bold=strong, color=INK,
          x=COL_TOTAL, width=RIGHT - COL_TOTAL, align="right")
     cell_row(doc, TOTALS_COLS, top, top + advance)
     move_down(doc, advance)

@@ -87,15 +87,27 @@ def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> byt
         p.cell(w[4], 7, _money(ch.get("amount", 0)), border=1, align="R")
         p.ln()
     p.ln(3)
-    p.set_font("dejavu", "B", 10)
+    # Нийт дүнгийн блокоос дээш нимгэн тусгаарлах зураас — уншигдацыг сайжруулна.
+    p.set_draw_color(200, 205, 210)
+    p.set_line_width(0.3)
+    p.line(p.l_margin + 110, p.get_y(), p.w - p.r_margin, p.get_y())
+    p.set_draw_color(0, 0, 0)
+    p.ln(2)
+    # НӨАТ, Төлсөн нь туслах мөр (жижиг), Нийт дүн ба Үлдэгдэл нь ЧУХАЛ дүн тул
+    # том, бүдүүн, тод болгож харьцааг тодотгов.
     if inv.vat_amount:
+        p.set_font("dejavu", "", 9)
         p.cell(0, 6, f"НӨАТ: {_money(inv.vat_amount)}", new_x="LMARGIN", new_y="NEXT", align="R")
-    p.cell(0, 7, f"Нийт дүн: {_money(inv.total)}", new_x="LMARGIN", new_y="NEXT", align="R")
+    p.set_font("dejavu", "B", 12)
+    p.cell(0, 8, f"Нийт дүн: {_money(inv.total)}", new_x="LMARGIN", new_y="NEXT", align="R")
+    p.set_font("dejavu", "", 9)
     p.cell(0, 6, f"Төлсөн: {_money(inv.paid)}", new_x="LMARGIN", new_y="NEXT", align="R")
-    p.cell(0, 7, f"Үлдэгдэл: {_money(billing.invoice_outstanding(inv))}",
+    p.set_font("dejavu", "B", 12)
+    p.cell(0, 8, f"Үлдэгдэл: {_money(billing.invoice_outstanding(inv))}",
            new_x="LMARGIN", new_y="NEXT", align="R")
     pen = billing.invoice_penalty(inv)
     if pen > 0:
+        p.set_font("dejavu", "B", 10)
         p.set_text_color(200, 30, 30)
         p.cell(0, 6, f"Алданги ({c.penalty_percent}%/хоног, {date.today()} байдлаар): {_money(pen)}",
                new_x="LMARGIN", new_y="NEXT", align="R")
@@ -253,11 +265,12 @@ def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
     p.cell(0, 6, f"Тооцоо нийлсэн огноо: {today}", new_x="LMARGIN", new_y="NEXT")
     p.ln(3)
 
-    # Нэхэмжлэлүүд цикл дарааллаар
-    p.set_font("dejavu", "B", 9)
+    # Нэхэмжлэлүүд цикл дарааллаар. Толгойн шошго (Дүн/Төлсөн/Үлдэгдэл/Алданги)
+    # нь чухал мөнгөн баганууд тул тод, бүдүүн, том (10 pt).
+    p.set_font("dejavu", "B", 10)
     w = [45, 40, 35, 35, 35]
     for i, h in enumerate(["Үе / Нэхэмжлэл", "Дүн", "Төлсөн", "Үлдэгдэл", "Алданги"]):
-        p.cell(w[i], 7, h, border=1)
+        p.cell(w[i], 8, h, border=1)
     p.ln()
     p.set_font("dejavu", "", 9)
     tot = paid = out = pen_t = 0.0
@@ -278,12 +291,13 @@ def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
         p.cell(w[1], 7, _money(cur["accrued"]), border=1, align="R")
         p.cell(w[2] + w[3] + w[4], 7, "цикл дуусаагүй", border=1)
         p.ln()
-    p.set_font("dejavu", "B", 9)
-    p.cell(w[0], 7, "Нийт", border=1)
-    p.cell(w[1], 7, _money(tot), border=1, align="R")
-    p.cell(w[2], 7, _money(paid), border=1, align="R")
-    p.cell(w[3], 7, _money(out), border=1, align="R")
-    p.cell(w[4], 7, _money(pen_t) if pen_t else "-", border=1, align="R")
+    # «Нийт» мөр — актын гол дүн тул тод, бүдүүн, том (10 pt).
+    p.set_font("dejavu", "B", 10)
+    p.cell(w[0], 8, "Нийт", border=1)
+    p.cell(w[1], 8, _money(tot), border=1, align="R")
+    p.cell(w[2], 8, _money(paid), border=1, align="R")
+    p.cell(w[3], 8, _money(out), border=1, align="R")
+    p.cell(w[4], 8, _money(pen_t) if pen_t else "-", border=1, align="R")
     p.ln(12)
 
     p.set_font("dejavu", "", 9)
