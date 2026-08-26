@@ -202,3 +202,51 @@ def test_cell_row_boxes_the_columns_without_moving_the_cursor(doc):
     # бүх координат хуудасны дотор — тор захаас хальж таслагдахгүй.
     assert all(MARGIN <= x <= doc.w - MARGIN + 0.01 for x in xs)
     assert 0 < 100 < 130 < doc.h
+
+
+# ---- Тор нь ижил, ТОД өнгөтэй (Excel «All Borders») ----
+
+def _draw_color_calls(doc, fn):
+    """`fn` ажиллах хугацаанд `set_draw_color` ямар өнгөөр дуудагдсаныг тагнаж
+    цуглуулна. fpdf2-ийн бодит арга нь өнгийг агуулгын урсгалд лениво бичдэг тул
+    дуудлагыг нь шууд тагнах нь тортой өнгийг батлах хамгийн шулуун арга."""
+    calls = []
+    orig = doc.pdf.set_draw_color
+
+    def spy(*args):
+        calls.append(args)
+        return orig(*args)
+
+    doc.pdf.set_draw_color = spy
+    try:
+        fn()
+    finally:
+        doc.pdf.set_draw_color = orig
+    return calls
+
+
+def test_grid_is_darker_than_the_soft_rule_line():
+    """Хүснэгтийн тор (GRID) нь зөөлөн section тусгаарлагч (LINE)-ээс ТОД —
+    ингэснээр дөрвөн баримт бүгд ижил, тод харагдах тортой болно. GRID = LINE
+    байвал тор бүдэг хэвээр үлдэх тул энэ ялгаа зайлшгүй."""
+    assert pdflayout.GRID != pdflayout.LINE
+    assert sum(pdflayout.GRID) < sum(pdflayout.LINE)  # RGB нийлбэр бага = бараан
+
+
+def test_vline_draws_in_the_grid_color(doc):
+    """Босоо зураас нь LINE биш, GRID өнгөөр татагдана — pdfgen-ийн border-тай
+    ижил тон."""
+    calls = _draw_color_calls(doc, lambda: pdflayout.vline(doc, MARGIN, 100, 200))
+
+    assert pdflayout.GRID in calls
+    assert pdflayout.LINE not in calls
+
+
+def test_cell_row_draws_in_the_grid_color(doc):
+    """Нэг мөрийн бүрэн тор нь GRID өнгөөр татагдана."""
+    xs = [MARGIN, 245, 315, 360, 430, 475, RIGHT]
+
+    calls = _draw_color_calls(doc, lambda: pdflayout.cell_row(doc, xs, 100, 130))
+
+    assert pdflayout.GRID in calls
+    assert pdflayout.LINE not in calls

@@ -6,8 +6,15 @@ from fpdf import FPDF
 from sqlalchemy.orm import Session
 from .. import models
 from . import billing
+from .pdflayout import GRID
 
 FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "fonts")
+
+# Хүснэгтийн тор нь ДӨРВӨН баримтад нэг ижил тонтой байхын тулд pdflayout-ийн
+# GRID-ийг хуваалцана. pdfgen нь mm нэгжтэй тул зузааныг mm-ээр — 0.18mm ≈ 0.5pt
+# буюу pdflayout-ийн GRID_W-тэй ижил зузаан. `cell(..., border=1)` бүрийн өмнө
+# `set_draw_color(*GRID)` + `set_line_width(GRID_W_MM)` дуудна.
+GRID_W_MM = 0.18
 
 
 def _pdf() -> FPDF:
@@ -65,6 +72,9 @@ def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> byt
 
     lines, charges = _invoice_detail(inv.detail_json)
 
+    # Хүснэгтийн тор — Excel маягийн жигд, тод хүрээ (дөрвөн баримт нэг тонтой).
+    p.set_draw_color(*GRID)
+    p.set_line_width(GRID_W_MM)
     p.set_font("dejavu", "B", 9)
     w = [70, 25, 30, 30, 35]
     headers = ["Материал", "Зэрэглэл", "Тоо/хоног" if c.type == "rent" else "Тоо",
@@ -86,32 +96,38 @@ def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> byt
         p.cell(w[3], 7, "", border=1)
         p.cell(w[4], 7, _money(ch.get("amount", 0)), border=1, align="R")
         p.ln()
-    p.ln(3)
-    # Нийт дүнгийн блокоос дээш нимгэн тусгаарлах зураас — уншигдацыг сайжруулна.
-    p.set_draw_color(200, 205, 210)
-    p.set_line_width(0.3)
-    p.line(p.l_margin + 110, p.get_y(), p.w - p.r_margin, p.get_y())
-    p.set_draw_color(0, 0, 0)
-    p.ln(2)
+    p.ln(4)
+    # ---- Нийт дүнгийн блок — Excel маягийн БҮРЭН хүрээтэй мини-хүснэгт ----
+    # Мөр бүр (шошго | дүн) дөрвөн талдаа хүрээтэй тул чөлөөт тоо биш, нэг
+    # ЗАЛГАА боксолсон тооцоо болж уншигдана. Дүнгийн нүд нь өгөгдлийн хүснэгтийн
+    # «Дүн» баганы (сүүлийн баганы) ЯГ доор эгнэнэ: value_w = w[-1], баруун ирмэг
+    # нь хүснэгтийн баруун ирмэгтэй (l_margin + Σw) давхцана.
+    p.set_draw_color(*GRID)
+    p.set_line_width(GRID_W_MM)
+    label_w, value_w, row_h = 80, w[-1], 8
+    x0 = p.w - p.r_margin - (label_w + value_w)
+
+    def _totals_row(label: str, value: float, *, size: float = 9,
+                    bold: bool = False, color: tuple = (0, 0, 0)) -> None:
+        p.set_x(x0)
+        p.set_font("dejavu", "B" if bold else "", size)
+        p.set_text_color(*color)
+        p.cell(label_w, row_h, label, border=1)
+        p.cell(value_w, row_h, _money(value), border=1, align="R",
+               new_x="LMARGIN", new_y="NEXT")
+        p.set_text_color(0, 0, 0)
+
     # НӨАТ, Төлсөн нь туслах мөр (жижиг), Нийт дүн ба Үлдэгдэл нь ЧУХАЛ дүн тул
-    # том, бүдүүн, тод болгож харьцааг тодотгов.
+    # том, бүдүүн, тод болгож харьцааг тодотгов; алданги улаанаар.
     if inv.vat_amount:
-        p.set_font("dejavu", "", 9)
-        p.cell(0, 6, f"НӨАТ: {_money(inv.vat_amount)}", new_x="LMARGIN", new_y="NEXT", align="R")
-    p.set_font("dejavu", "B", 12)
-    p.cell(0, 8, f"Нийт дүн: {_money(inv.total)}", new_x="LMARGIN", new_y="NEXT", align="R")
-    p.set_font("dejavu", "", 9)
-    p.cell(0, 6, f"Төлсөн: {_money(inv.paid)}", new_x="LMARGIN", new_y="NEXT", align="R")
-    p.set_font("dejavu", "B", 12)
-    p.cell(0, 8, f"Үлдэгдэл: {_money(billing.invoice_outstanding(inv))}",
-           new_x="LMARGIN", new_y="NEXT", align="R")
+        _totals_row("НӨАТ", inv.vat_amount)
+    _totals_row("Нийт дүн", inv.total, size=12, bold=True)
+    _totals_row("Төлсөн", inv.paid)
+    _totals_row("Үлдэгдэл", billing.invoice_outstanding(inv), size=12, bold=True)
     pen = billing.invoice_penalty(inv)
     if pen > 0:
-        p.set_font("dejavu", "B", 10)
-        p.set_text_color(200, 30, 30)
-        p.cell(0, 6, f"Алданги ({c.penalty_percent}%/хоног, {date.today()} байдлаар): {_money(pen)}",
-               new_x="LMARGIN", new_y="NEXT", align="R")
-        p.set_text_color(0, 0, 0)
+        _totals_row(f"Алданги ({c.penalty_percent}%/хоног, {date.today()} байдлаар)",
+                    pen, size=8, color=(200, 30, 30))
     return bytes(p.output())
 
 
@@ -225,6 +241,9 @@ def _contract_items_table(p: FPDF, c: models.Contract, gmap: dict, mmap: dict,
     heads = ["Материал", "Зэрэглэл", "Тоо/ш",
              "Тариф ₮/ш/хоног" if c.type == "rent" else "Нэгж үнэ ₮",
              "Өдрийн дүн" if c.type == "rent" else "Нийт дүн"]
+    # Хүснэгтийн тор — Excel маягийн жигд, тод хүрээ (дөрвөн баримт нэг тонтой).
+    p.set_draw_color(*GRID)
+    p.set_line_width(GRID_W_MM)
     for i, hh in enumerate(heads):
         p.cell(w[i], 7, hh, border=1, align="C")
     p.ln()
@@ -357,6 +376,9 @@ def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
     # нь чухал мөнгөн баганууд тул тод, бүдүүн, том (10 pt).
     p.set_font("dejavu", "B", 10)
     w = [45, 40, 35, 35, 35]
+    # Хүснэгтийн тор — Excel маягийн жигд, тод хүрээ (дөрвөн баримт нэг тонтой).
+    p.set_draw_color(*GRID)
+    p.set_line_width(GRID_W_MM)
     for i, h in enumerate(["Үе / Нэхэмжлэл", "Дүн", "Төлсөн", "Үлдэгдэл", "Алданги"]):
         p.cell(w[i], 8, h, border=1)
     p.ln()
