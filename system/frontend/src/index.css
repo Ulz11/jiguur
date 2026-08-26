@@ -94,9 +94,10 @@ body::before {
   }
   .inp:focus { border-color: var(--color-brand); box-shadow: 0 0 0 3px rgba(248, 135, 18, 0.18); background: #fff; }
   .lbl { @apply block text-[12px] font-semibold text-t1 mb-1.5; }
-  .th { @apply text-[11px] font-bold tracking-wider uppercase text-t3 text-left px-3 py-2.5 border-b border-line whitespace-nowrap; }
-  .td { @apply px-3 py-3.5 border-b border-line text-[13.5px] align-middle; }
-  tr:last-child .td { border-bottom: none; }
+  /* Хүснэгт бүр excel шиг бүрэн нүдтэй тор — border-collapse-аар зэргэлдээ ирмэгүүд нэг шугам болно */
+  table { border-collapse: collapse; }
+  .th { @apply text-[11px] font-bold tracking-wider uppercase text-t3 text-left px-3 py-2.5 border border-line-strong whitespace-nowrap; }
+  .td { @apply px-3 py-3.5 border border-line-strong text-[13.5px] align-middle; }
 
   /* Sidebar */
   .side-panel {
