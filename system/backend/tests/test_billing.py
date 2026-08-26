@@ -430,3 +430,152 @@ def test_ob_contract_books_zero(db):
     assert inv.penalty_booked == pytest.approx(0)
     assert inv.penalty_booked_until is None
     assert billing.invoice_penalty(inv, date(2026, 5, 9)) == pytest.approx(0)
+
+
+# ---------- сегмент задаргаа (тооцооны хавсралтад) ----------
+
+def test_accrue_rent_segments_splits_midcycle_return(db):
+    """Циклийн дундуур ирсэн буцаалт хавсралтад ХОЁР МӨР болж харагдана:
+    3.20-нд 240ш гарч, 4.1-нд 30ш буцвал 240ш×12 хоног ба 210ш×18 хоног.
+    `accrue_rent` эдгээрийг нэг мөр болгон нийлүүлдэг — хавсралт задалдаг."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20), [dict(material_id=m.id, grade_id=ga.id, qty=240)])
+    mv(db, c, "RETURN", date(2026, 4, 1), [dict(material_id=m.id, grade_id=ga.id, qty=30,
+                                                return_grade_id=gb.id)])
+
+    segs = billing.accrue_rent_segments(c, date(2026, 3, 20), date(2026, 4, 19))
+
+    assert len(segs) == 2
+    assert segs[0]["qty"] == pytest.approx(240)
+    assert segs[0]["days"] == 12
+    assert segs[0]["seg_from"] == date(2026, 3, 20)
+    assert segs[0]["seg_to"] == date(2026, 4, 1)
+    assert segs[0]["amount"] == pytest.approx(950_400)      # 240 × 12 × 330
+    assert segs[1]["qty"] == pytest.approx(210)
+    assert segs[1]["days"] == 18
+    assert segs[1]["seg_from"] == date(2026, 4, 1)
+    assert segs[1]["seg_to"] == date(2026, 4, 19)
+    assert segs[1]["amount"] == pytest.approx(1_247_400)    # 210 × 18 × 330
+    assert sum(s["amount"] for s in segs) == pytest.approx(2_197_800)
+
+
+def test_accrue_rent_segments_sum_equals_accrue_rent(db):
+    """Блүүмийн бодит кейс (3.20-нд 2131ш, 3.21-нд 306ш буцав) — сегментийн
+    нийлбэр `accrue_rent`-тэй ЯГ ТААРНА: 18,168,480₮ ба 55,056 ш×хоног.
+
+    ⚠ Энэ бол `test_proration_return_next_day`-ийн тайлбар дахь "306×1 + 1825×30"
+    гэсэн уншилтаас ӨӨР ЗАДАРГАА: тэнд буцсан 306ш-ийг 1 хоногоор, үлдсэн 1825ш-ийг
+    30 хоногоор тоолсон бол энд хугацааны зурвасаар хуваана — 2131ш×1 хоног,
+    дараа нь 1825ш×29 хоног. НИЙТ ДҮН НЬ ИЖИЛ, МӨРҮҮД НЬ ӨӨР. Хавсралт нь
+    "хэдэн ш хэдэн хоног гадаа байсан" гэдгийг харуулдаг тул зурвасаар задарна."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20), [dict(material_id=m.id, grade_id=ga.id, qty=2131)])
+    mv(db, c, "RETURN", date(2026, 3, 21), [dict(material_id=m.id, grade_id=ga.id, qty=306,
+                                                 return_grade_id=gb.id)])
+    F, T = date(2026, 3, 20), date(2026, 4, 19)
+
+    segs = billing.accrue_rent_segments(c, F, T)
+    total, lines = billing.accrue_rent(c, F, T)
+
+    assert len(segs) == 2
+    assert (segs[0]["qty"], segs[0]["days"]) == (pytest.approx(2131), 1)
+    assert segs[0]["amount"] == pytest.approx(703_230)          # 2131 × 1 × 330
+    assert (segs[1]["qty"], segs[1]["days"]) == (pytest.approx(1825), 29)
+    assert segs[1]["amount"] == pytest.approx(17_465_250)       # 1825 × 29 × 330
+    assert sum(s["amount"] for s in segs) == pytest.approx(18_168_480)
+    assert sum(s["amount"] for s in segs) == pytest.approx(total)
+    assert sum(s["qty"] * s["days"] for s in segs) == pytest.approx(55_056)
+    assert sum(s["qty"] * s["days"] for s in segs) == pytest.approx(
+        sum(ln["qty_days"] for ln in lines))
+
+
+def test_accrue_rent_segments_clips_to_the_window(db):
+    """Сегмент цонхны ГАДНА гарахгүй: 3.20-нд 100ш гарч 5.1-нд 40ш буцахад
+    эхний цикл (3.20–4.19) бүтэн нэг мөр, дараагийн цикл (4.19–5.19) буцаалтын
+    өдрөөр хоёр хуваагдана."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20), [dict(material_id=m.id, grade_id=ga.id, qty=100)])
+    mv(db, c, "RETURN", date(2026, 5, 1), [dict(material_id=m.id, grade_id=ga.id, qty=40,
+                                                return_grade_id=gb.id)])
+
+    first = billing.accrue_rent_segments(c, date(2026, 3, 20), date(2026, 4, 19))
+    assert len(first) == 1
+    assert first[0]["qty"] == pytest.approx(100)
+    assert first[0]["days"] == 30
+    assert first[0]["seg_from"] == date(2026, 3, 20)
+    assert first[0]["seg_to"] == date(2026, 4, 19)
+
+    second = billing.accrue_rent_segments(c, date(2026, 4, 19), date(2026, 5, 19))
+    assert len(second) == 2
+    assert (second[0]["qty"], second[0]["days"]) == (pytest.approx(100), 12)
+    assert second[0]["seg_from"] == date(2026, 4, 19)
+    assert second[0]["seg_to"] == date(2026, 5, 1)
+    assert (second[1]["qty"], second[1]["days"]) == (pytest.approx(60), 18)
+    assert second[1]["seg_to"] == date(2026, 5, 19)
+
+
+def test_accrue_rent_segments_ignores_pending_issues(db):
+    """Дарга баталгаажуулаагүй ачилт хавсралтад ЧУ ХАРАГДАХГҮЙ — падан болоогүй."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100, rate=330)], status="pending")
+
+    assert billing.accrue_rent_segments(c, date(2026, 3, 20), date(2026, 4, 19)) == []
+
+
+def test_accrue_rent_segments_skips_zero_rate_lots(db):
+    """Тариф 0 падан (үнэгүй олгосон бараа) мөр үүсгэхгүй — `accrue_rent`-тэй адил."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100, rate=0)])
+
+    assert billing.accrue_rent_segments(c, date(2026, 3, 20), date(2026, 4, 19)) == []
+    assert billing.accrue_rent(c, date(2026, 3, 20), date(2026, 4, 19))[0] == pytest.approx(0)
+
+
+def test_accrue_rent_segments_handles_two_lots_at_different_rates(db):
+    """Нэг материал хоёр өөр тарифаар гарсан бол хавсралтад ТУСДАА мөр болно:
+    3.20-нд 100ш 330₮-өөр (30 хоног), 4.1-нд 50ш 300₮-өөр (18 хоног)."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100, rate=330)])
+    mv(db, c, "ISSUE", date(2026, 4, 1),
+       [dict(material_id=m.id, grade_id=ga.id, qty=50, rate=300)])
+    F, T = date(2026, 3, 20), date(2026, 4, 19)
+
+    segs = billing.accrue_rent_segments(c, F, T)
+
+    assert len(segs) == 2
+    # эрэмбэ: (material, grade, ТАРИФ, эхлэл) — тул 300 нь 330-аас өмнө
+    assert [s["rate"] for s in segs] == [300, 330]
+    by_rate = {s["rate"]: s for s in segs}
+    assert (by_rate[330]["qty"], by_rate[330]["days"]) == (pytest.approx(100), 30)
+    assert by_rate[330]["amount"] == pytest.approx(990_000)
+    assert (by_rate[300]["qty"], by_rate[300]["days"]) == (pytest.approx(50), 18)
+    assert by_rate[300]["amount"] == pytest.approx(270_000)
+    assert sum(s["amount"] for s in segs) == pytest.approx(billing.accrue_rent(c, F, T)[0])
+
+
+def test_accrue_rent_segments_splits_a_return_pinned_across_two_lots(db):
+    """Заасан паданг ХЭТЭРСЭН буцаалт (50ш падангаас 70ш буцаав) үлдсэнээрээ
+    FIFO-гоор хуучин падан руу дамжина — хавсралт нь `_lots`-ийн логикийг
+    ДАВТАХГҮЙ, зөвхөн ХАДГАЛАГДАХ ЁСТОЙ тэнцлийг шалгана:
+    сегментийн нийлбэр = `accrue_rent`-ийн нийт дүн."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100, rate=330)])
+    second = mv(db, c, "ISSUE", date(2026, 4, 1),
+                [dict(material_id=m.id, grade_id=ga.id, qty=50, rate=300)])
+    mv(db, c, "RETURN", date(2026, 4, 5),
+       [dict(material_id=m.id, grade_id=ga.id, qty=70, return_grade_id=gb.id,
+             issue_line_id=second.lines[0].id)])
+    F, T = date(2026, 3, 20), date(2026, 4, 19)
+
+    segs = billing.accrue_rent_segments(c, F, T)
+    total, lines = billing.accrue_rent(c, F, T)
+
+    assert segs, "буцаалт хоёр паданг дамнасан ч мөрүүд үлдэх ёстой"
+    assert sum(s["amount"] for s in segs) == pytest.approx(total)
+    assert sum(s["qty"] * s["days"] for s in segs) == pytest.approx(
+        sum(ln["qty_days"] for ln in lines))
+    assert all(s["qty"] > 0 and s["days"] > 0 for s in segs)

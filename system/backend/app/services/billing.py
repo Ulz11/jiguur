@@ -147,6 +147,40 @@ def _lot_qty_days(lot: dict, d_from: date, d_to: date) -> float:
     return total
 
 
+def _lot_segments(lot: dict, d_from: date, d_to: date) -> list[tuple[date, date, float]]:
+    """[d_from, d_to) дотор тухайн паданг ТОГТМОЛ ТООТОЙ зурвасуудад задална.
+
+    `_lot_qty_days`-ийн ЯГ ИЖИЛ алхалт — ялгаа нь зөвхөн нийлүүлэхийн оронд
+    зурвас бүрийг (эхлэл, төгсгөл, тоо) гэж ГАРГАДАГ. Тоо нь 0 буюу сөрөг
+    зурвасыг алгасна: `max(q, 0.0)` дор тэдгээр яг 0 нэмдэг тул нийлбэр
+    өөрчлөгдөхгүй.
+
+    ТЭНЦЭЛ: sum(q * (b - a).days for a, b, q in _lot_segments(lot, f, t))
+            == _lot_qty_days(lot, f, t)
+    """
+    start = max(lot["date"], d_from)
+    if start >= d_to:
+        return []
+    q = lot["qty"]
+    cur = start
+    out: list[tuple[date, date, float]] = []
+    for ed, eq in lot["consumed"]:
+        if ed <= start:
+            q -= eq
+            continue
+        seg_end = min(ed, d_to)
+        if seg_end > cur:
+            if q > 0:
+                out.append((cur, seg_end, max(q, 0.0)))
+            cur = seg_end
+        q -= eq
+        if cur >= d_to:
+            break
+    if cur < d_to and q > 0:
+        out.append((cur, d_to, max(q, 0.0)))
+    return out
+
+
 def lot_qty_on(contract: models.Contract, day: date) -> list[dict]:
     """Өнөөдрийн байдлаар падан бүрийн үлдэгдэл (гэрээний дэлгэрэнгүйд)."""
     out = []
@@ -182,6 +216,40 @@ def accrue_rent(contract: models.Contract, d_from: date, d_to: date):
         row["amount"] += qty_days * rate
         total += qty_days * rate
     return total, list(lines.values())
+
+
+def accrue_rent_segments(contract: models.Contract, d_from: date, d_to: date) -> list[dict]:
+    """[d_from, d_to) хоорондох түрээсийн ЗУРВАС бүрийн задаргаа (зөвхөн УНШИНА).
+
+    `accrue_rent`-тэй ЯГ ИЖИЛ падангуудаар явна (тариф <= 0 паданг мөн алгасна —
+    нийлбэрийн тэнцэл үүнээс хамаарна), гэхдээ падан бүрийг тогтмол тоотой
+    зурвасуудад задалж мөр бүрд нь нэг мөр гаргана. Иймд циклийн дундуур ирсэн
+    буцаалт хавсралтад НҮДЭЭР ХАРАГДАНА: 240ш×12 хоног, дараа нь 210ш×18 хоног.
+
+    Мөр бүр: {material_id, grade_id, rate, qty, days, amount, seg_from, seg_to};
+    `days = (seg_to - seg_from).days`, `amount = qty × days × rate`, огноонууд нь
+    `date` объект (мөр биш). Эрэмбэ: (material_id, grade_id, rate, seg_from) —
+    нэг материалын зурвасууд зэрэгцэж, цаг хугацааны дарааллаар харагдана.
+
+    ТЭНЦЭЛ: sum(мөрийн amount) == accrue_rent(contract, d_from, d_to)[0]
+
+    `accrue_rent`-д ЗОРИУДААР хүрээгүй: тэр нь НЭХЭМЖЛЭХИЙН тулд зурвасуудыг
+    (material, grade, тариф)-аар НИЙЛҮҮЛДЭГ, энэ нь ХАВСРАЛТЫН тулд буцааж
+    ЗАДАЛДАГ. Хоёр өөр хэрэгцээ — нэг тоон үр дүн.
+    """
+    out: list[dict] = []
+    for lot in _lots(contract):
+        rate = lot["rate"]
+        if rate <= 0:
+            continue
+        for seg_from, seg_to, qty in _lot_segments(lot, d_from, d_to):
+            days = (seg_to - seg_from).days
+            out.append({"material_id": lot["material_id"], "grade_id": lot["grade_id"],
+                        "rate": rate, "qty": qty, "days": days,
+                        "amount": qty * days * rate,
+                        "seg_from": seg_from, "seg_to": seg_to})
+    out.sort(key=lambda s: (s["material_id"], s["grade_id"], s["rate"], s["seg_from"]))
+    return out
 
 
 def charges_in(contract: models.Contract, d_from: date, d_to: date):
