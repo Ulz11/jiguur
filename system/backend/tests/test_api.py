@@ -529,6 +529,20 @@ def test_invoice_and_act_pdf(client, as_role):
     assert p2.status_code == 200 and p2.content[:4] == b"%PDF"
 
 
+def test_sale_invoice_pdf(client, as_role):
+    """ХУДАЛДААНЫ нэхэмжлэлийн PDF. SALE-ийн detail_json нь ХАВТГАЙ жагсаалт
+    (`[{material_id,...}]`) тул `detail.get(...)`-ыг isinstance шалгахаас ӨМНӨ
+    дуудвал `AttributeError: 'list' object has no attribute 'get'` шидэж, route
+    500 болно. Гэрээ 5 (26/06) нь худалдаа — түүний нэхэмжлэлийн PDF 200 + %PDF
+    буцаах ёстой."""
+    h = as_role("sanhuu")
+    det = client.get("/api/contracts/5", headers=h).json()
+    assert det["type"] == "sale", "гэрээ 5 худалдаа байх ёстой"
+    inv = det["invoices"][0]
+    r = client.get(f"/api/invoices/{inv['id']}/pdf", headers=h)
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+
+
 def test_invoice_appendix_pdf(client, as_role):
     """Нэхэмжлэлийн түрээсийн хавсралт — зурвас бүрээр задарсан хуудас."""
     h = as_role("sanhuu")

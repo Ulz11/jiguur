@@ -28,6 +28,25 @@ def _money(v: float) -> str:
     return f"{v:,.0f}₮"
 
 
+def _invoice_detail(detail_json: str | None) -> tuple[list, list]:
+    """`inv.detail_json`-ыг (lines, charges) болгон ЗАДЛАНА.
+
+    Гурван хэлбэрийг зөвшөөрнө:
+    - ХАВТГАЙ жагсаалт `[{...}]` — ХУДАЛДААНЫ нэхэмжлэл (charges байхгүй).
+    - `{"lines": [...], "charges": [...]}` — түрээсийн нэхэмжлэл.
+    - `{"note": "..."}` — шилжилтийн OB- нэхэмжлэл (мөр ч, төлбөр ч үгүй).
+
+    isinstance-ийг ЭХЭЛЖ шалгана: жагсаалт дээр `detail.get(...)`-ыг дуудвал
+    `AttributeError: 'list' object has no attribute 'get'` шидэж, PDF route 500
+    болдог байсан (худалдааны нэхэмжлэлийн бодит production bug)."""
+    detail = json.loads(detail_json or "[]")
+    if isinstance(detail, list):
+        return detail, []
+    if isinstance(detail, dict):
+        return detail.get("lines", []), detail.get("charges", [])
+    return [], []
+
+
 def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> bytes:
     c = inv.contract
     p = _pdf()
@@ -44,9 +63,7 @@ def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> byt
     p.cell(0, 6, f"Төлөх хугацаа: {inv.due_date}", new_x="LMARGIN", new_y="NEXT")
     p.ln(4)
 
-    detail = json.loads(inv.detail_json or "[]")
-    lines = detail.get("lines", detail if isinstance(detail, list) else [])
-    charges = detail.get("charges", []) if isinstance(detail, dict) else []
+    lines, charges = _invoice_detail(inv.detail_json)
 
     p.set_font("dejavu", "B", 9)
     w = [70, 25, 30, 30, 35]
