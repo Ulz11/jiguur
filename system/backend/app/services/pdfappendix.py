@@ -24,8 +24,8 @@ from datetime import date, timedelta
 
 from . import billing
 from .pdfgen import _company, _money
-from .pdflayout import (A4, INK, MARGIN, MUTED, Doc, draw_header, ensure_space, fit,
-                        move_down, rule, start_doc, text, wrap_to_width)
+from .pdflayout import (A4, INK, MARGIN, MUTED, Doc, cell_row, draw_header, ensure_space,
+                        fit, move_down, rule, start_doc, text, wrap_to_width)
 
 # ---- Баганын байрлал: эх сурвалжаас ЯГ ХЭВЭЭР (цэгээр) ----
 RIGHT = A4[0] - MARGIN
@@ -40,6 +40,17 @@ NAME_WIDTH = COL_GRADE - MARGIN - 8
 ROW_SIZE = 8.5      # хүснэгтийн мөрийн фонт
 ROW_STEP = 16       # нэг мөрийн өндөр
 CONT_STEP = 10      # үргэлжлэл (тайлбар) мөрийн өндөр
+
+# Нүдний тор: багана бүрийн босоо зураас нь эдгээр x дээр татагдана.
+COLS = [MARGIN, COL_GRADE, COL_QTY, COL_RATE, COL_DAYS, COL_TOTAL, RIGHT]
+# Нийт дүнгийн мөрүүд зөвхөн баруун талыг эзэлдэг (шошго | дүн) — invoice-ийн
+# ердийн зохион байгуулалт.
+TOTALS_COLS = [COL_QTY, COL_TOTAL, RIGHT]
+# Текстийн baseline-аас нүдний дээд/доод ирмэг хүртэлх зай. Нийлбэр нь ЯГ
+# ROW_STEP байхаар сонгосон тул зэрэгцээ мөрүүдийн нүд ЗАЛГАА (contiguous)
+# болж, хуучин босоо хэмнэл хэвээр хадгалагдана.
+CELL_PAD_TOP = 11
+CELL_PAD_BOT = ROW_STEP - CELL_PAD_TOP   # = 5
 
 TITLE = "ТҮРЭЭСИЙН ТООЦООНЫ ХАВСРАЛТ"
 
@@ -124,6 +135,8 @@ def build_appendix(c, gmap: dict, mmap: dict, d_from: date, d_to: date, *,
 def _table_header(doc: Doc) -> None:
     """Баганы толгой. Мөрийн давталтын үед `doc.on_new_page` болж бүртгэгдэх тул
     үргэлжлэл хуудас бүр толгойтой нээгдэнэ."""
+    top = doc.y
+    move_down(doc, CELL_PAD_TOP)   # текстийн baseline руу бууна
     text(doc, "Материал", size=8, bold=True, color=MUTED)
     text(doc, "Зэрэглэл", size=8, bold=True, color=MUTED, x=COL_GRADE, width=60)
     text(doc, "Тоо", size=8, bold=True, color=MUTED, x=COL_QTY, width=38, align="right")
@@ -131,20 +144,23 @@ def _table_header(doc: Doc) -> None:
     text(doc, "Хоног", size=8, bold=True, color=MUTED, x=COL_DAYS, width=38, align="right")
     text(doc, "Дүн", size=8, bold=True, color=MUTED, x=COL_TOTAL, width=RIGHT - COL_TOTAL,
          align="right")
-    move_down(doc, 8)
-    rule(doc)
-    move_down(doc, 14)
+    bottom = doc.y + CELL_PAD_BOT
+    cell_row(doc, COLS, top, bottom)
+    doc.y = bottom + CELL_PAD_TOP   # эхний өгөгдлийн мөрийн baseline (нүд залгаа)
 
 
 def _total_row(doc: Doc, label: str, value: float, strong: bool = False) -> None:
     """Дүнгийн мөр — шошго нь тарифын баганаас 40 цэг зүүн талд, 110 цэгийн
     өргөнөөр баруун тэгшилнэ (эх сурвалжийн геометр)."""
+    advance = 18 if strong else 14
+    top = doc.y - CELL_PAD_TOP
     text(doc, label, size=10 if strong else 9, bold=strong,
          color=INK if strong else MUTED,
          x=COL_RATE - 40, width=110, align="right")
     text(doc, _money(value), size=11 if strong else 9, bold=strong,
          x=COL_TOTAL, width=RIGHT - COL_TOTAL, align="right")
-    move_down(doc, 18 if strong else 14)
+    cell_row(doc, TOTALS_COLS, top, top + advance)
+    move_down(doc, advance)
 
 
 def _multi_segment_keys(rows: list[AppendixRow]) -> set[tuple]:
@@ -202,6 +218,7 @@ def _render(ap: Appendix, company: dict, logo_path: str | None = None):
     for row in ap.rows:
         lines = _row_lines(doc, row, multi)
         ensure_space(doc, 24 + (len(lines) - 1) * CONT_STEP)
+        b0 = doc.y   # эхний мөрийн baseline — нүдний дээд ирмэгийг эндээс бодно
         text(doc, lines[0], size=ROW_SIZE)
         # Зэрэглэл нь ЧӨЛӨӨТ текст (дарга нэрийг нь өөрчилж болно) тул тооны
         # багана руу халихаас `fit`-ээр сэргийлнэ — эх сурвалжид байгаагүй.
@@ -216,18 +233,19 @@ def _render(ap: Appendix, company: dict, logo_path: str | None = None):
         for continuation in lines[1:]:
             move_down(doc, CONT_STEP)
             text(doc, continuation, size=ROW_SIZE, color=MUTED)
+        # Нүдний хүрээ нь мөрийн БҮТЭН өндрийг (үргэлжлэл мөрүүд орсон) хамарна.
+        # doc.y одоо сүүлчийн (үргэлжлэл) мөрийн baseline дээр байна.
+        cell_row(doc, COLS, b0 - CELL_PAD_TOP, doc.y + CELL_PAD_BOT)
         move_down(doc, ROW_STEP)
     # Толгойг ЦЭВЭРЛЭНЭ: доорх нийт дүнгийн блок хуудас тасалбал түүний дээр
     # хоосон хүснэгтийн толгой гарах учиргүй.
     doc.on_new_page = None
 
-    # ЗАСВАР №2: эх сурвалжид энэ блокт огт шалгалт байгаагүй. Зураас + завсар
-    # (4 + 14) дээр дүнгийн мөрүүдийг нэмж бүтнээр нь нөөцөлнө.
-    totals = 18 + 14 + (14 if ap.vat > 0 else 0) + 18
+    # ЗАСВАР №2: эх сурвалжид энэ блокт огт шалгалт байгаагүй. Нийт дүнгийн
+    # мөрүүд бүгд нүдтэй тул тэдгээрийн өндрийг бүтнээр нь нөөцөлнө.
+    totals = 8 + 14 + (14 if ap.vat > 0 else 0) + 18 + CELL_PAD_TOP + CELL_PAD_BOT
     ensure_space(doc, totals)
-    move_down(doc, 4)
-    rule(doc)
-    move_down(doc, 14)
+    move_down(doc, 8)   # хүснэгт ба нийт дүнгийн хооронд амьсгал
     _total_row(doc, "Дэд дүн", ap.subtotal)
     # НӨАТ-гүй гэрээнд «НӨАТ 0₮» гэсэн мөр нь эргэлзээ төрүүлнэ — хэвлэхгүй.
     if ap.vat > 0:

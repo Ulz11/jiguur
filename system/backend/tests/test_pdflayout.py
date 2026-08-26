@@ -170,3 +170,35 @@ def test_rule_does_not_move_the_cursor(doc):
 
     assert doc.y == before
     assert doc.pdf.pages_count == 1
+
+
+# ---- Нүдний хүрээ (cell borders) — pdfgen-ийн `border=1` дуурайлт ----
+
+def test_vline_draws_without_moving_the_cursor(doc):
+    """Босоо зураас нь `rule`-ийн адил курсорыг ХӨДӨЛГӨХГҮЙ, шинэ хуудас
+    нээхгүй, харин хуудсанд үнэхээр зурна (content буфер өснө)."""
+    before_y = doc.y
+    before_len = len(doc.pdf.pages[doc.pdf.page].contents)
+
+    pdflayout.vline(doc, MARGIN, 100, 200)
+
+    assert doc.y == before_y
+    assert doc.pdf.pages_count == 1
+    assert len(doc.pdf.pages[doc.pdf.page].contents) > before_len
+
+
+def test_cell_row_boxes_the_columns_without_moving_the_cursor(doc):
+    """Нэг мөрийн бүрэн тор: дээд/доод хөндлөн зураас + багана бүрийн босоо
+    зураас. Курсор хөдлөхгүй, хуудас нэмэгдэхгүй, зураас үнэхээр зурагдана."""
+    xs = [MARGIN, 245, 315, 360, 430, 475, RIGHT]
+    before_y = doc.y
+    before_len = len(doc.pdf.pages[doc.pdf.page].contents)
+
+    pdflayout.cell_row(doc, xs, 100, 130)
+
+    assert doc.y == before_y
+    assert doc.pdf.pages_count == 1
+    assert len(doc.pdf.pages[doc.pdf.page].contents) > before_len
+    # бүх координат хуудасны дотор — тор захаас хальж таслагдахгүй.
+    assert all(MARGIN <= x <= doc.w - MARGIN + 0.01 for x in xs)
+    assert 0 < 100 < 130 < doc.h

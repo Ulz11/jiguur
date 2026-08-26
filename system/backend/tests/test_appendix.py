@@ -179,6 +179,26 @@ def test_render_appendix_spills_onto_a_second_page():
     assert bytes(pdf.output())[:4] == b"%PDF"
 
 
+def test_render_appendix_draws_a_full_column_grid(db):
+    """Хавсралт нь зөвхөн хөндлөн `rule` биш, БҮРЭН нүдний тор зурна: багана
+    бүрийн (COL_GRADE, COL_QTY, COL_RATE, COL_DAYS, COL_TOTAL) x-координат дээр
+    БОСОО зураас гарах ёстой — pdfgen-ийн `border=1` хүснэгттэй ижил харагдац.
+    Урьд нь зөвхөн хөндлөн зураас байсан тул энэ тест улаанаар эхэлнэ."""
+    import re
+    c, m, ga, gb = issue_240(db)
+    gmap, mmap = maps(m, ga, gb)
+    ap = pdfappendix.build_appendix(c, gmap, mmap, date(2026, 3, 20), date(2026, 4, 19))
+
+    pdf = pdfappendix._render(ap, {"name": "Жигүүр Зам ХХК"})
+
+    content = b"".join(bytes(p.contents) for p in pdf.pages.values())
+    for x in (pdfappendix.COL_GRADE, pdfappendix.COL_QTY, pdfappendix.COL_RATE,
+              pdfappendix.COL_DAYS, pdfappendix.COL_TOTAL):
+        # Босоо зураас = ижил x-тэй хоёр цэг: "X.00 <ya> m X.00 <yb> l"
+        pat = (rf"{x}\.00 [0-9.]+ m {x}\.00 [0-9.]+ l").encode()
+        assert re.search(pat, content), f"багана x={x} дээр босоо зураас алга"
+
+
 def test_cycle_appendix_returns_none_without_a_live_cycle(db):
     """Худалдааны гэрээнд явагдаж буй цикл БАЙХГҮЙ тул хавсралт ч гарахгүй —
     роутер энэ `None`-ыг 400 болгож буцаана (алдаа шидэхийн оронд)."""
