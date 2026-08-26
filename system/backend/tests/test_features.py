@@ -221,6 +221,16 @@ def test_contract_pdf(client, as_role):
     assert r.status_code == 200 and r.content[:4] == b"%PDF"
 
 
+def test_sale_contract_pdf(client, as_role):
+    """Худалдааны гэрээ (гэрээ 5, 26/06) нь ТУСДАА замаар зурагдана —
+    «Худалдагч»/«Худалдан авагч» нэр томьёо. Route 200 + %PDF буцаах ёстой."""
+    h = as_role("otgoo")
+    det = client.get("/api/contracts/5", headers=h).json()
+    assert det["type"] == "sale", "гэрээ 5 худалдаа байх ёстой"
+    r = client.get("/api/contracts/5/pdf", headers=h)
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+
+
 # ============ 8. Audit log ============
 
 def test_audit_records_changes(client, as_role):

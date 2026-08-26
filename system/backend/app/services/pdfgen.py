@@ -115,13 +115,88 @@ def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> byt
     return bytes(p.output())
 
 
-def contract_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
-    """Гэрээний бүрэн хувилбар — нөхцөл, материалын жагсаалт, гарын үсэг."""
-    from . import billing
-    today = date.today()
-    company = _company(db)
-    p = _pdf()
+# ---------- Гэрээ — ТҮРЭЭС ба ХУДАЛДААГ тус тусад нь ----------
+# Худалдааны гэрээ урьд нь бүхэлдээ ТҮРЭЭСИЙН нэр томьёо («Түрээслүүлэгч/эгч»)
+# болон түрээсийн үүрэг (хүлээлгэн өгч буцаан авах) хэрэглэдэг байсан нь
+# худалдаанд ХУУЛЬ ЗҮЙН хувьд буруу. Ялгааг цэвэр туслахуудад (дор) буулгаж,
+# тест хийх боломжтой болгов.
 
+
+def _party_labels(ctype: str) -> tuple[str, str]:
+    """(компанийн үүрэг, харилцагчийн үүрэг) — гэрээний төрлөөр.
+
+    Түрээс: компани «Түрээслүүлэгч», харилцагч «Түрээслэгч».
+    Худалдаа: компани «Худалдагч», харилцагч «Худалдан авагч»."""
+    if ctype == "sale":
+        return "Худалдагч", "Худалдан авагч"
+    return "Түрээслүүлэгч", "Түрээслэгч"
+
+
+def _payment_clauses(c: models.Contract, day_total: float, sale_total: float) -> list[str]:
+    """§2 Төлбөрийн нөхцлийн дугаарласан заалтууд — гэрээний төрлөөр.
+
+    Түрээс: циклийн нэхэмжлэл + тооцооны эхлэл/төгсгөл. Худалдаа: нийт дүн +
+    төлөх үүрэг + (сонголтоор) урьдчилгаа. Аль алинд НӨАТ ба алдангийг гэрээнд
+    заасан бол нэмнэ. Дугаарлалт нь одоо байгаа заалтын тооноос үргэлжилнэ."""
+    lines: list[str] = []
+    if c.type == "sale":
+        lines.append(f"2.1. Худалдааны нийт дүн {_money(sale_total)}.")
+    else:
+        lines += [
+            f"2.1. Түрээсийн төлбөрийг {c.cycle_days} хоног тутам тооцож нэхэмжлэнэ. "
+            f"Нэг циклийн дүн ойролцоогоор {_money(day_total * c.cycle_days)}.",
+            "2.2. Түрээсийн тооцоо бараа гарсан өдрөөс эхэлж, буцаан хүлээлгэж өгсөн "
+            "өдрөөр дуусна. Дундуур буцаасан бараанд ашигласан хоногоор нь тооцно.",
+        ]
+    if c.vat_percent:
+        lines.append(f"2.{len(lines)+1}. Дээрх дүнд НӨАТ {c.vat_percent:g}% нэмж тооцно.")
+    if c.type == "sale":
+        lines.append(f"2.{len(lines)+1}. Худалдан авагч төлбөрөө гэрээнд заасан хугацаанд "
+                     "бүрэн төлнө.")
+    if c.penalty_percent:
+        lines.append(f"2.{len(lines)+1}. Төлбөрийн хугацаа хэтэрсэн тохиолдолд хугацаа "
+                     f"хэтэрсэн дүнгээс өдөрт {c.penalty_percent:g}% алданги тооцно.")
+    if c.deposit:
+        if c.type == "sale":
+            lines.append(f"2.{len(lines)+1}. Худалдан авагч {_money(c.deposit)} урьдчилгаа "
+                         "төлж, үлдэгдэл төлбөрийг тохиролцсон хугацаанд төлнө.")
+        else:
+            lines.append(f"2.{len(lines)+1}. Түрээслэгч {_money(c.deposit)} барьцаа төлнө. "
+                         "Гэрээ дуусахад барьцааг буцаах эсвэл үлдэгдэл төлбөрт суутгана.")
+    return lines
+
+
+def _obligation_clauses(ctype: str) -> list[str]:
+    """§3 Талуудын үүргийн дугаарласан заалтууд — гэрээний төрлөөр.
+
+    Түрээс: хүлээлгэн өгөх, зориулалтаар ашиглах, буцаан үнэлэх. Худалдаа:
+    бүрэн бүтэн хүлээлгэн өгч ӨМЧЛӨХ ЭРХ шилжүүлэх, төлбөр төлөх, эрсдэл
+    хүлээлгэн өгсөн үеэс шилжих, буцаалт/баталгаат засвар тохиролцоогоор."""
+    company_label, client_label = _party_labels(ctype)
+    if ctype == "sale":
+        return [
+            f"3.1. {company_label} нь гэрээнд заасан бараа материалыг бүрэн бүтэн, "
+            "зохих чанартайгаар хүлээлгэн өгч, өмчлөх эрхийг шилжүүлнэ.",
+            f"3.2. {client_label} нь гэрээнд заасан төлбөрийг хугацаанд нь бүрэн төлнө.",
+            f"3.3. Барааны өмчлөх эрх болон эрсдэл нь бараа хүлээлгэн өгсөн үеэс "
+            f"{client_label}-д шилжинэ.",
+            "3.4. Барааг буцаах болон баталгаат засварыг талууд харилцан тохиролцсоны "
+            "үндсэн дээр шийдвэрлэнэ.",
+            "3.5. Тээвэрлэлтийн зардлыг талууд тухай бүрд тохиролцоно.",
+        ]
+    return [
+        f"3.1. {company_label} нь гэрээнд заасан бараа материалыг бүрэн бүтэн байдлаар "
+        "хүлээлгэн өгнө.",
+        f"3.2. {client_label} нь бараа материалыг зориулалтын дагуу ашиглаж, гэмтээсэн "
+        "тохиолдолд засварын зардлыг, ашиглах боломжгүй болгосон бол актын үнийг төлнө.",
+        "3.3. Буцаан авахдаа барааг шинэ/хуучин зэрэглэлээр нь дахин үнэлж хүлээн авна.",
+        "3.4. Тээвэрлэлтийн зардлыг талууд тухай бүрд тохиролцоно.",
+    ]
+
+
+def _contract_header(p: FPDF, company: str, c: models.Contract,
+                     company_label: str, client_label: str) -> None:
+    """Гарчиг, №, огноо, оршил — үүргийн шошгоор параметрлэгдсэн (хуваалцсан)."""
     p.set_font("dejavu", "B", 13)
     p.cell(0, 8, ("ТҮРЭЭСИЙН ГЭРЭЭ" if c.type == "rent" else "ХУДАЛДААНЫ ГЭРЭЭ"),
            align="C", new_x="LMARGIN", new_y="NEXT")
@@ -130,16 +205,19 @@ def contract_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> byt
     p.ln(3)
     p.cell(0, 6, f"Улаанбаатар хот{' ' * 40}{c.start_date}", new_x="LMARGIN", new_y="NEXT")
     p.ln(3)
-
     p.set_font("dejavu", "", 9.5)
     p.multi_cell(0, 5.5,
-        f"Нэг талаас {company} (цаашид «Түрээслүүлэгч» гэх), нөгөө талаас "
+        f"Нэг талаас {company} (цаашид «{company_label}» гэх), нөгөө талаас "
         f"{c.client.name}{f' (РД: {c.client.reg})' if c.client.reg else ''} "
-        f"(цаашид «Түрээслэгч» гэх) нар дараах нөхцөлөөр харилцан тохиролцож "
+        f"(цаашид «{client_label}» гэх) нар дараах нөхцөлөөр харилцан тохиролцож "
         f"энэхүү гэрээг байгуулав.")
     p.ln(3)
 
-    # ---- 1. Гэрээний зүйл ----
+
+def _contract_items_table(p: FPDF, c: models.Contract, gmap: dict, mmap: dict,
+                          today: date) -> tuple[float, float]:
+    """§1 Гэрээний зүйл — материалын жагсаалт (хуваалцсан). (day_total, sale_total)
+    буцаана; тэдгээрийг §2 төлбөрийн нөхцөлд ашиглана."""
     p.set_font("dejavu", "B", 10)
     p.cell(0, 7, "1. Гэрээний зүйл", new_x="LMARGIN", new_y="NEXT")
     p.set_font("dejavu", "B", 8.5)
@@ -151,9 +229,7 @@ def contract_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> byt
         p.cell(w[i], 7, hh, border=1, align="C")
     p.ln()
     p.set_font("dejavu", "", 8.5)
-    day_total = 0.0
-    sale_total = 0.0
-    total_qty = 0.0
+    day_total = sale_total = total_qty = 0.0
     for it in c.items:
         q = billing.qty_on(c, it.material_id, it.grade_id, today)
         if q <= 0 and c.type == "rent":
@@ -182,60 +258,16 @@ def contract_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> byt
     p.cell(w[3], 7, "", border=1)
     p.cell(w[4], 7, _money(day_total if c.type == "rent" else sale_total), border=1, align="R")
     p.ln(10)
+    return day_total, sale_total
 
-    # ---- 2. Төлбөрийн нөхцөл ----
-    p.set_font("dejavu", "B", 10)
-    p.cell(0, 7, "2. Төлбөрийн нөхцөл", new_x="LMARGIN", new_y="NEXT")
-    p.set_font("dejavu", "", 9.5)
-    lines = []
-    if c.type == "rent":
-        lines += [
-            f"2.1. Түрээсийн төлбөрийг {c.cycle_days} хоног тутам тооцож нэхэмжлэнэ. "
-            f"Нэг циклийн дүн ойролцоогоор {_money(day_total * c.cycle_days)}.",
-            "2.2. Түрээсийн тооцоо бараа гарсан өдрөөс эхэлж, буцаан хүлээлгэж өгсөн "
-            "өдрөөр дуусна. Дундуур буцаасан бараанд ашигласан хоногоор нь тооцно.",
-        ]
-    else:
-        lines += [f"2.1. Худалдааны нийт дүн {_money(sale_total)}."]
-    if c.vat_percent:
-        lines.append(f"2.{len(lines)+1}. Дээрх дүнд НӨАТ {c.vat_percent:g}% нэмж тооцно.")
-    if c.penalty_percent:
-        lines.append(f"2.{len(lines)+1}. Төлбөрийн хугацаа хэтэрсэн тохиолдолд хугацаа "
-                     f"хэтэрсэн дүнгээс өдөрт {c.penalty_percent:g}% алданги тооцно.")
-    if c.deposit:
-        lines.append(f"2.{len(lines)+1}. Түрээслэгч {_money(c.deposit)} барьцаа төлнө. "
-                     f"Гэрээ дуусахад барьцааг буцаах эсвэл үлдэгдэл төлбөрт суутгана.")
-    for t in lines:
-        p.multi_cell(0, 5.5, t)
-        p.ln(1)
-    p.ln(2)
 
-    # ---- 3. Талуудын үүрэг ----
-    p.set_font("dejavu", "B", 10)
-    p.cell(0, 7, "3. Талуудын үүрэг", new_x="LMARGIN", new_y="NEXT")
-    p.set_font("dejavu", "", 9.5)
-    for t in [
-        "3.1. Түрээслүүлэгч нь гэрээнд заасан бараа материалыг бүрэн бүтэн байдлаар "
-        "хүлээлгэн өгнө.",
-        "3.2. Түрээслэгч нь бараа материалыг зориулалтын дагуу ашиглаж, гэмтээсэн "
-        "тохиолдолд засварын зардлыг, ашиглах боломжгүй болгосон бол актын үнийг төлнө.",
-        "3.3. Буцаан авахдаа барааг шинэ/хуучин зэрэглэлээр нь дахин үнэлж хүлээн авна.",
-        "3.4. Тээвэрлэлтийн зардлыг талууд тухай бүрд тохиролцоно.",
-    ]:
-        p.multi_cell(0, 5.5, t)
-        p.ln(1)
-    if c.note:
-        p.ln(1)
-        p.set_font("dejavu", "B", 9.5)
-        p.cell(0, 6, "Нэмэлт нөхцөл:", new_x="LMARGIN", new_y="NEXT")
-        p.set_font("dejavu", "", 9.5)
-        p.multi_cell(0, 5.5, c.note)
-    p.ln(8)
-
-    # ---- Гарын үсэг ----
+def _contract_signatures(p: FPDF, company: str, c: models.Contract,
+                         company_label: str, client_label: str) -> None:
+    """Гарын үсгийн блок — үүргийн шошгоор параметрлэгдсэн (хуваалцсан).
+    Түрээс: ТҮРЭЭСЛҮҮЛЭГЧ/ТҮРЭЭСЛЭГЧ. Худалдаа: ХУДАЛДАГЧ/ХУДАЛДАН АВАГЧ."""
     p.set_font("dejavu", "B", 9.5)
-    p.cell(95, 6, "ТҮРЭЭСЛҮҮЛЭГЧ", new_x="RIGHT")
-    p.cell(0, 6, "ТҮРЭЭСЛЭГЧ", new_x="LMARGIN", new_y="NEXT")
+    p.cell(95, 6, company_label.upper(), new_x="RIGHT")
+    p.cell(0, 6, client_label.upper(), new_x="LMARGIN", new_y="NEXT")
     p.set_font("dejavu", "", 9.5)
     p.cell(95, 6, company, new_x="RIGHT")
     p.cell(0, 6, c.client.name, new_x="LMARGIN", new_y="NEXT")
@@ -246,7 +278,63 @@ def contract_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> byt
     p.cell(95, 5, "(гарын үсэг, тамга)", new_x="RIGHT")
     p.cell(0, 5, f"(гарын үсэг, тамга){'  ' + c.client.person if c.client.person else ''}",
            new_x="LMARGIN", new_y="NEXT")
+
+
+def _compose_contract(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
+    """Гэрээг угсрах хуваалцсан цөм — ялгаа нь бүхэлдээ дээрх цэвэр туслахуудад
+    (нэр томьёо, төлбөр, үүрэг) байх тул түрээс/худалдаа хоёулаа ЭНД нийлнэ."""
+    today = date.today()
+    company = _company(db)
+    company_label, client_label = _party_labels(c.type)
+    p = _pdf()
+
+    _contract_header(p, company, c, company_label, client_label)
+    day_total, sale_total = _contract_items_table(p, c, gmap, mmap, today)
+
+    # ---- 2. Төлбөрийн нөхцөл ----
+    p.set_font("dejavu", "B", 10)
+    p.cell(0, 7, "2. Төлбөрийн нөхцөл", new_x="LMARGIN", new_y="NEXT")
+    p.set_font("dejavu", "", 9.5)
+    for t in _payment_clauses(c, day_total, sale_total):
+        p.multi_cell(0, 5.5, t)
+        p.ln(1)
+    p.ln(2)
+
+    # ---- 3. Талуудын үүрэг ----
+    p.set_font("dejavu", "B", 10)
+    p.cell(0, 7, "3. Талуудын үүрэг", new_x="LMARGIN", new_y="NEXT")
+    p.set_font("dejavu", "", 9.5)
+    for t in _obligation_clauses(c.type):
+        p.multi_cell(0, 5.5, t)
+        p.ln(1)
+    if c.note:
+        p.ln(1)
+        p.set_font("dejavu", "B", 9.5)
+        p.cell(0, 6, "Нэмэлт нөхцөл:", new_x="LMARGIN", new_y="NEXT")
+        p.set_font("dejavu", "", 9.5)
+        p.multi_cell(0, 5.5, c.note)
+    p.ln(8)
+
+    _contract_signatures(p, company, c, company_label, client_label)
     return bytes(p.output())
+
+
+def contract_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
+    """Гэрээний бүрэн хувилбар. Түрээс ба худалдааны гэрээ нэр томьёо, төлбөрийн
+    нөхцөл, талуудын үүргээрээ ЯЛГААТАЙ тул төрлөөр нь салгаж зурна."""
+    if c.type == "sale":
+        return _sale_contract_pdf(db, c, gmap, mmap)
+    return _rental_contract_pdf(db, c, gmap, mmap)
+
+
+def _rental_contract_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
+    """Түрээсийн гэрээ — «Түрээслүүлэгч»/«Түрээслэгч», циклийн төлбөр, буцаалт."""
+    return _compose_contract(db, c, gmap, mmap)
+
+
+def _sale_contract_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
+    """Худалдааны гэрээ — «Худалдагч»/«Худалдан авагч», нийт дүн, өмчлөл шилжих."""
+    return _compose_contract(db, c, gmap, mmap)
 
 
 def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
