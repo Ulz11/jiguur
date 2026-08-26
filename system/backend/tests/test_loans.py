@@ -77,3 +77,96 @@ def test_dashboard_has_real_loan_upcoming(client, as_role):
     assert len(d["loans_upcoming"]) >= 1
     row = d["loans_upcoming"][0]
     assert {"name", "amount", "due"} <= set(row.keys())
+
+
+# ---------- Inline засвар — суурь талбарууд (base-driven) ----------
+
+def _mk_loan(client, h, **over):
+    body = {"name": "Засвар тест", "kind": "bank", "principal": 1_000_000,
+            "monthly_rate": 2.0, "start_date": iso(30)}
+    body.update(over)
+    return client.post("/api/loans", headers=h, json=body).json()
+
+
+def test_patch_loan_principal_updates_balance(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h)["id"]
+    r = client.patch(f"/api/loans/{lid}", headers=h, json={"principal": 1_200_000})
+    assert r.status_code == 200
+    assert r.json()["principal"] == 1_200_000
+    assert r.json()["balance"] == 1_200_000
+    assert r.json()["monthly_due"] == 24_000   # 1,200,000 × 2%
+
+
+def test_patch_loan_principal_rejects_below_principal_paid(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h)["id"]
+    client.post(f"/api/loans/{lid}/payments", headers=h,
+                json={"date": iso(10), "amount": 300_000, "part": "principal"})
+    r = client.patch(f"/api/loans/{lid}", headers=h, json={"principal": 200_000})
+    assert r.status_code == 400
+
+
+def test_patch_loan_start_date_updates_next_due(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h, start_date="2026-01-10")["id"]
+    r = client.patch(f"/api/loans/{lid}", headers=h, json={"start_date": "2026-03-05"})
+    assert r.status_code == 200
+    assert r.json()["start_date"] == "2026-03-05"
+    assert r.json()["next_due"].endswith("-05")   # сарын өдөр 5-аар дагана
+
+
+def test_patch_loan_status(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h)["id"]
+    r = client.patch(f"/api/loans/{lid}", headers=h, json={"status": "closed"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "closed"
+    assert client.patch(f"/api/loans/{lid}", headers=h,
+                        json={"status": "нээх"}).status_code == 400
+
+
+# ---------- Төлөлт засах / устгах ----------
+
+def test_edit_loan_payment(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h)["id"]
+    r0 = client.post(f"/api/loans/{lid}/payments", headers=h,
+                     json={"date": iso(10), "amount": 20_000, "part": "interest"}).json()
+    pid = r0["payments"][0]["id"]
+    # хүү 20,000 → 25,000
+    r = client.patch(f"/api/loans/{lid}/payments/{pid}", headers=h,
+                     json={"date": iso(10), "amount": 25_000, "part": "interest"})
+    assert r.status_code == 200
+    assert r.json()["interest_paid"] == 25_000
+    assert r.json()["balance"] == 1_000_000
+    # part-ыг principal болгоход үлдэгдэл буурна
+    r2 = client.patch(f"/api/loans/{lid}/payments/{pid}", headers=h,
+                      json={"date": iso(10), "amount": 25_000, "part": "principal"})
+    assert r2.status_code == 200
+    assert r2.json()["interest_paid"] == 0
+    assert r2.json()["balance"] == 975_000
+
+
+def test_edit_loan_payment_rejects_principal_over_balance(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h)["id"]
+    r0 = client.post(f"/api/loans/{lid}/payments", headers=h,
+                     json={"date": iso(10), "amount": 100_000, "part": "principal"}).json()
+    pid = r0["payments"][0]["id"]
+    r = client.patch(f"/api/loans/{lid}/payments/{pid}", headers=h,
+                     json={"date": iso(10), "amount": 1_500_000, "part": "principal"})
+    assert r.status_code == 400
+
+
+def test_delete_loan_payment(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h)["id"]
+    r0 = client.post(f"/api/loans/{lid}/payments", headers=h,
+                     json={"date": iso(10), "amount": 300_000, "part": "principal"}).json()
+    assert r0["balance"] == 700_000
+    pid = r0["payments"][0]["id"]
+    r = client.delete(f"/api/loans/{lid}/payments/{pid}", headers=h)
+    assert r.status_code == 200
+    assert r.json()["balance"] == 1_000_000
+    assert all(p["id"] != pid for p in r.json()["payments"])

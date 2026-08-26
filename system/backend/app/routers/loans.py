@@ -85,17 +85,72 @@ class LoanPatch(BaseModel):
     kind: str | None = None
     monthly_rate: float | None = None
     note: str | None = None
+    principal: float | None = None
+    start_date: date | None = None
+    status: str | None = None
 
 
 @router.patch("/loans/{lid}")
 def patch_loan(lid: int, body: LoanPatch, db: Session = Depends(get_db), user=Depends(guard)):
-    """Inline засвар — зээлийн нөхцөл (хүү өөрчлөгдвөл сарын төлбөр дагаж өөрчлөгдөнө)."""
+    """Inline засвар — суурь талбарууд (үлдэгдэл, сарын төлбөр дагаж бодогдоно)."""
     l = db.get(models.Loan, lid)
     if not l:
         raise HTTPException(404, "Зээл олдсонгүй")
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    # ---- Валидаци (мутаци хийхээс ӨМНӨ) ----
+    if "principal" in data:
+        principal_paid = sum(p.amount for p in l.payments if p.part == "principal")
+        if data["principal"] <= 0 or data["principal"] < principal_paid - 0.01:
+            raise HTTPException(400, "Үндсэн дүн төлсөн үндсэн төлбөрөөс багагүй байх ёстой")
+    if "status" in data and data["status"] not in ("active", "closed"):
+        raise HTTPException(400, "Төлөв active эсвэл closed байна")
+    for k, v in data.items():
         setattr(l, k, v)
     db.commit()
+    return ser(l, date.today())
+
+
+def _get_payment(db: Session, lid: int, pid: int):
+    l = db.get(models.Loan, lid)
+    if not l:
+        raise HTTPException(404, "Зээл олдсонгүй")
+    p = db.get(models.LoanPayment, pid)
+    if not p or p.loan_id != lid:
+        raise HTTPException(404, "Төлөлт олдсонгүй")
+    return l, p
+
+
+@router.patch("/loans/{lid}/payments/{pid}")
+def edit_loan_payment(lid: int, pid: int, body: LoanPayIn,
+                      db: Session = Depends(get_db), user=Depends(guard)):
+    """Бүртгэсэн төлөлтийг засах — бүх талбар шинэ бүтэн утгаараа."""
+    l, p = _get_payment(db, lid, pid)
+    if body.part not in ("interest", "principal"):
+        raise HTTPException(400, "part нь interest эсвэл principal байна")
+    if body.amount <= 0:
+        raise HTTPException(400, "Дүн 0-ээс их байх ёстой")
+    p.date, p.amount, p.part, p.note = body.date, body.amount, body.part, body.note
+    db.flush()
+    db.refresh(l)
+    if L.loan_balance(l) < -0.01:
+        db.rollback()
+        raise HTTPException(400, "Үлдэгдлээс их үндсэн төлбөр")
+    db.commit()
+    db.refresh(l)
+    if L.loan_balance(l) <= 0.01:
+        l.status = "closed"
+        db.commit()
+    return ser(l, date.today())
+
+
+@router.delete("/loans/{lid}/payments/{pid}")
+def delete_loan_payment(lid: int, pid: int,
+                        db: Session = Depends(get_db), user=Depends(guard)):
+    """Төлөлтийг устгах — үлдэгдэл дагаж өснө."""
+    l, p = _get_payment(db, lid, pid)
+    db.delete(p)
+    db.commit()
+    db.refresh(l)
     return ser(l, date.today())
 
 

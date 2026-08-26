@@ -120,7 +120,7 @@ export function Spinner() {
 }
 
 /* ---------- Inline editor (2 алхамт баталгаажуулалттай) ---------- */
-export function InlineEdit({ value, display, onSave, type = "text", suffix = "", confirmText = "Хадгалах уу?", width = "w-24", right }: {
+export function InlineEdit({ value, display, onSave, type = "text", suffix = "", confirmText = "Хадгалах уу?", width = "w-24", right, options }: {
   value: string | number | null | undefined;
   display?: string;
   onSave: (v: string) => Promise<void> | void;
@@ -129,6 +129,7 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   confirmText?: string;
   width?: string;
   right?: boolean;
+  options?: [string, string][];   // [value, label] — өгвөл <select> болно
 }) {
   const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
   const [val, setVal] = useState("");
@@ -150,10 +151,19 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   }
   return (
     <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-      <input autoFocus type={type}
-        className={`inp !min-h-8 !py-1 !px-2 !rounded-lg !text-[13px] ${width} ${right ? "text-right" : ""}`}
-        value={val} onChange={(e) => setVal(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }} />
+      {options ? (
+        <select autoFocus
+          className={`inp !min-h-8 !py-1 !px-2 !rounded-lg !text-[13px] ${width}`}
+          value={val} onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }}>
+          {options.map(([v, lb]) => <option key={v} value={v}>{lb}</option>)}
+        </select>
+      ) : (
+        <input autoFocus type={type}
+          className={`inp !min-h-8 !py-1 !px-2 !rounded-lg !text-[13px] ${width} ${right ? "text-right" : ""}`}
+          value={val} onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }} />
+      )}
       {mode === "edit" ? (
         <>
           <button className="w-7 h-7 rounded-lg bg-brand-50 text-brand font-bold shrink-0" onClick={() => setMode("confirm")}>✓</button>

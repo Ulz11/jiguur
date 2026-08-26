@@ -3,6 +3,7 @@ import { api, money, sayaFmt } from "../api";
 import { Spinner, Modal, useToast, Empty, InlineEdit, Receipt } from "../ui";
 
 const today = () => new Date().toISOString().slice(0, 10);
+const kindLabel = (k: string) => (k === "bank" ? "Банк" : k === "private" ? "Хувь" : "Кредит");
 
 export default function Loans() {
   const [d, setD] = useState<any>(null);
@@ -12,6 +13,35 @@ export default function Loans() {
 
   const load = () => api("/api/loans").then(setD).catch((e) => toast(e.message, "err"));
   useEffect(() => { load(); }, []);
+
+  // Inline засвар: амжилтгүй бол алдааг toast-оор гаргаж, InlineEdit-д дахин throw хийнэ
+  // (тэгснээр edit горимоос гарахгүй).
+  const doPatch = async (url: string, body: any, msg: string) => {
+    try {
+      await api(url, { method: "PATCH", body: JSON.stringify(body) });
+      toast(msg); load();
+    } catch (e: any) { toast(e.message, "err"); throw e; }
+  };
+  const savePay = (l: any, p: any, body: any, msg = "Төлөлт шинэчлэгдлээ") =>
+    doPatch(`/api/loans/${l.id}/payments/${p.id}`,
+      { date: p.date, amount: p.amount, part: p.part, note: p.note, ...body }, msg);
+  const delPay = async (l: any, p: any) => {
+    if (!confirm("Энэ төлөлтийг устгах уу?")) return;
+    try {
+      await api(`/api/loans/${l.id}/payments/${p.id}`, { method: "DELETE" });
+      toast("Төлөлт устгагдлаа"); load();
+    } catch (e: any) { toast(e.message, "err"); }
+  };
+  const toggleStatus = async (l: any) => {
+    const closing = l.status === "active";
+    if (!confirm(closing ? "Зээлийг хаах уу?" : "Зээлийг дахин нээх үү?")) return;
+    try {
+      await api(`/api/loans/${l.id}`, { method: "PATCH",
+        body: JSON.stringify({ status: closing ? "closed" : "active" }) });
+      toast(closing ? "Зээл хаагдлаа" : "Зээл сэргээгдлээ"); load();
+    } catch (e: any) { toast(e.message, "err"); }
+  };
+
   if (!d) return <Spinner />;
   const s = d.summary;
 
@@ -60,26 +90,36 @@ export default function Loans() {
               <Fragment key={l.id}>
                 <tr className="cursor-pointer hover:bg-canvas transition"
                     onClick={() => setOpen(open === l.id ? null : l.id)}>
-                  <td className="td">
-                    <span className="font-bold text-ink">{l.name}</span>
-                    <span className="block text-xs text-t3">
-                      {l.kind === "bank" ? "Банк" : l.kind === "private" ? "Хувь" : "Кредит"} · {l.start_date}-с
-                      {l.status === "closed" && " · хаагдсан"}
+                  <td className="td" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-1.5">
+                      <InlineEdit value={l.name} width="w-44" confirmText="Нэр солих уу?"
+                        onSave={(v) => doPatch(`/api/loans/${l.id}`, { name: v }, "Нэр шинэчлэгдлээ")} />
+                      {l.status === "closed" && <span className="pill-grey !text-[10px]">хаагдсан</span>}
+                    </div>
+                    <span className="flex items-center gap-1 text-xs text-t3 mt-0.5">
+                      <InlineEdit value={l.kind} display={kindLabel(l.kind)} width="w-24"
+                        options={[["bank", "Банк"], ["private", "Хувь"], ["credit", "Кредит"]]}
+                        confirmText="Төрөл солих уу?"
+                        onSave={(v) => doPatch(`/api/loans/${l.id}`, { kind: v }, "Төрөл шинэчлэгдлээ")} />
+                      <span>·</span>
+                      <InlineEdit type="date" value={l.start_date} display={`${l.start_date}-с`} width="w-36"
+                        confirmText="Огноо солих уу?"
+                        onSave={(v) => doPatch(`/api/loans/${l.id}`, { start_date: v }, "Эхэлсэн огноо шинэчлэгдлээ")} />
                     </span>
                   </td>
-                  <td className="td text-right tabular-nums">{sayaFmt(l.principal)}₮</td>
+                  <td className="td text-right tabular-nums" onClick={(e) => e.stopPropagation()}>
+                    <InlineEdit type="number" value={l.principal} display={sayaFmt(l.principal) + "₮"}
+                      width="w-28" right confirmText="Үндсэн дүн солих уу?"
+                      onSave={(v) => doPatch(`/api/loans/${l.id}`,
+                        { principal: parseFloat(v.replace(/,/g, "")) || 0 },
+                        "Үндсэн дүн шинэчлэгдлээ — үлдэгдэл, сарын төлбөр дагаж өөрчлөгдөнө")} />
+                  </td>
                   <td className="td text-right tabular-nums font-bold text-ink">{sayaFmt(l.balance)}₮</td>
                   <td className="td text-right tabular-nums" onClick={(e) => e.stopPropagation()}>
-                    {l.status === "active" ? (
-                      <InlineEdit type="number" value={l.monthly_rate} suffix="%" width="w-16" right
-                        confirmText="Хүү солих уу?"
-                        onSave={async (v) => {
-                          await api(`/api/loans/${l.id}`, { method: "PATCH",
-                            body: JSON.stringify({ monthly_rate: parseFloat(v) || 0 }) });
-                          toast("Хүү шинэчлэгдлээ — сарын төлбөр дагаж өөрчлөгдөнө");
-                          load();
-                        }} />
-                    ) : `${l.monthly_rate}%`}
+                    <InlineEdit type="number" value={l.monthly_rate} suffix="%" width="w-16" right
+                      confirmText="Хүү солих уу?"
+                      onSave={(v) => doPatch(`/api/loans/${l.id}`, { monthly_rate: parseFloat(v) || 0 },
+                        "Хүү шинэчлэгдлээ — сарын төлбөр дагаж өөрчлөгдөнө")} />
                   </td>
                   <td className="td text-right tabular-nums font-bold text-danger">{sayaFmt(l.monthly_due)}₮</td>
                   <td className="td">{l.status === "active" ? <span className="pill-amber">{l.next_due}</span> : <span className="pill-grey">—</span>}</td>
@@ -93,20 +133,45 @@ export default function Loans() {
                 </tr>
                 {open === l.id && (
                   <tr><td colSpan={8} className="td !bg-canvas">
-                    {l.payments.length === 0 ? <span className="text-t3 text-[13px]">Төлөлт бүртгэгдээгүй.</span> : (
-                      <div className="flex flex-col gap-1.5">
-                        {l.payments.map((p: any) => (
-                          <div key={p.id} className="flex gap-4 text-[13px]">
-                            <span className="text-t3 w-24">{p.date}</span>
-                            <b className="tabular-nums w-32 text-right">{money(p.amount)}</b>
-                            <span className={p.part === "interest" ? "pill-amber !text-[10.5px]" : "pill-green !text-[10.5px]"}>
-                              {p.part === "interest" ? "Хүү" : "Үндсэн"}
-                            </span>
-                            <span className="text-t2">{p.note}</span>
-                          </div>
-                        ))}
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center justify-between gap-4 flex-wrap"
+                           onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-2 text-[13px]">
+                          <span className="text-t3">Тэмдэглэл:</span>
+                          <InlineEdit value={l.note} display={l.note || "нэмэх…"} width="w-72"
+                            confirmText="Хадгалах уу?"
+                            onSave={(v) => doPatch(`/api/loans/${l.id}`, { note: v }, "Тэмдэглэл шинэчлэгдлээ")} />
+                        </div>
+                        <button className="btn-ghost !min-h-8 !py-1 !px-3 text-[12.5px]"
+                                onClick={() => toggleStatus(l)}>
+                          {l.status === "active" ? "Хаах" : "Сэргээх"}
+                        </button>
                       </div>
-                    )}
+                      {l.payments.length === 0 ? <span className="text-t3 text-[13px]">Төлөлт бүртгэгдээгүй.</span> : (
+                        <div className="flex flex-col gap-1.5">
+                          {l.payments.map((p: any) => (
+                            <div key={p.id} className="flex items-center gap-3 text-[13px]"
+                                 onClick={(e) => e.stopPropagation()}>
+                              <InlineEdit type="date" value={p.date} display={p.date} width="w-32"
+                                confirmText="Огноо солих уу?"
+                                onSave={(v) => savePay(l, p, { date: v })} />
+                              <InlineEdit type="number" right value={p.amount} display={money(p.amount)} width="w-28"
+                                confirmText="Дүн солих уу?"
+                                onSave={(v) => savePay(l, p, { amount: parseFloat(v.replace(/,/g, "")) || 0 })} />
+                              <InlineEdit value={p.part} display={p.part === "interest" ? "Хүү" : "Үндсэн"}
+                                options={[["interest", "Хүү"], ["principal", "Үндсэн"]]} width="w-24"
+                                confirmText="Төрөл солих уу?"
+                                onSave={(v) => savePay(l, p, { part: v })} />
+                              <InlineEdit value={p.note} display={p.note || "тэмдэглэл…"} width="w-40"
+                                confirmText="Хадгалах уу?"
+                                onSave={(v) => savePay(l, p, { note: v })} />
+                              <button className="w-7 h-7 rounded-lg bg-danger-50 text-danger shrink-0 ml-auto"
+                                      title="Устгах" onClick={() => delPay(l, p)}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </td></tr>
                 )}
               </Fragment>
