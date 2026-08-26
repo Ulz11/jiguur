@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, fmt, money, sayaFmt, token, user } from "../api";
 import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit } from "../ui";
 import { PayModal } from "./ContractDetail";
+import {
+  buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth,
+  parseIso, isoOf, WEEKDAYS_MN, monthLabelMN, type TLEvent, type YearMonth,
+} from "../lib/calendar";
 
 export default function ClientProfile() {
   const { id } = useParams();
@@ -107,19 +111,9 @@ export default function ClientProfile() {
           <div className="grid grid-cols-[1.6fr_1fr] gap-6 max-lg:grid-cols-1">
             <div>
               <h3 className="font-bold text-[14.5px] mb-3.5">Сүүлийн үйл явдлууд</h3>
-              <div className="relative pl-6 before:content-[''] before:absolute before:left-[7px] before:top-1.5 before:bottom-1.5 before:w-0.5 before:bg-sunken">
-                {d.timeline.map((t: any, i: number) => (
-                  <div key={i} className="relative pb-4 last:pb-0">
-                    <i className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-white border-[3px] ${
-                      t.kind === "payment" ? "border-money" : t.kind === "return" ? "border-warn" :
-                      t.kind === "writeoff" ? "border-danger" : "border-brand"}`} />
-                    <span className="text-[11.5px] text-t3 font-semibold">{t.date}</span>
-                    <b className="block text-[13.5px] text-ink font-semibold">{t.title}</b>
-                    <span className="text-[12.5px] text-t2">{t.sub}</span>
-                  </div>
-                ))}
-                {d.timeline.length === 0 && <p className="text-t3 text-sm">Түүх хоосон байна.</p>}
-              </div>
+              {d.timeline.length === 0
+                ? <p className="text-t3 text-sm">Түүх хоосон байна.</p>
+                : <TimelineCalendar events={d.timeline} />}
             </div>
             <div>
               <h3 className="font-bold text-[14.5px] mb-3.5">Нэхэмжлэлийн байдал</h3>
@@ -275,6 +269,108 @@ function Stat({ label, val, danger }: any) {
     <div>
       <div className="text-[11px] text-t3 font-bold uppercase tracking-wider mb-1">{label}</div>
       <div className={`text-lg font-extrabold tabular-nums ${danger ? "text-danger" : "text-ink"}`}>{val}</div>
+    </div>
+  );
+}
+
+/* ---------- Тойм: сарын хуанли (босоо timeline-ийн оронд) ---------- */
+// Төрөл бүрийн өнгө: төлбөр→ногоон, буцаалт→улбар, акт→улаан, ачилт/гэрээ→brand
+const KIND_DOT: Record<string, string> = {
+  payment: "bg-money", return: "bg-warn", writeoff: "bg-danger", issue: "bg-brand", contract: "bg-brand",
+};
+const KIND_ORDER = ["contract", "issue", "return", "writeoff", "payment"];
+const dotCls = (k: string) => KIND_DOT[k] || "bg-brand";
+
+function TimelineCalendar({ events }: { events: TLEvent[] }) {
+  const now = new Date();
+  const todayIso = isoOf(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  const [view, setView] = useState<YearMonth>(
+    () => latestMonth(events) ?? { year: now.getFullYear(), month: now.getMonth() + 1 });
+  const [selected, setSelected] = useState<string | null>(
+    () => latestDayInMonth(events, view.year, view.month));
+
+  const grid = useMemo(() => buildMonthGrid(events, view.year, view.month), [events, view]);
+  const dayEvents = selected ? eventsOn(events, selected) : [];
+
+  function go(delta: number) {
+    const nv = addMonth(view, delta);
+    setView(nv);
+    setSelected(latestDayInMonth(events, nv.year, nv.month));
+  }
+
+  function selHeading(iso: string) {
+    const p = parseIso(iso);
+    const wd = WEEKDAYS_MN[(new Date(p.year, p.month - 1, p.day).getDay() + 6) % 7];
+    return `${p.month}-р сарын ${p.day}, ${wd}`;
+  }
+
+  return (
+    <div>
+      {/* Сар сонгох мөр */}
+      <div className="flex items-center justify-between mb-3">
+        <button onClick={() => go(-1)} aria-label="Өмнөх сар"
+          className="w-10 h-10 rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand text-lg font-bold transition">‹</button>
+        <b className="text-[14px] text-ink font-bold tabular-nums">{monthLabelMN(view.year, view.month)}</b>
+        <button onClick={() => go(1)} aria-label="Дараах сар"
+          className="w-10 h-10 rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand text-lg font-bold transition">›</button>
+      </div>
+
+      {/* Гарагийн толгой */}
+      <div className="grid grid-cols-7 gap-1 mb-1">
+        {WEEKDAYS_MN.map((w, i) => (
+          <div key={w} className={`text-center text-[11px] font-bold py-1 ${i === 6 ? "text-danger" : "text-t3"}`}>{w}</div>
+        ))}
+      </div>
+
+      {/* Хоногийн тор */}
+      <div className="grid grid-cols-7 gap-1">
+        {grid.weeks.flat().map((c, i) => {
+          if (!c.inMonth) return <div key={i} className="min-h-[58px]" />;
+          const kinds = KIND_ORDER.filter((k) => c.counts[k]).concat(
+            Object.keys(c.counts).filter((k) => !KIND_ORDER.includes(k)));
+          const total = c.events.length;
+          const isSel = c.iso === selected;
+          const isToday = c.iso === todayIso;
+          return (
+            <button key={i} onClick={() => setSelected(c.iso)}
+              className={`min-h-[58px] rounded-lg p-1.5 flex flex-col text-left border transition ${
+                isSel ? "border-brand bg-brand-50 ring-1 ring-brand"
+                : total ? "border-line bg-card2 hover:bg-brand-50"
+                : "border-line bg-cardbg hover:bg-sunken"}`}>
+              <span className={`text-[13px] font-bold tabular-nums ${
+                isSel ? "text-brand" : isToday ? "text-brand" : "text-t2"}`}>
+                {c.day}{isToday && <i className="inline-block w-1 h-1 rounded-full bg-brand align-super ml-0.5" />}
+              </span>
+              {total > 0 && (
+                <span className="mt-auto flex items-center gap-1 flex-wrap">
+                  {kinds.map((k) => <i key={k} className={`w-2 h-2 rounded-full ${dotCls(k)}`} />)}
+                  <span className="text-[10px] font-bold text-t3 ml-0.5 tabular-nums">{total}</span>
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Сонгосон өдрийн үйл явдлууд */}
+      <div className="mt-4 border-t border-line pt-3.5 min-h-[64px]">
+        {selected && dayEvents.length > 0 ? (
+          <>
+            <div className="text-[12.5px] font-bold text-ink mb-2.5">{selHeading(selected)}</div>
+            {dayEvents.map((e, i) => (
+              <div key={i} className="flex gap-2.5 pb-3 last:pb-0">
+                <i className={`mt-1.5 w-2.5 h-2.5 rounded-full shrink-0 ${dotCls(e.kind)}`} />
+                <div className="min-w-0">
+                  <b className="block text-[13.5px] text-ink font-semibold">{e.title}</b>
+                  <span className="text-[12.5px] text-t2">{e.sub}</span>
+                </div>
+              </div>
+            ))}
+          </>
+        ) : (
+          <p className="text-t3 text-[13px] text-center py-2">Энэ сард үйл явдал алга.</p>
+        )}
+      </div>
     </div>
   );
 }
