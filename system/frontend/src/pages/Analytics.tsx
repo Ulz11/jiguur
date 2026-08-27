@@ -23,7 +23,7 @@ export default function Analytics() {
     <div>
       <div className="dashboard-header">
         <div>
-          <div className="dashboard-kicker">ANALYTICS <span>•</span> ХӨРӨНГӨ БА МӨНГӨ</div>
+          <div className="dashboard-kicker">АНАЛИТИК <span>•</span> ХӨРӨНГӨ БА МӨНГӨ</div>
           <h1 className="dashboard-title">Аналитик</h1>
           <p className="dashboard-subtitle">Аль материал мөнгө олж байна, ойрын мөнгө хүрэлцэх үү.</p>
         </div>

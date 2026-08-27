@@ -171,10 +171,20 @@ body::before {
   position: relative; z-index: 1;
 }
 .receipt-row > span { color: rgba(255, 255, 255, 0.65); font-size: 12px; }
+/* Хоёрдогч мөр (нэхэмжлэлийн № г.м.) — хэмжээгээрээ л жижигрэнэ, уншигдахаа
+   болих хэмжээнд бүдгэрэхгүй (navy дээр 4.6:1 контраст). */
+.receipt-row .rc-sub { display: block; font-size: 11px; color: rgba(255, 255, 255, 0.58); margin-top: 1px; }
 .receipt-row > b { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .receipt-total { border-top: 1px dashed rgba(255, 255, 255, 0.2); padding-top: 10px; margin-top: 3px; }
 .receipt-total > span { font-size: 12.5px; color: rgba(255, 255, 255, 0.8); }
 .receipt-total > b { font-size: 21px; font-weight: 700; letter-spacing: -0.02em; }
+
+/* Техникийн задаргаа (алдааны мессеж) — хаалттай байхдаа чимээгүй, нээгдэхэд
+   зүүн тийш эгнэсэн код. Сумны эргэлт нь нээгдсэнийг хэлнэ. */
+.tech-details > summary { list-style: none; cursor: pointer; }
+.tech-details > summary::-webkit-details-marker { display: none; }
+.tech-details > summary .chev { display: inline-block; transition: transform 0.18s ease; }
+.tech-details[open] > summary .chev { transform: rotate(90deg); }
 
 /* segment (Apple-style) */
 .segment { @apply inline-flex rounded-2xl p-[3px] gap-0.5 border border-line; background: var(--color-sunken); }

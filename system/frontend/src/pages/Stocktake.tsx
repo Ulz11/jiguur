@@ -120,7 +120,7 @@ export default function Stocktake() {
     <div className="max-w-3xl mx-auto pb-28">
       <div className="dashboard-header">
         <div>
-          <div className="dashboard-kicker">STOCKTAKE <span>•</span> {today()}</div>
+          <div className="dashboard-kicker">ТООЛЛОГО <span>•</span> {today()}</div>
           <h1 className="dashboard-title">Тооллого</h1>
           <p className="dashboard-subtitle">
             Агуулахад байгаа бодит тоог бичнэ. Зөрүү шууд харагдана.

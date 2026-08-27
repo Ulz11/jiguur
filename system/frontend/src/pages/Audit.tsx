@@ -39,7 +39,7 @@ export default function Audit() {
     <div>
       <div className="dashboard-header">
         <div>
-          <div className="dashboard-kicker">AUDIT TRAIL <span>•</span> {rows.length} БИЧИЛТ</div>
+          <div className="dashboard-kicker">ҮЙЛДЛИЙН БҮРТГЭЛ <span>•</span> {rows.length} БИЧИЛТ</div>
           <h1 className="dashboard-title">Үйлдлийн бүртгэл</h1>
           <p className="dashboard-subtitle">Хэн, юуг, хэзээ өөрчилсөн — устгах боломжгүй бүртгэл.</p>
         </div>

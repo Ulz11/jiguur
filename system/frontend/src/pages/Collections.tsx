@@ -6,6 +6,8 @@ import { parseMoney } from "../lib/num";
 import { useLive } from "../lib/live";
 
 const today = () => new Date().toISOString().slice(0, 10);
+/** «9911-2233» → «tel:99112233» — зай, зураас утасны програмыг төөрөгдүүлнэ. */
+const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;
 const KINDS: [string, string][] = [["call", "Утсаар"], ["visit", "Уулзсан"],
                                    ["message", "Мессеж"], ["other", "Бусад"]];
 
@@ -36,7 +38,7 @@ export default function Collections() {
     <div>
       <div className="dashboard-header">
         <div>
-          <div className="dashboard-kicker">COLLECTIONS <span>•</span> {d.rows.length} ХАРИЛЦАГЧ</div>
+          <div className="dashboard-kicker">АВЛАГА ЦУГЛУУЛАЛТ <span>•</span> {d.rows.length} ХАРИЛЦАГЧ</div>
           <h1 className="dashboard-title">Авлага цуглуулалт</h1>
           <p className="dashboard-subtitle">Хэнд хэзээ залгах, хэн юу амласныг нэг дэлгэцээс.</p>
         </div>
@@ -94,8 +96,16 @@ export default function Collections() {
                 <td className="td">
                   <button className="font-bold text-ink hover:underline text-left"
                           onClick={() => nav(`/clients/${r.client_id}`)}>{r.client}</button>
+                  {/* Энэ бол залгах жагсаалт — дугаар нь дарахад залгадаг байх
+                      ёстой. Отгоо дугаарыг гараар хуулж бичихээ болино. */}
                   <span className="block text-xs text-t3">
-                    {r.person || "—"}{r.phone && ` · ${r.phone}`}
+                    {r.person || "—"}
+                    {r.phone && (
+                      <> · <a href={telHref(r.phone)} title={`${r.phone} руу залгах`}
+                              className="text-t2 font-semibold hover:text-brand hover:underline">
+                            ☎ {r.phone}
+                          </a></>
+                    )}
                   </span>
                 </td>
                 <td className="td text-right tabular-nums font-bold text-danger">{sayaFmt(r.overdue)}₮</td>
@@ -151,7 +161,8 @@ function NoteModal({ r, onClose, onDone }: any) {
       <div className="bg-sunken rounded-lg px-3.5 py-2.5 mb-4 text-[13px] text-t2">
         Хэтэрсэн <b className="text-danger tabular-nums">{money(r.overdue)}</b>
         {r.penalty > 0 && <> · алданги <b className="tabular-nums">{money(r.penalty)}</b></>}
-        {r.phone && <> · ☎ <b className="text-ink">{r.phone}</b></>}
+        {r.phone && <> · <a href={telHref(r.phone)} title={`${r.phone} руу залгах`}
+                            className="font-bold text-ink hover:text-brand hover:underline">☎ {r.phone}</a></>}
       </div>
 
       <label className="lbl">Хэлбэр</label>

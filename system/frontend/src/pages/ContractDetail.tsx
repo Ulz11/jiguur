@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, money, sayaFmt, openPdf, fmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Modal, useToast, InlineEdit, Receipt, ConfirmModal } from "../ui";
 import { allocationPreview } from "../lib/alloc";
+import { invoiceLabel } from "../lib/invoice";
 import { parseMoney } from "../lib/num";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -192,16 +193,18 @@ export default function ContractDetail() {
             </div>
             <table className="w-full min-w-[560px]">
               <thead><tr>
-                <th className="th">Үе</th><th className="th text-right">Дүн</th>
+                <th className="th">{d.type === "rent" ? "Үе" : "Нэхэмжлэл"}</th><th className="th text-right">Дүн</th>
                 <th className="th text-right">Төлсөн</th><th className="th">Төлөв</th><th className="th"></th>
               </tr></thead>
               <tbody>
-                {d.invoices.map((inv: any) => (
+                {d.invoices.map((inv: any) => {
+                  const lb = invoiceLabel(inv);
+                  return (
                   <tr key={inv.id}>
                     <td className="td">
-                      <span className="font-semibold text-ink">
-                        {d.type === "rent" ? `${inv.cycle_start} – ${inv.cycle_end}` : inv.no}
-                      </span>
+                      {/* Үеийн огноо хоёр мөр болж таслагдвал уншихад хүнд */}
+                      <span className="font-semibold text-ink whitespace-nowrap">{lb.title}</span>
+                      {lb.sub && <span className="block text-[11.5px] text-t3">{lb.sub}</span>}
                     </td>
                     <td className="td text-right tabular-nums">
                       {money(inv.total)}
@@ -223,7 +226,8 @@ export default function ContractDetail() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             {d.invoices.length === 0 && <p className="text-t3 text-sm px-4 pb-4">Эхний цикл дуусаагүй — нэхэмжлэл автоматаар үүснэ.</p>}
@@ -704,8 +708,12 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   // penalty = бүртгэгдсэн + амьд алданги; төлбөр бүртгэх агшинд яг энэ дүн хөлдөнө
   const list = (invoices || []).map((i: any) => ({
     id: i.id, no: i.no, outstanding: i.outstanding, due_date: i.due_date,
+    cycle_start: i.cycle_start, cycle_end: i.cycle_end,
     penalty_due: i.penalty || 0 }));
   const preview = allocationPreview(amt, list);
+  // Гэрээний нэхэмжлэлийн хүснэгттэй ИЖИЛ нэрээр дуудна — нэг объект, нэг нэр.
+  const nameOf = (id: number, no: string) =>
+    invoiceLabel(list.find((i: any) => i.id === id) ?? { no });
   const cand = list
     .filter((i: any) => i.outstanding > 0 || i.penalty_due > 0)
     .sort((a: any, b: any) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : a.id - b.id));
@@ -784,10 +792,15 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
                     onClick={() => setManual(null)}>Автоматаар</button>
           </div>
           {cand.length === 0 && <p className="text-[12.5px] text-t2">Нээлттэй нэхэмжлэл алга — бүх дүн кредит болно.</p>}
-          {cand.map((i: any) => (
+          {cand.map((i: any) => {
+            const n = nameOf(i.id, i.no);
+            return (
             <div key={i.id} className="flex items-center justify-between gap-3 py-1.5">
               <div className="min-w-0">
-                <div className="text-[13px] text-ink truncate">Нэхэмжлэл {i.no}</div>
+                <div className="text-[13px] text-ink truncate">
+                  {n.title}
+                  {n.sub && <span className="text-[11.5px] text-t3 ml-1.5">{n.sub}</span>}
+                </div>
                 <div className="text-[11.5px] text-t3">
                   Үлдэгдэл {money(i.outstanding)}
                   {i.penalty_due > 0 && <> · алданги {money(i.penalty_due)}</>}
@@ -797,7 +810,8 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
                      value={manual[i.id] ?? "0"}
                      onChange={(e) => setManual({ ...manual, [i.id]: e.target.value })} />
             </div>
-          ))}
+            );
+          })}
           <div className={`flex items-center justify-between pt-2.5 mt-1.5 border-t border-line text-[13px] font-semibold ${
                 manualLeft < 0 ? "text-danger" : "text-t2"}`}>
             <span>{manualLeft < 0 ? "Төлбөрөөс хэтэрсэн" : "Хуваарилагдаагүй"}</span>
@@ -811,9 +825,11 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
         <>
           <Receipt className="mb-1"
             rows={[
-              ...preview.rows.map((r) => ({
-                label: r.part === "penalty" ? `Алданги ${r.no}` : `Нэхэмжлэл ${r.no}`,
-                value: money(r.take) })),
+              ...preview.rows.map((r) => {
+                const n = nameOf(r.id, r.no);
+                return { label: r.part === "penalty" ? `Алданги · ${n.title}` : n.title,
+                         sub: n.sub, value: money(r.take) };
+              }),
               ...(preview.remainder > 0
                 ? [{ label: "Илүү — кредит болно (дараагийнхад автоматаар хаагдана)",
                      value: money(preview.remainder), accent: "money" as const }] : []),

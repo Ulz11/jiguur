@@ -51,8 +51,9 @@ export default function Clients() {
         {u?.role !== "factory" && (
           <div className="flex gap-2.5 flex-wrap">
             <input type="file" ref={fileRef} className="hidden" accept=".xlsx" onChange={importFile} />
-            <button className="btn-secondary" onClick={() => fileRef.current?.click()}>⇧ Импорт (XLSX)</button>
-            <button className="btn-secondary" onClick={exportXlsx}>⇩ Авлага (XLSX)</button>
+            {/* Тайлан хуудас «Excel» гэдэг — нэг файлыг хоёр нэрээр дуудахгүй */}
+            <button className="btn-secondary" onClick={() => fileRef.current?.click()}>⇧ Excel-ээс импортлох</button>
+            <button className="btn-secondary" onClick={exportXlsx}>⇩ Авлага Excel-ээр</button>
             <button className="btn-primary" onClick={() => setShow(true)}>+ Шинэ харилцагч</button>
           </div>
         )}

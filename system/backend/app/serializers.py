@@ -84,6 +84,20 @@ def movement(mv: models.Movement, gmap: dict, mmap: dict):
                       for l in mv.lines]}
 
 
+def shipment_summary(mv: models.Movement, limit: int = 4) -> str:
+    """Ачилтын мөрүүдийн нэг мөрт багтах хураангуй — ЮУГ, ямар зэрэглэлээр, хэдийг.
+
+    Дарга дашбоардын мөрөн дээрээс шууд уншиж «Ачсан ✓» дарна. Зөвхөн тоо
+    ширхэг (×450) бол утгагүй: 450 нь хэв үү, труба уу гэдэг нь мэдэгдэхгүй.
+    4-өөс олон мөртэй ачилт нь мөрөө сунгахгүй — үлдсэнийг тоогоор нь хэлнэ.
+    """
+    parts = [f"{l.material.name} ({l.grade.code}) ×{l.qty:g}" for l in mv.lines[:limit]]
+    rest = len(mv.lines) - limit
+    if rest > 0:
+        parts.append(f"… +{rest} мөр")
+    return " · ".join(parts)
+
+
 def invoice(inv: models.Invoice, today: date):
     return {"id": inv.id, "no": inv.no, "contract_id": inv.contract_id,
             "contract_no": inv.contract.no, "client": inv.contract.client.name,

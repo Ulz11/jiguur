@@ -3,6 +3,7 @@ import { ReactNode, createContext, useContext, useState, useEffect } from "react
 import { user, clearAuth } from "./api";
 import { ToastProvider } from "./ui";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { pageTitle } from "./lib/titles";
 import ChangePassword from "./components/ChangePassword";
 import brandLogo from "./assets/jiguur-logo.png";
 import brandMark from "./assets/jiguur-mark.png";
@@ -47,15 +48,6 @@ const NAV = [
 /** Эхний хэсэг = өдөр тутмын ажил, дараах нь = байгууллагын удирдлага */
 const WORK_COUNT = 7;
 
-const TITLES: Record<string, string> = {
-  "/": "Удирдлагын төв", "/contracts": "Гэрээнүүд", "/contracts/new": "Шинэ гэрээ",
-  "/clients": "Харилцагч", "/collections": "Авлага цуглуулах", "/warehouse": "Агуулах",
-  "/warehouse/stocktake": "Тооллого", "/barter": "Бартер",
-  "/machines": "Механизм", "/loans": "Зээл / Өглөг", "/salary": "Цалин",
-  "/reports": "Тайлан", "/analytics": "Аналитик", "/audit": "Үйлдлийн бүртгэл",
-  "/settings": "Тохиргоо",
-};
-
 function Shell({ children }: { children: ReactNode }) {
   const u = user();
   const nav = useNavigate();
@@ -66,7 +58,7 @@ function Shell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("jz_nav") === "min");
 
   useEffect(() => {
-    document.title = `${TITLES[loc.pathname] || "Жигүүр Зам"} · Жигүүр Зам`;
+    document.title = `${pageTitle(loc.pathname) || "Жигүүр Зам"} · Жигүүр Зам`;
     setMenu(false);
   }, [loc.pathname]);
 
@@ -141,7 +133,7 @@ function Shell({ children }: { children: ReactNode }) {
             {collapsed ? "»" : "«"}
           </button>
           <span className="jz-location">
-            ЖИГҮҮР ЗАМ ХХК <i /> {TITLES[loc.pathname]?.toUpperCase() || ""} <i /> {new Date().toISOString().slice(0, 10)}
+            ЖИГҮҮР ЗАМ ХХК <i /> {pageTitle(loc.pathname).toUpperCase()} <i /> {new Date().toISOString().slice(0, 10)}
           </span>
           <div className="jz-topbar-actions">
             {showScope && (

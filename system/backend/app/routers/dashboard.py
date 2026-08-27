@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from ..db import get_db
-from .. import models, auth
+from .. import models, auth, serializers
 from ..services import billing
 from ..services import loans as loans_svc
 
@@ -129,7 +129,7 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
     pending = [{"id": mv.id, "contract_id": mv.contract_id,
                 "contract_no": mv.contract.no, "client": mv.contract.client.name,
                 "date": str(mv.date),
-                "summary": " · ".join(f"×{l.qty:g}" for l in mv.lines[:4])}
+                "summary": serializers.shipment_summary(mv)}
                for mv in db.query(models.Movement).filter_by(status="pending", type="ISSUE").all()]
 
     # энэ сарын худалдаа (sale scope-ийн KPI)

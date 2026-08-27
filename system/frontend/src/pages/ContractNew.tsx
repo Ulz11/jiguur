@@ -253,9 +253,12 @@ export default function ContractNew() {
                 ...(deposit > 0
                   ? [{ label: "Барьцаа", value: money(deposit), accent: "money" }] : []),
               ];
+              // НӨАТ 0 үед «(НӨАТ-тай)» гэдэг нь худал. Хаалт дотор нь ҮНЭНийг
+              // хэлнэ — гэрээ баталгаажуулахын өмнөх сүүлчийн шалгалт.
+              const vatTag = vat > 0 ? " (НӨАТ-тай)" : " (НӨАТ-гүй)";
               return (
                 <Receipt className="mb-4" rows={rows}
-                  total={{ label: type === "rent" ? "Циклийн нэхэмжлэл (НӨАТ-тай)" : "Нийт төлөх дүн",
+                  total={{ label: (type === "rent" ? "Циклийн нэхэмжлэл" : "Нийт төлөх дүн") + vatTag,
                            value: money(base + vatAmt) }} />
               );
             })()}

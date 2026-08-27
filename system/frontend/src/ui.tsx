@@ -134,7 +134,9 @@ export function ConfirmModal({ title, intro, rows, total, note, confirmLabel, ca
 }
 
 /* ---------- Navy тооцооны хайрцаг (calc-receipt) ---------- */
-export type ReceiptRow = { label: string; value: string; accent?: "money" | "danger" | "violet" | "dim" };
+/** `sub` — нэрийн доор орох жижиг хоёрдогч мөр (ж: нэхэмжлэлийн №). Мөрийн
+ *  үндсэн нэр нь юу болохыг хэлж, sub нь хаанаас хайхыг хэлнэ. */
+export type ReceiptRow = { label: string; sub?: string; value: string; accent?: "money" | "danger" | "violet" | "dim" };
 const RC_COLOR: Record<string, string> = { money: "#7de8b8", danger: "#ffb3b6", violet: "#cdb9ff", dim: "rgba(255,255,255,0.55)" };
 
 export function Receipt({ rows, total, className = "" }: {
@@ -146,7 +148,7 @@ export function Receipt({ rows, total, className = "" }: {
     <div className={`receipt ${className}`}>
       {rows.map((r, i) => (
         <div key={i} className="receipt-row">
-          <span>{r.label}</span>
+          <span>{r.label}{r.sub && <span className="rc-sub">{r.sub}</span>}</span>
           <b style={{ color: r.accent ? RC_COLOR[r.accent] : "#fff" }}>{r.value}</b>
         </div>
       ))}

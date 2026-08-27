@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, fmt, money, sayaFmt, token, user } from "../api";
 import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit } from "../ui";
 import { PayModal } from "./ContractDetail";
+import { invoiceLabel } from "../lib/invoice";
 import {
   buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth,
   parseIso, isoOf, WEEKDAYS_MN, monthLabelMN, type TLEvent, type YearMonth,
@@ -164,8 +165,11 @@ export default function ClientProfile() {
               <tbody>
                 {d.invoices.map((inv: any) => (
                   <tr key={inv.id}>
-                    <td className="td"><b className="text-ink">{inv.no}</b>
-                      <span className="block text-xs text-t3">{inv.cycle_start} – {inv.cycle_end}</span></td>
+                    {/* Гэрээний дэлгэрэнгүй ба төлбөрийн модалтой ИЖИЛ нэр */}
+                    <td className="td"><b className="text-ink">{invoiceLabel(inv).title}</b>
+                      {invoiceLabel(inv).sub && (
+                        <span className="block text-xs text-t3">{invoiceLabel(inv).sub}</span>
+                      )}</td>
                     <td className="td text-right tabular-nums">{money(inv.total)}</td>
                     <td className="td text-right tabular-nums">{money(inv.paid)}</td>
                     <td className="td text-right tabular-nums text-danger">{inv.penalty > 0 ? money(inv.penalty) : "—"}</td>

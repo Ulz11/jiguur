@@ -187,7 +187,7 @@ export default function Dashboard() {
     <div>
       <div className="dashboard-header">
         <div>
-          <div className="dashboard-kicker">ӨДРИЙН АЖИЛ <span>•</span> LIVE</div>
+          <div className="dashboard-kicker">ӨДРИЙН АЖИЛ <span>•</span> АМЬД</div>
           <h1 className="dashboard-title">Өнөөдрийн ажил</h1>
           <p className="dashboard-subtitle">Ачилтаа баталгаажуулж, гадаа байгаа материалаа хараарай.</p>
         </div>
@@ -205,7 +205,7 @@ export default function Dashboard() {
     <div>
       <div className="dashboard-header">
         <div>
-          <div className="dashboard-kicker">OPERATIONAL OVERVIEW <span>•</span> LIVE</div>
+          <div className="dashboard-kicker">УДИРДЛАГЫН ТОЙМ <span>•</span> АМЬД</div>
           <h1 className="dashboard-title">Удирдлагын төв</h1>
           <p className="dashboard-subtitle">
             {scope === "all" ? "Компанийн өнөөдрийн зураг — бүх тоо амьд." :

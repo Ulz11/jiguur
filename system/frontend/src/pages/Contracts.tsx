@@ -94,7 +94,9 @@ export default function Contracts() {
                     {c.penalty > 0 && <span className="block text-[11px] text-danger">+ алданги {sayaFmt(c.penalty)}₮</span>}
                   </td>
                   <td className="td"><StatePill state={c.state} /></td>
-                  <td className="td text-t3 opacity-0 group-hover:opacity-100 transition">→</td>
+                  {/* Мөр дарагддаг гэдгийг ЗӨВХӨН хулгана дээр нь ирэхэд хэлдэг
+                      байсан — планшет дээр огт харагдахгүй. Тайван боловч ил. */}
+                  <td className="td text-t3 group-hover:text-ink transition" aria-hidden="true">→</td>
                 </tr>
               );
             })}
