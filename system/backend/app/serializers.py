@@ -52,7 +52,12 @@ def contract_row(c: models.Contract, today: date):
     state = ("closed" if c.status == "closed"
              else "opening" if c.no.startswith("OB-")
              else "overdue" if overdue else "ending" if ending else "active")
+    # Гадаа байгаа тоо — зөвхөн ТҮРЭЭС дээр утгатай (худалдсан бараа буцаж
+    # ирэхгүй). Дарга буцаалт хүлээж буй гэрээгээ үүгээр л ялгаж хардаг.
+    qty_out = (round(sum(l["qty_left"] for l in billing.lot_qty_on(c, today)), 3)
+               if c.type == "rent" else 0)
     return {"id": c.id, "no": c.no, "client_id": c.client_id, "client": c.client.name,
+            "qty_out": qty_out,
             "type": c.type, "start_date": str(c.start_date),
             "end_date": str(c.end_date) if c.end_date else None,
             "deposit": c.deposit, "penalty_percent": c.penalty_percent,

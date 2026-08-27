@@ -173,7 +173,7 @@ export default function ContractNew() {
                           <td className="td text-right tabular-nums font-bold text-ink">
                             {money(it.qty * (type === "rent" ? it.daily_rate : it.unit_price))}
                           </td>
-                          <td className="td"><button className="btn-ghost !min-h-8 !p-1.5 text-danger"
+                          <td className="td"><button className="btn-ghost btn-row text-danger"
                             onClick={() => setItems(items.filter((_, j) => j !== i))}>✕</button></td>
                         </tr>
                       );
@@ -288,10 +288,10 @@ function MaterialPicker({ materials, items, addItem, type }: any) {
         <input className="inp max-w-[240px] !min-h-10 !py-2" placeholder="Материал хайх…" value={q} onChange={(e) => setQ(e.target.value)} />
         <div className="inline-flex bg-white border border-line rounded-full p-1 gap-0.5">
           <button onClick={() => setCat("")}
-            className={`rounded-full px-3.5 py-1 text-[12.5px] font-semibold min-h-8 ${!cat ? "bg-brand text-white" : "text-t2"}`}>Бүгд</button>
+            className={`rounded-full px-3.5 py-1 text-[12.5px] font-semibold min-h-9 ${!cat ? "bg-brand text-white" : "text-t2"}`}>Бүгд</button>
           {cats.map((c: any) => (
             <button key={c} onClick={() => setCat(c)}
-              className={`rounded-full px-3.5 py-1 text-[12.5px] font-semibold min-h-8 ${cat === c ? "bg-brand text-white" : "text-t2"}`}>{c}</button>
+              className={`rounded-full px-3.5 py-1 text-[12.5px] font-semibold min-h-9 ${cat === c ? "bg-brand text-white" : "text-t2"}`}>{c}</button>
           ))}
         </div>
       </div>

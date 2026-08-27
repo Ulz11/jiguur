@@ -75,7 +75,7 @@ export default function Salary() {
                     {e.type === "daily" ? `${money(e.daily_rate)}/өдөр` : money(e.monthly_salary)}
                   </td>
                   <td className="td">{e.ndsh ? <span className="pill-green">Тийм</span> : <span className="pill-grey">Үгүй</span>}</td>
-                  <td className="td"><button className="btn-ghost !min-h-7 !p-1 text-[12px]"
+                  <td className="td"><button className="btn-ghost btn-row"
                     onClick={() => setModal({ kind: "emp", emp: e })}>Засах</button></td>
                 </tr>
               ))}
@@ -102,7 +102,7 @@ export default function Salary() {
                     <td className="td">{r.paid ? <span className="pill-green">Олгосон</span> : <span className="pill-amber">Олгоогүй</span>}</td>
                     <td className="td">
                       {!r.paid && (
-                        <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px] text-money"
+                        <button className="btn-ghost btn-row text-money"
                           onClick={(ev) => { ev.stopPropagation(); setPayRun(r); }}>Олгох ✓</button>
                       )}
                     </td>

@@ -6,19 +6,41 @@ import { useScope } from "../App";
 import { useLive } from "../lib/live";
 import RevChart from "../components/RevChart";
 
+/** Даргад хамаарах мэдэгдлүүд — ачилт, гэрээний хугацаа. Нэхэмжлэлийн
+ *  хугацаа хэтрэлт, алданги, зээл, амлалт нь санхүүгийн ажил тул түүнд харагдахгүй. */
+const FACTORY_NOTE_KINDS = new Set(["shipment", "ending", "expired"]);
+
 export default function Dashboard() {
   const { scope } = useScope();
   const [d, setD] = useState<any>(null);
+  const [outQueue, setOutQueue] = useState<any[] | null>(null); // гадаа материалтай гэрээнүүд
   const [busy, setBusy] = useState<number | null>(null);
   const [ask, setAsk] = useState<any>(null);          // баталгаажуулах гэж буй ачилт
   const [lines, setLines] = useState<any[] | null>(null); // тухайн ачилтын мөрүүд
   const toast = useToast();
   const nav = useNavigate();
   const u = user();
+  const isFactory = u?.role === "factory";
 
-  const load = () => api(`/api/dashboard?scope=${scope}`).then(setD).catch((e) => toast(e.message, "err"));
+  /** Даргын ажлын дараалал — гадаа материалтай, идэвхтэй ТҮРЭЭСийн гэрээнүүд.
+   *  Хамгийн их барааг барьж байгаа гэрээ дээр эхэлж очно. */
+  function loadQueue() {
+    if (!isFactory) return;
+    api("/api/contracts")
+      .then((rows: any[]) => setOutQueue(rows
+        .filter((c) => c.type === "rent" && c.status === "active" && (c.qty_out || 0) > 0)
+        .sort((a, b) => b.qty_out - a.qty_out)))
+      .catch(() => setOutQueue([]));   // дараалал татагдаагүй нь ачилтын ажлыг зогсоох ёсгүй
+  }
+  const load = () => {
+    loadQueue();
+    return api(`/api/dashboard?scope=${scope}`).then(setD).catch((e) => toast(e.message, "err"));
+  };
   /** Фонд шинэчлэх — эргэлдэгч гаргахгүй, алдааг чимээгүй залгина. */
-  const refresh = () => api(`/api/dashboard?scope=${scope}`).then(setD).catch(() => {});
+  const refresh = () => {
+    loadQueue();
+    return api(`/api/dashboard?scope=${scope}`).then(setD).catch(() => {});
+  };
   useLive((bg) => { if (bg) refresh(); else { setD(null); load(); } }, [scope]);
 
   if (!d) return <Spinner />;
@@ -48,6 +70,137 @@ export default function Dashboard() {
     finally { setBusy(null); }
   }
 
+  const notes = isFactory
+    ? d.notifications.filter((n: any) => FACTORY_NOTE_KINDS.has(n.kind))
+    : d.notifications;
+
+  /** Ачилт хүлээгдэж буй — даргын гол ажил. `touch` горимд мөр том, товч нь
+   *  анхаарлын товч болж 52px өндөр (планшетаар хуруугаар дардаг). */
+  const shipmentsCard = (touch: boolean) => (
+    <div className="card p-5">
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <h3 className={`font-bold text-ink ${touch ? "text-[17px]" : "text-[15.5px]"}`}>Ачилт хүлээгдэж буй</h3>
+        <span className="pill-blue">
+          {touch ? `${d.pending_shipments.length} хүлээгдэж байна` : "Дарга баталгаажуулна"}
+        </span>
+      </div>
+      {d.pending_shipments.length === 0 && <p className="text-t3 text-sm py-4">Хүлээгдэж буй ачилт алга.</p>}
+      {d.pending_shipments.map((p: any) => (
+        <div key={p.id} className={`flex gap-3 border-b border-sunken last:border-0 ${
+              touch ? "flex-wrap items-center py-3.5" : "items-center py-3"}`}>
+          <div className={`min-w-0 cursor-pointer ${touch ? "flex-1 min-w-[170px]" : ""}`}
+               onClick={() => nav(`/contracts/${p.contract_id}`)}>
+            <b className={`text-ink font-semibold block ${touch ? "text-[15.5px] leading-tight" : "text-[13.5px]"}`}>
+              {p.client} — №{p.contract_no}
+            </b>
+            <span className={`text-t2 ${touch ? "text-[13px]" : "text-[12.5px]"}`}>{p.date} · {p.summary}</span>
+          </div>
+          {(isFactory || u?.role === "manager") && (
+            touch ? (
+              <button className="btn-primary tap-lg px-6 max-[840px]:w-full max-[840px]:justify-center"
+                      disabled={busy === p.id} onClick={() => askShipment(p)}>
+                {busy === p.id ? "…" : "Ачсан ✓"}
+              </button>
+            ) : (
+              <button className="btn-secondary ml-auto !min-h-9 !py-1.5 !px-3 text-[13px]"
+                      disabled={busy === p.id} onClick={() => askShipment(p)}>
+                {busy === p.id ? "…" : "Ачсан ✓"}
+              </button>
+            )
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
+  /** Гадаа байгаа материал — дарга юуг буцааж авахаа эндээс хардаг. */
+  const returnQueueCard = (
+    <div className="card p-5">
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <h3 className="font-bold text-ink text-[17px]">Буцаалт хүлээж буй гэрээ</h3>
+        {!!outQueue?.length && (
+          <span className="pill-grey">
+            {fmt(outQueue.reduce((s: number, c: any) => s + c.qty_out, 0))} ш гадаа
+          </span>
+        )}
+      </div>
+      {outQueue === null && <p className="text-t3 text-sm py-4">Ачаалж байна…</p>}
+      {outQueue?.length === 0 && <p className="text-t3 text-sm py-4">Гадаа байгаа материал алга.</p>}
+      {outQueue?.map((c: any) => (
+        <button key={c.id} className="work-row" onClick={() => nav(`/contracts/${c.id}`)}>
+          <div className="min-w-0">
+            <b className="text-[15px] text-ink font-semibold block truncate">{c.client}</b>
+            <span className="text-[12.5px] text-t2">№{c.no} · {c.start_date}-с</span>
+          </div>
+          <div className="ml-auto text-right shrink-0">
+            <b className="text-[17px] tabular-nums text-ink leading-none">{fmt(c.qty_out)}</b>
+            <span className="block text-[11.5px] text-t3 mt-1">ширхэг гадаа</span>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+
+  const notificationsCard = (
+    <div className="card p-5">
+      <h3 className="font-bold text-ink text-[15.5px] mb-3">Мэдэгдэл</h3>
+      {notes.length === 0 && <p className="text-t3 text-sm py-4">Одоогоор мэдэгдэл алга. 🙌</p>}
+      {notes.map((n: any, i: number) => (
+        <div key={i} onClick={() => n.contract_id && nav(`/contracts/${n.contract_id}`)}
+             className="flex gap-3 py-3 border-b border-sunken last:border-0 items-start cursor-pointer hover:bg-canvas -mx-2 px-2 rounded-lg transition">
+          <div className={`w-8 h-8 rounded-[10px] grid place-items-center shrink-0 text-sm ${
+            n.level === "danger" ? "bg-danger-50 text-danger" :
+            n.level === "warn" ? "bg-warn-50 text-warn" : "bg-brand-50 text-brand"}`}>
+            {n.level === "danger" ? "!" : n.level === "warn" ? "◷" : "▤"}
+          </div>
+          <div className="min-w-0">
+            <b className="text-[13.5px] text-ink font-semibold block leading-snug">{n.title}</b>
+            <span className="text-[12.5px] text-t2">{n.sub}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const confirmDialog = ask && (
+    <ConfirmModal
+      title="Ачилт баталгаажуулах"
+      intro={<><b className="text-ink">{ask.client}</b> — Гэрээ №{ask.contract_no} · {ask.date}</>}
+      rows={lines === null
+        ? [{ label: "Ачилтын мөрүүд", value: "уншиж байна…", accent: "dim" as const }]
+        : lines.length > 0
+          ? lines.map((l: any) => ({ label: `${l.material} (${l.grade})`, value: `${fmt(l.qty)} ш` }))
+          : [{ label: "Ачилтын мөр", value: ask.summary || "—", accent: "dim" as const }]}
+      total={lines && lines.length > 0
+        ? { label: "Ачих нийт", value: `${fmt(lines.reduce((s: number, l: any) => s + l.qty, 0))} ш` }
+        : undefined}
+      note="Баталгаажуулмагц нөөц хөдөлж, тооцоо эхэлнэ."
+      confirmLabel="Ачсан ✓"
+      onClose={() => setAsk(null)}
+      onConfirm={() => confirmShipment(ask.id)} />
+  );
+
+  /* ---------- Үйлдвэрийн дарга: ажил нь эхний дэлгэцэнд ----------
+     Авлага, орлогын график, насжилт, зээл нь түүний ажил биш — санхүүгийн
+     блокуудыг огт үзүүлэхгүй. Эхлээд ачилт, дараа нь гадаа байгаа материал. */
+  if (isFactory) return (
+    <div>
+      <div className="dashboard-header">
+        <div>
+          <div className="dashboard-kicker">ӨДРИЙН АЖИЛ <span>•</span> LIVE</div>
+          <h1 className="dashboard-title">Өнөөдрийн ажил</h1>
+          <p className="dashboard-subtitle">Ачилтаа баталгаажуулж, гадаа байгаа материалаа хараарай.</p>
+        </div>
+      </div>
+      <div className="work-queue">
+        {shipmentsCard(true)}
+        {returnQueueCard}
+      </div>
+      {notificationsCard}
+      {confirmDialog}
+    </div>
+  );
+
   return (
     <div>
       <div className="dashboard-header">
@@ -59,9 +212,7 @@ export default function Dashboard() {
              scope === "rent" ? "Зөвхөн түрээсийн үзүүлэлтүүд." : "Зөвхөн худалдааны үзүүлэлтүүд."}
           </p>
         </div>
-        {u?.role !== "factory" && (
-          <Link to="/contracts/new" className="btn-primary command-action">+ Шинэ гэрээ</Link>
-        )}
+        <Link to="/contracts/new" className="btn-primary command-action">+ Шинэ гэрээ</Link>
       </div>
 
       {/* KPI */}
@@ -128,52 +279,13 @@ export default function Dashboard() {
 
       {/* Notifications + pending + loans */}
       <div className="dashboard-operations">
-        <div className="card p-5">
-          <h3 className="font-bold text-ink text-[15.5px] mb-3">Мэдэгдэл</h3>
-          {d.notifications.length === 0 && <p className="text-t3 text-sm py-4">Одоогоор мэдэгдэл алга. 🙌</p>}
-          {d.notifications.map((n: any, i: number) => (
-            <div key={i} onClick={() => n.contract_id && nav(`/contracts/${n.contract_id}`)}
-                 className="flex gap-3 py-3 border-b border-sunken last:border-0 items-start cursor-pointer hover:bg-canvas -mx-2 px-2 rounded-lg transition">
-              <div className={`w-8 h-8 rounded-[10px] grid place-items-center shrink-0 text-sm ${
-                n.level === "danger" ? "bg-danger-50 text-danger" :
-                n.level === "warn" ? "bg-warn-50 text-warn" : "bg-brand-50 text-brand"}`}>
-                {n.level === "danger" ? "!" : n.level === "warn" ? "◷" : "▤"}
-              </div>
-              <div className="min-w-0">
-                <b className="text-[13.5px] text-ink font-semibold block leading-snug">{n.title}</b>
-                <span className="text-[12.5px] text-t2">{n.sub}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold text-ink text-[15.5px]">Ачилт хүлээгдэж буй</h3>
-            <span className="pill-blue">Дарга баталгаажуулна</span>
-          </div>
-          {d.pending_shipments.length === 0 && <p className="text-t3 text-sm py-4">Хүлээгдэж буй ачилт алга.</p>}
-          {d.pending_shipments.map((p: any) => (
-            <div key={p.id} className="flex gap-3 py-3 border-b border-sunken last:border-0 items-center">
-              <div className="min-w-0 cursor-pointer" onClick={() => nav(`/contracts/${p.contract_id}`)}>
-                <b className="text-[13.5px] text-ink font-semibold block">{p.client} — №{p.contract_no}</b>
-                <span className="text-[12.5px] text-t2">{p.date} · {p.summary}</span>
-              </div>
-              {(u?.role === "factory" || u?.role === "manager") && (
-                <button className="btn-secondary ml-auto !min-h-9 !py-1.5 !px-3 text-[13px]"
-                        disabled={busy === p.id} onClick={() => askShipment(p)}>
-                  {busy === p.id ? "…" : "Ачсан ✓"}
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
+        {notificationsCard}
+        {shipmentsCard(false)}
         <div className="card p-5">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-bold text-ink text-[15.5px]">Зээлийн ойрын төлөлт</h3>
-            {u?.role !== "factory" && (
-              <button className="text-[12.5px] text-brand font-semibold cursor-pointer"
-                      onClick={() => nav("/loans")}>Бүгд →</button>
-            )}
+            <button className="text-[12.5px] text-brand font-semibold cursor-pointer"
+                    onClick={() => nav("/loans")}>Бүгд →</button>
           </div>
           {(d.loans_upcoming || []).length === 0 && <p className="text-t3 text-sm py-4">Идэвхтэй зээл алга.</p>}
           {(d.loans_upcoming || []).map((l: any, i: number) => (
@@ -197,24 +309,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {ask && (
-        <ConfirmModal
-          title="Ачилт баталгаажуулах"
-          intro={<><b className="text-ink">{ask.client}</b> — Гэрээ №{ask.contract_no} · {ask.date}</>}
-          rows={lines === null
-            ? [{ label: "Ачилтын мөрүүд", value: "уншиж байна…", accent: "dim" as const }]
-            : lines.length > 0
-              ? lines.map((l: any) => ({
-                  label: `${l.material} (${l.grade})`, value: `${fmt(l.qty)} ш` }))
-              : [{ label: "Ачилтын мөр", value: ask.summary || "—", accent: "dim" as const }]}
-          total={lines && lines.length > 0
-            ? { label: "Ачих нийт", value: `${fmt(lines.reduce((s: number, l: any) => s + l.qty, 0))} ш` }
-            : undefined}
-          note="Баталгаажуулмагц нөөц хөдөлж, тооцоо эхэлнэ."
-          confirmLabel="Ачсан ✓"
-          onClose={() => setAsk(null)}
-          onConfirm={() => confirmShipment(ask.id)} />
-      )}
+      {confirmDialog}
     </div>
   );
 }

@@ -211,13 +211,13 @@ export default function ContractDetail() {
                     <td className="td text-right tabular-nums">{money(inv.paid)}</td>
                     <td className="td"><StatePill state={inv.status} /></td>
                     <td className="td">
-                      <div className="flex gap-1">
-                        <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px]"
+                      <div className="flex gap-1.5 flex-wrap">
+                        <button className="btn-ghost btn-row"
                                 onClick={() => openPdf(`/api/invoices/${inv.id}/pdf`)}>PDF</button>
                         {/* Хавсралт нь ЗӨВХӨН түрээст: худалдааны нэхэмжлэлд
                             хоногийн цонх байхгүй тул сервер 400 буцаана. */}
                         {d.type === "rent" && (
-                          <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px]"
+                          <button className="btn-ghost btn-row"
                                   onClick={() => openPdf(`/api/invoices/${inv.id}/appendix-pdf`)}>Хавсралт</button>
                         )}
                       </div>
@@ -480,7 +480,10 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
     d.items.filter((i: any) => i.qty > 0).map((i: any) => ({
       ...i, ret: 0, return_grade_id: i.grade_id, repair: 0, writeoff: 0,
     })));
+  const [open, setOpen] = useState<number | null>(null);   // задарсан «Гэмтэл/акт» мөр
   const [busy, setBusy] = useState(false);
+  const setRow = (i: number, patch: any) =>
+    setRows(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)));
 
   async function submit() {
     const lines = rows.filter((r) => r.ret > 0).map((r) => ({
@@ -508,33 +511,83 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
     <Modal title="Буцаалт бүртгэх" onClose={onClose} wide dirty={dirty}>
       <label className="lbl">Огноо</label>
       <input type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px]">
-          <thead><tr>
-            <th className="th">Материал (гадаа)</th><th className="th">Буцаах тоо</th>
-            <th className="th">Очих зэрэглэл</th><th className="th">Засварт</th><th className="th">Актлах</th>
-          </tr></thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i}>
-                <td className="td"><b className="text-ink">{r.material}</b>
-                  <span className="block text-xs text-t3">{r.grade} · гадаа {fmt(r.qty)}ш</span></td>
-                <td className="td"><input type="number" min={0} max={r.qty} className="inp !min-h-10 !py-2 w-24"
-                  value={r.ret} onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, ret: +e.target.value } : x))} /></td>
-                <td className="td">
-                  <select className="inp !min-h-10 !py-2 w-28" value={r.return_grade_id}
-                    onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, return_grade_id: +e.target.value } : x))}>
+
+      {/* Буцаалт нь агуулахын шалан дээр, планшетаар хийгддэг ажил — Тооллоготой
+          ижил хэлбэр: мөр бүр нэг материал, том тоон талбар, засвар/акт нь
+          хэрэгтэй үедээ л задардаг. Дөрвөн нүдтэй микро-хүснэгт байхгүй. */}
+      <div className="divide-y divide-line border-t border-line">
+        {rows.map((r, i) => {
+          const ret = r.ret || 0;
+          const over = ret > r.qty;
+          const feeOver = r.repair + r.writeoff > ret;
+          const expanded = open === i;
+          const flagged = r.repair + r.writeoff;
+          return (
+            <div key={i} className="py-3">
+              <div className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <b className="text-[15.5px] text-ink block leading-tight">{r.material}</b>
+                  <span className="text-[12.5px] text-t2">
+                    <span className="pill-grey !text-[10.5px] !py-0 mr-1.5">{r.grade}</span>
+                    гадаа <b className="tabular-nums">{fmt(r.qty)}</b>ш
+                  </span>
+                </div>
+                <input type="number" inputMode="numeric" min={0} max={r.qty} placeholder="0"
+                       aria-label={`${r.material} — буцаах тоо`}
+                       className={`inp !w-24 !min-h-[52px] text-center !text-[17px] font-bold ${
+                         over ? "!border-danger" : ret > 0 ? "!border-brand" : ""}`}
+                       value={r.ret || ""} onChange={(e) => setRow(i, { ret: +e.target.value })} />
+              </div>
+
+              {ret > 0 && (
+                <div className="mt-2.5 flex items-center gap-2.5 flex-wrap">
+                  <label className="text-[12.5px] text-t2" htmlFor={`rg-${i}`}>Очих зэрэглэл</label>
+                  <select id={`rg-${i}`} className="inp !w-24 !min-h-11 !py-2" value={r.return_grade_id}
+                          onChange={(e) => setRow(i, { return_grade_id: +e.target.value })}>
                     {grades.map((g: any) => <option key={g.id} value={g.id}>{g.code}</option>)}
                   </select>
-                </td>
-                <td className="td"><input type="number" min={0} className="inp !min-h-10 !py-2 w-20"
-                  value={r.repair} onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, repair: +e.target.value } : x))} /></td>
-                <td className="td"><input type="number" min={0} className="inp !min-h-10 !py-2 w-20"
-                  value={r.writeoff} onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, writeoff: +e.target.value } : x))} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  <button className="btn-ghost !min-h-11 text-[13px]" aria-expanded={expanded}
+                          onClick={() => setOpen(expanded ? null : i)}>
+                    <span className="text-t3">{expanded ? "▾" : "›"}</span> Гэмтэл/акт
+                    {!expanded && flagged > 0 && <b className="text-warn"> · {fmt(flagged)}ш</b>}
+                  </button>
+                  <span className={`ml-auto text-[12.5px] tabular-nums ${
+                        over ? "text-danger font-semibold" : "text-t2"}`}>
+                    {over ? `гадаа байгаагаас ${fmt(ret - r.qty)}ш их`
+                          : `${fmt(r.qty - ret)}ш гадаа үлдэнэ`}
+                  </span>
+                </div>
+              )}
+
+              {ret > 0 && expanded && (
+                <div className="mt-2.5 rounded-[8px] p-3 flex gap-4 flex-wrap items-end"
+                     style={{ background: "var(--color-sunken)" }}>
+                  <div>
+                    <label className="lbl">Засварт</label>
+                    <input type="number" min={0} inputMode="numeric" placeholder="0"
+                           className="inp !w-20 !min-h-11 text-center font-bold"
+                           value={r.repair || ""} onChange={(e) => setRow(i, { repair: +e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="lbl">Актлах</label>
+                    <input type="number" min={0} inputMode="numeric" placeholder="0"
+                           className="inp !w-20 !min-h-11 text-center font-bold"
+                           value={r.writeoff || ""} onChange={(e) => setRow(i, { writeoff: +e.target.value })} />
+                  </div>
+                  <p className="text-[12px] text-t2 flex-1 min-w-[170px]">
+                    Засварын фикс үнэ, актын НБҮнэ нэхэмжлэлд автоматаар нэмэгдэнэ.
+                  </p>
+                </div>
+              )}
+
+              {ret > 0 && feeOver && (
+                <p className="text-[12.5px] text-danger mt-2">
+                  Засвар + акт ({fmt(flagged)}ш) нь буцаалтаас ({fmt(ret)}ш) их байна.
+                </p>
+              )}
+            </div>
+          );
+        })}
       </div>
       {(() => {
         const act = rows.filter((r) => r.ret > 0);
@@ -562,8 +615,10 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
         );
       })()}
       <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={busy} onClick={submit}>{busy ? "…" : "Бүртгэх"}</button>
+        <button className="btn-secondary tap-lg" onClick={onClose}>Болих</button>
+        <button className="btn-primary tap-lg px-6" disabled={busy} onClick={submit}>
+          {busy ? "…" : "✓ Буцаалт бүртгэх"}
+        </button>
       </div>
     </Modal>
   );

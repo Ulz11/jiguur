@@ -78,7 +78,10 @@ function Shell({ children }: { children: ReactNode }) {
   };
 
   if (!u) return <Navigate to="/login" replace />;
-  const showScope = ["/", "/contracts"].includes(loc.pathname);
+  // Даргын нүүр хуудсанд санхүүгийн блок байхгүй тул Түрээс/Худалдаа
+  // шүүлтүүр тэнд юу ч хөдөлгөхгүй — үхсэн товч үлдээхгүй.
+  const showScope = ["/", "/contracts"].includes(loc.pathname)
+    && !(u.role === "factory" && loc.pathname === "/");
   const availableNav = NAV.filter((n: any) => (!n.role || n.role === u.role) && n.hide !== u.role);
   const workNav = availableNav.slice(0, WORK_COUNT);
   const orgNav = availableNav.slice(WORK_COUNT);
@@ -102,21 +105,28 @@ function Shell({ children }: { children: ReactNode }) {
                className={collapsed ? "brand-mark-img" : ""} />
           <button className="jz-drawer-close" onClick={() => setMenu(false)} aria-label="Хаах">×</button>
         </div>
-        <div className="nav-caption">ҮЙЛ АЖИЛЛАГАА</div>
-        <nav className="jz-nav">{workNav.map(navItem)}</nav>
-        {orgNav.length > 0 && (
-          <><div className="nav-caption">БАЙГУУЛЛАГА</div><nav className="jz-nav">{orgNav.map(navItem)}</nav></>
-        )}
-        <div className="mt-auto side-foot-card p-3.5 flex items-center gap-2.5">
-          <div className="user-monogram">{u.name.slice(0, 2)}</div>
-          <div className="min-w-0 relative z-[1] nav-label">
-            <div className="text-[13px] font-semibold truncate">{u.name}</div>
-            <div className="text-[11px] opacity-70">{roleLabel}</div>
+        {/* Намхан дэлгэцэнд цэс өөрөө гүйнэ — Тохиргоо, Үйлдлийн бүртгэл таслагдахгүй */}
+        <div className="jz-nav-scroll">
+          <div className="nav-caption">ҮЙЛ АЖИЛЛАГАА</div>
+          <nav className="jz-nav">{workNav.map(navItem)}</nav>
+          {orgNav.length > 0 && (
+            <><div className="nav-caption">БАЙГУУЛЛАГА</div><nav className="jz-nav">{orgNav.map(navItem)}</nav></>
+          )}
+        </div>
+        <div className="side-foot-card p-2.5">
+          <div className="flex items-center gap-2.5 relative z-[1]">
+            <div className="user-monogram">{u.name.slice(0, 2)}</div>
+            <div className="min-w-0 flex-1 nav-label">
+              <div className="text-[13px] font-semibold truncate">{u.name}</div>
+              <div className="text-[11px] opacity-70 truncate">{roleLabel}</div>
+            </div>
           </div>
-          <div className="ml-auto relative z-[1] flex gap-2 shrink-0 nav-label">
-            <button className="text-white/70 hover:text-white transition text-[13px]" title="Нууц үг солих"
+          {/* Өөрийн мөрөнд гарсан тул нэр хумигдахгүй; nav-label ЗҮҮГДЭХГҮЙ —
+              хураасан горимд ч гарах/нууц үг солих товч үлдэнэ */}
+          <div className="side-foot-actions relative z-[1]">
+            <button className="side-foot-btn" title="Нууц үг солих" aria-label="Нууц үг солих"
                     onClick={() => setPw(true)}>🔑</button>
-            <button className="text-white/70 hover:text-white transition" title="Гарах"
+            <button className="side-foot-btn" title="Гарах" aria-label="Гарах"
                     onClick={() => { clearAuth(); nav("/login"); }}>⎋</button>
           </div>
         </div>

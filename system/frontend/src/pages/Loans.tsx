@@ -127,7 +127,7 @@ export default function Loans() {
                   <td className="td text-right tabular-nums text-t2">{sayaFmt(l.interest_paid)}₮</td>
                   <td className="td">
                     {l.status === "active" && (
-                      <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px] text-money"
+                      <button className="btn-ghost btn-row text-money"
                               onClick={(e) => { e.stopPropagation(); setModal({ kind: "pay", loan: l }); }}>Төлөлт</button>
                     )}
                   </td>
@@ -143,7 +143,7 @@ export default function Loans() {
                             confirmText="Хадгалах уу?"
                             onSave={(v) => doPatch(`/api/loans/${l.id}`, { note: v }, "Тэмдэглэл шинэчлэгдлээ")} />
                         </div>
-                        <button className="btn-ghost !min-h-8 !py-1 !px-3 text-[12.5px]"
+                        <button className="btn-ghost btn-row"
                                 onClick={() => setAsk({ kind: "status", loan: l })}>
                           {l.status === "active" ? "Хаах" : "Сэргээх"}
                         </button>

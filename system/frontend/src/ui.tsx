@@ -233,27 +233,31 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
     <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
       {options ? (
         <select autoFocus
-          className={`inp !min-h-8 !py-1 !px-2 !rounded-lg !text-[13px] ${width}`}
+          className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width}`}
           value={val} onChange={(e) => setVal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }}>
           {options.map(([v, lb]) => <option key={v} value={v}>{lb}</option>)}
         </select>
       ) : (
         <input autoFocus type={type}
-          className={`inp !min-h-8 !py-1 !px-2 !rounded-lg !text-[13px] ${width} ${right ? "text-right" : ""}`}
+          className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width} ${right ? "text-right" : ""}`}
           value={val} onChange={(e) => setVal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }} />
       )}
+      {/* Баталгаажуулах/цуцлах товчнууд target-sm (36px) — хуруугаар ч оносон дарагдана */}
       {mode === "edit" ? (
         <>
-          <button className="w-7 h-7 rounded-lg bg-brand-50 text-brand font-bold shrink-0" onClick={() => setMode("confirm")}>✓</button>
-          <button className="w-7 h-7 rounded-lg bg-sunken text-t2 shrink-0" onClick={() => setMode("view")}>✕</button>
+          <button className="w-9 h-9 rounded-lg bg-brand-50 text-brand font-bold shrink-0"
+                  aria-label="Хадгалахаар үргэлжлүүлэх" onClick={() => setMode("confirm")}>✓</button>
+          <button className="w-9 h-9 rounded-lg bg-sunken text-t2 shrink-0"
+                  aria-label="Болих" onClick={() => setMode("view")}>✕</button>
         </>
       ) : (
         <>
-          <button className="h-7 px-2.5 rounded-lg bg-money text-white text-[12px] font-bold whitespace-nowrap shrink-0"
+          <button className="h-9 px-3 rounded-lg bg-money text-white text-[12px] font-bold whitespace-nowrap shrink-0"
                   disabled={busy} onClick={commit}>{busy ? "…" : confirmText}</button>
-          <button className="w-7 h-7 rounded-lg bg-sunken text-t2 shrink-0" onClick={() => setMode("view")}>✕</button>
+          <button className="w-9 h-9 rounded-lg bg-sunken text-t2 shrink-0"
+                  aria-label="Болих" onClick={() => setMode("view")}>✕</button>
         </>
       )}
     </span>

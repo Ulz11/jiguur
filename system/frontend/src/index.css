@@ -132,7 +132,9 @@ body::before {
 
   /* Inline edit */
   .inline-val {
-    @apply inline-flex items-center gap-1.5 cursor-pointer rounded-lg px-1.5 -mx-1.5 py-0.5 transition;
+    @apply inline-flex items-center gap-1.5 cursor-pointer rounded-lg px-2 -mx-2 py-1 transition;
+    /* Хүснэгтэд дарагдах талбар — target-sm-ийн доод хязгаарт ойртуулав */
+    min-height: 32px;
     border-bottom: 1px dashed var(--color-line-strong);
   }
   .inline-val:hover { background: var(--color-brand-50); border-bottom-color: var(--color-brand); }
@@ -184,7 +186,17 @@ body::before {
    Жигүүр Зам — precision operational interface
    Source assets: Primary logo + brand patterns supplied by client.
    ============================================================ */
-:root { --jz-blue: #253886; --jz-blue-deep: #19296b; --jz-orange: #ff8a0b; --jz-paper: #f5f6f8; --jz-mono: "IBM Plex Mono", monospace; --jz-display: "Manrope", "IBM Plex Sans", sans-serif; }
+:root { --jz-blue: #253886; --jz-blue-deep: #19296b; --jz-orange: #ff8a0b; --jz-paper: #f5f6f8; --jz-mono: "IBM Plex Mono", monospace; --jz-display: "Manrope", "IBM Plex Sans", sans-serif;
+  /* ---- Хүрэлцэх талбайн шат (target size scale) ----
+     lg  52px — хуруугаар дарах гол товч: тооллого, буцаалт, даргын ажлын дараалал
+     md  44px — энгийн товч/талбар (btn-primary, btn-secondary, .inp)
+     sm  36px — десктоп хүснэгтийн нягт үйлдэл. Дарагдах юм 36px-ээс намхан байхгүй. */
+  --target-lg: 52px; --target: 44px; --target-sm: 36px; }
+/* Шатны утгыг класс болгож өгнө — тоо нь нэг эх сурвалжтай үлдэнэ */
+.tap-lg { min-height: var(--target-lg); }
+.tap { min-height: var(--target); }
+/* Хүснэгтийн мөрөн дэх үйлдэл (PDF · Хавсралт · Төлөлт · Засах) */
+.btn-row { min-height: var(--target-sm); padding: 6px 11px; font-size: 12.5px; }
 html { font-feature-settings: "tnum" 1, "ss01" 1; }
 body { background: var(--jz-paper); color: var(--color-t1); letter-spacing: -0.012em; }
 body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-pattern-paper.jpg"); background-size: 330px auto; background-repeat: repeat; filter: saturate(.8); }
@@ -192,13 +204,23 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .jz-sidebar { width: 262px; flex: 0 0 262px; display: flex; flex-direction: column; padding: 18px 13px 15px; color: #f9fbff; background: var(--jz-blue-deep); position: sticky; top: 0; height: 100vh; overflow: hidden; border-right: 1px solid rgba(255,255,255,.08); transition: width .22s cubic-bezier(.22,1,.36,1), flex-basis .22s cubic-bezier(.22,1,.36,1); }
 .jz-sidebar::before { content: ""; position: absolute; inset: auto -64px -86px auto; width: 275px; height: 275px; opacity: .15; background-image: url("./assets/jiguur-pattern-navy.jpg"); background-size: 170px auto; transform: rotate(-14deg); mix-blend-mode: screen; }
 .jz-sidebar::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(255,255,255,.04), transparent 28%); }
-.brand-plate { position: relative; z-index: 1; background: #fff; min-height: 70px; margin: 0 3px 18px; display: grid; place-items: center; padding: 11px 14px; box-shadow: 0 12px 30px rgba(0,0,0,.16); }
+.brand-plate { position: relative; z-index: 1; flex: none; background: #fff; min-height: 70px; margin: 0 3px 18px; display: grid; place-items: center; padding: 11px 14px; box-shadow: 0 12px 30px rgba(0,0,0,.16); }
+
+/* Цэсний дунд хэсэг — намхан дэлгэц (1366×768, 1280×660) дээр ЗӨВХӨН энэ гүйнэ.
+   Лого дээрээ, хэрэглэгчийн хайрцаг (🔑 ⎋) доороо БАЙНГА харагдана. */
+.jz-nav-scroll { position: relative; z-index: 1; flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.2) transparent; }
+.jz-nav-scroll::-webkit-scrollbar { width: 6px; }
+.jz-nav-scroll::-webkit-scrollbar-track { background: transparent; }
+.jz-nav-scroll::-webkit-scrollbar-thumb { border-radius: 99px; background: rgba(255,255,255,.16); }
+.jz-nav-scroll:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,.3); }
 .brand-plate::after { content: ""; position: absolute; inset: 4px; border: 1px solid rgba(37,56,134,.12); pointer-events: none; }
 .brand-plate img { display: block; width: 100%; max-width: 196px; max-height: 46px; object-fit: contain; }
 .brand-plate img.brand-mark-img { width: auto; max-width: 34px; max-height: 40px; }
 
 /* Цэс хураах товч — topbar-ийн зүүн талд */
-.jz-collapse { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center;
+.jz-collapse { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center;
   border-radius: 7px; font-size: 15px; line-height: 1; font-weight: 700; color: var(--jz-blue);
   background: var(--color-sunken); transition: background .15s, color .15s; }
 .jz-collapse:hover { background: var(--jz-orange); color: #fff; }
@@ -219,10 +241,19 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .jz-sidebar.collapsed .brand-plate { min-height: 56px; padding: 8px; margin-bottom: 16px; }
 .jz-sidebar.collapsed .nav-btn { justify-content: center; padding: 11px 4px; gap: 0; }
 .jz-sidebar.collapsed .nav-btn:hover { transform: none; }
-.jz-sidebar.collapsed .side-foot-card { justify-content: center; padding: 9px !important; }
-.side-foot-card { position: relative; z-index: 1; color: #fff; border-radius: 8px !important; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.075) !important; overflow: hidden; }
+.jz-sidebar.collapsed .side-foot-card { padding: 9px !important; }
+.jz-sidebar.collapsed .side-foot-card > div:first-child { justify-content: center; }
+/* Хураасан горимд 🔑/⎋ нэрний хамт алга болдог байсныг баганаар өрж үлдээв */
+.jz-sidebar.collapsed .side-foot-actions { flex-direction: column; align-items: center; margin-top: 6px; }
+.side-foot-card { position: relative; z-index: 1; flex: none; margin-top: 12px; color: #fff; border-radius: 8px !important; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.075) !important; overflow: hidden; }
 .side-foot-card::after { content: ""; position: absolute; inset: 0; background-image: url("./assets/jiguur-pattern-navy.jpg"); background-size: 120px auto; opacity: .12; mix-blend-mode: screen; }
-.user-monogram { width: 34px; height: 34px; border-radius: 5px; flex: 0 0 34px; display: grid; place-items: center; color: var(--jz-blue); background: var(--jz-orange); font: 600 11px var(--jz-mono); position: relative; z-index: 1; }
+.user-monogram { width: 40px; height: 40px; border-radius: 6px; flex: 0 0 40px; display: grid; place-items: center; color: var(--jz-blue); background: var(--jz-orange); font: 600 12px var(--jz-mono); position: relative; z-index: 1; }
+/* Нууц үг солих 🔑 / гарах ⎋ — 13px өргөн бичиг байсныг 40×40 товч болгов */
+.side-foot-btn { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center;
+  border-radius: 7px; font-size: 15px; line-height: 1; color: rgba(255,255,255,.72);
+  transition: background .15s, color .15s; }
+.side-foot-btn:hover { background: rgba(255,255,255,.16); color: #fff; }
+.side-foot-actions { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
 .jz-main { min-width: 0; flex: 1; }
 .jz-topbar { position: sticky; top: 0; z-index: 25; height: 66px; display: flex; align-items: center; gap: 14px; padding: 0 42px; border-bottom: 1px solid var(--color-line); background: rgba(255,255,255,.86); backdrop-filter: saturate(150%) blur(12px); }
 .jz-location { color: var(--color-t2); font: 11px var(--jz-mono); letter-spacing: .07em; }
@@ -271,6 +302,20 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .dashboard-operations .card:nth-child(2) { border-top-color: var(--jz-blue); }
 .dashboard-operations .card:nth-child(3) { border-top-color: var(--color-money); }
 
+/* Үйлдвэрийн даргын ажлын дараалал — түүний нүүр хуудас энэ хоёр хайрцгаар эхэлнэ.
+   Санхүүгийн блокууд түүнд харагдахгүй тул дэлгэцийн эхний дэлгэцэнд ажил нь багтана. */
+.work-queue { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin-bottom: 13px; }
+.work-queue .card { padding: 21px !important; border-top: 2px solid transparent; }
+.work-queue .card:nth-child(1) { border-top-color: var(--jz-orange); }
+.work-queue .card:nth-child(2) { border-top-color: var(--jz-blue); }
+.work-queue h3 { color: var(--jz-blue-deep); }
+.work-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  min-height: var(--target-lg); padding: 11px 0; border-bottom: 1px solid var(--color-sunken);
+  transition: background .15s; }
+.work-row:last-child { border-bottom: 0; }
+.work-row:hover { background: rgba(37,56,134,.035); }
+@media (max-width: 1100px) { .work-queue { grid-template-columns: 1fr; } }
+
 /* Login uses the supplied paper-pattern as a quiet architectural surface. */
 .login-stage { min-height: 100vh; display: grid; place-items: center; position: relative; background: linear-gradient(135deg, #f5f6f8, #e9ecf3); overflow: hidden; }
 .login-stage::before { content: ""; position: absolute; inset: 0; background: url("./assets/jiguur-pattern-paper.jpg") center / 255px auto repeat; opacity: .075; }
@@ -281,9 +326,9 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .login-title { color: var(--jz-blue-deep); font: 700 22px/1.2 var(--jz-display); letter-spacing: -.035em; }
 
 /* ---- Drawer (жижиг дэлгэц) ба хураангуй sidebar ---- */
-.jz-burger { display: none; width: 38px; height: 38px; margin-right: 4px; border-radius: 7px; color: var(--jz-blue); font-size: 18px; line-height: 1; flex: 0 0 38px; }
+.jz-burger { display: none; width: var(--target); height: var(--target); margin-right: 4px; border-radius: 7px; color: var(--jz-blue); font-size: 18px; line-height: 1; flex: 0 0 var(--target); }
 .jz-burger:hover { background: var(--color-sunken); }
-.jz-drawer-close { display: none; position: absolute; top: 4px; right: 6px; width: 28px; height: 28px; color: var(--jz-blue); font-size: 20px; line-height: 1; }
+.jz-drawer-close { display: none; position: absolute; top: 3px; right: 3px; width: var(--target-sm); height: var(--target-sm); color: var(--jz-blue); font-size: 20px; line-height: 1; }
 .jz-scrim { position: fixed; inset: 0; z-index: 39; background: rgba(25, 41, 107, .45); backdrop-filter: blur(2px); }
 
 @media (max-width: 1180px) {
@@ -298,7 +343,11 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
   .dashboard-analysis, .dashboard-operations { grid-template-columns: 1fr; }
   .dashboard-operations { margin-top: 13px; }
 }
-@media (max-width: 760px) {
+/* ---- Таблет ба доош: sidebar → drawer ----
+   Заагийг 840px-т тавьсан нь iPad-ийн ХӨРӨӨ байрлалыг (768 · Air 820 · Pro 834)
+   бүрэн багтаана — дарга талбай дээр планшетаараа орно. 760px байхад iPad
+   найман пиксэлээр гадуур үлдэж, sidebar 262px-ээ эзлээд агуулга 506px болдог. */
+@media (max-width: 840px) {
   /* Sidebar → drawer: алга болгохгүй, ☰ товчоор гарч ирнэ. Хураасан горим энд үйлчлэхгүй */
   .jz-sidebar, .jz-sidebar.collapsed {
                 position: fixed; z-index: 40; inset: 0 auto 0 0; width: 262px; flex-basis: 0;
@@ -309,11 +358,19 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
   .jz-sidebar.collapsed .nav-label, .jz-sidebar.collapsed .nav-caption { display: block; }
   .jz-sidebar .nav-btn, .jz-sidebar.collapsed .nav-btn { justify-content: flex-start; padding: 11px 12px; gap: 12px; }
   .jz-sidebar .brand-plate, .jz-sidebar.collapsed .brand-plate { width: auto; min-height: 66px; margin: 0 3px 18px; padding: 10px 14px; }
-  .jz-sidebar .side-foot-card, .jz-sidebar.collapsed .side-foot-card { justify-content: flex-start; padding: 12px !important; }
+  .jz-sidebar .side-foot-card, .jz-sidebar.collapsed .side-foot-card { padding: 12px !important; }
+  /* Хураасан төлөвтэй хэрэглэгч drawer нээхэд бүтэн хэлбэрээрээ харагдана */
+  .jz-sidebar.collapsed .side-foot-card > div:first-child { justify-content: flex-start; }
+  .jz-sidebar.collapsed .side-foot-actions { flex-direction: row; align-items: stretch; margin-top: 8px; }
   .jz-burger, .jz-drawer-close { display: grid; place-items: center; }
   .jz-collapse { display: none; }
+  .jz-topbar { padding: 0 16px; gap: 10px; }
+  .jz-location { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .jz-content { padding: 24px 18px 52px; }
+}
+@media (max-width: 760px) {
   .jz-topbar { height: 57px; padding: 0 12px; gap: 8px; }
-  .jz-location { font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .jz-location { font-size: 9px; }
   .jz-topbar-actions { margin-left: auto; }
   .jz-content { padding: 22px 14px 45px; }
   .dashboard-header { align-items: start; margin-bottom: 18px; }

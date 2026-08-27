@@ -125,13 +125,13 @@ export default function Barter() {
                 <td className="td">
                   {a.status === "held" && canSell && (
                     <div className="flex gap-1">
-                      <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px] text-money"
+                      <button className="btn-ghost btn-row text-money"
                               onClick={() => setModal({ kind: "sell", asset: a })}>Зарах</button>
                       {a.type === "Материал" && (
-                        <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px]"
+                        <button className="btn-ghost btn-row"
                                 onClick={() => setModal({ kind: "stock", asset: a })}>Нөөцөд</button>
                       )}
-                      <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px]"
+                      <button className="btn-ghost btn-row"
                               onClick={() => setModal({ kind: "edit", asset: a })}>Засах</button>
                     </div>
                   )}

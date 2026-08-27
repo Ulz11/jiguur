@@ -29,14 +29,14 @@ export default function SettingsPage() {
           <div className="card p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold text-ink text-[15.5px]">Зэрэглэл</h3>
-              <button className="btn-ghost text-brand !min-h-8" onClick={() => setGradeModal({})}>+ Нэмэх</button>
+              <button className="btn-ghost text-brand btn-row" onClick={() => setGradeModal({})}>+ Нэмэх</button>
             </div>
             <p className="text-[12px] text-t3 mb-3">Шинэ, А, В, С… — дуртай хэдэн зэрэглэл нэмнэ. Бараа хүлээж авахдаа дарга сонгоно.</p>
             {grades.map((g) => (
               <div key={g.id} className="flex items-center gap-3 py-2 border-b border-sunken last:border-0">
                 <span className="pill-blue">{g.code}</span>
                 <span className="text-[13.5px]">{g.name}</span>
-                <button className="btn-ghost !min-h-7 !p-1 ml-auto text-[12px]" onClick={() => setGradeModal(g)}>Засах</button>
+                <button className="btn-ghost btn-row ml-auto" onClick={() => setGradeModal(g)}>Засах</button>
               </div>
             ))}
           </div>
@@ -71,7 +71,7 @@ export default function SettingsPage() {
         <div className="card overflow-x-auto">
           <div className="flex items-center justify-between px-4 pt-4 pb-1">
             <h3 className="font-bold text-ink text-[15.5px]">Материалын каталог</h3>
-            <button className="btn-ghost text-brand !min-h-8" onClick={() => setMatModal({})}>+ Материал нэмэх</button>
+            <button className="btn-ghost text-brand btn-row" onClick={() => setMatModal({})}>+ Материал нэмэх</button>
           </div>
           <table className="w-full min-w-[560px]">
             <thead><tr>
@@ -94,7 +94,7 @@ export default function SettingsPage() {
                       ))}
                     </div>
                   </td>
-                  <td className="td"><button className="btn-ghost !min-h-7 !p-1 text-[12px]" onClick={() => setMatModal(m)}>Засах</button></td>
+                  <td className="td"><button className="btn-ghost btn-row" onClick={() => setMatModal(m)}>Засах</button></td>
                 </tr>
               ))}
             </tbody>

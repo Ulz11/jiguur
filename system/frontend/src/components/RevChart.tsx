@@ -83,7 +83,7 @@ export default function RevChart(data: Props) {
               if (on[s.key] && cnt === 1) return;
               setOn({ ...on, [s.key]: !on[s.key] });
             }}
-            className={`inline-flex items-center gap-2 text-[12.5px] font-semibold border border-line rounded-full px-3.5 py-1.5 min-h-8 transition ${
+            className={`inline-flex items-center gap-2 text-[12.5px] font-semibold border border-line rounded-full px-3.5 py-1.5 min-h-9 transition ${
               on[s.key] ? "text-t1" : "text-t3 bg-sunken"}`}>
             <i className="w-2 h-2 rounded-[3px]" style={{ background: s.color, opacity: on[s.key] ? 1 : 0.25 }} />
             {s.name}

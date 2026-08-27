@@ -79,7 +79,7 @@ export default function Warehouse() {
                   <td className="td"><Prog pct={util} color={util > 85 ? "#EF4444" : util > 70 ? "#F5A524" : undefined} /></td>
                   <td className="td">
                     {repair > 0 && u?.role !== "finance" && (
-                      <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12px] text-money"
+                      <button className="btn-ghost btn-row text-money"
                         onClick={() => {
                           const s = (m.stock || []).find((x: any) => x.in_repair > 0);
                           if (s) setRepair({ m, s });
