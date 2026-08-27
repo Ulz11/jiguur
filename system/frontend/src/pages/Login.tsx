@@ -36,7 +36,7 @@ export default function Login() {
           <div className="login-rule" />
           <div className="mb-7">
             <div className="login-title">Удирдлагын систем</div>
-            <div className="text-[10px] uppercase tracking-[0.15em] text-t3 font-semibold mt-1.5">
+            <div className="text-[11.5px] uppercase tracking-[0.11em] text-t3 font-semibold mt-1.5">
               Түрээс · Худалдаа · Тооцоо
             </div>
           </div>
@@ -60,7 +60,7 @@ export default function Login() {
             {busy ? "Түр хүлээнэ үү…" : "Нэвтрэх"}
           </button>
         </form>
-        <p className="text-[11px] text-t3 mt-5 text-center leading-relaxed">
+        <p className="text-[12px] text-t3 mt-5 text-center leading-relaxed">
           Нууц үгээ мартсан бол менежерт хандана уу.<br />
           © {new Date().getFullYear()} Жигүүр Зам ХХК
         </p>

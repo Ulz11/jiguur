@@ -30,7 +30,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           <summary className="text-[12.5px] text-t2 font-semibold inline-flex items-center gap-1.5 hover:text-ink transition">
             <span className="chev">›</span> Дэлгэрэнгүй (техникийн)
           </summary>
-          <code className="block text-[11.5px] text-t2 bg-sunken rounded-lg px-3 py-2 mt-2.5 text-left overflow-x-auto">
+          <code className="block text-[12px] text-t2 bg-sunken rounded-lg px-3 py-2 mt-2.5 text-left overflow-x-auto">
             {this.state.error.message}
           </code>
         </details>

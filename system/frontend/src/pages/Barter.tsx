@@ -33,9 +33,9 @@ export default function Barter() {
 
       <div className="command-metrics mb-4">
         <div className="command-hero">
-          <div className="text-white/60 text-[12.5px] font-medium mb-2">Хадгалагдаж буй хөрөнгө</div>
+          <div className="text-white/80 text-[12.5px] font-medium mb-2">Хадгалагдаж буй хөрөнгө</div>
           <div className="text-[28px] font-extrabold text-white tabular-nums leading-tight">
-            {sayaFmt(s.held_value)} <span className="text-sm text-white/40 font-semibold">₮</span>
+            {sayaFmt(s.held_value)} <span className="text-sm text-white/70 font-semibold">₮</span>
           </div>
           <div className="mt-2"><span className="pill bg-white/10 text-white/80">
             {s.held_count} хөрөнгө · дунджаар {s.avg_days_held} хоног</span></div>
@@ -93,7 +93,7 @@ export default function Barter() {
                 <td className="td">
                   <span className="font-bold text-ink">{a.name}</span>
                   <span className="block text-xs text-t3">
-                    <span className="pill-grey !text-[10px] !py-0 mr-1.5">{a.type}</span>
+                    <span className="pill-grey !py-0 mr-1.5">{a.type}</span>
                     {a.detail || ""} {a.date_in}-нд орж ирсэн
                   </span>
                 </td>
@@ -116,7 +116,7 @@ export default function Barter() {
                   {a.status === "sold" ? (
                     <>
                       <span className="font-bold text-ink">{money(a.sold_amount)}</span>
-                      <span className={`block text-[11.5px] font-bold ${a.gain < 0 ? "text-danger" : "text-money"}`}>
+                      <span className={`block text-[12px] font-bold ${a.gain < 0 ? "text-danger" : "text-money"}`}>
                         {a.gain > 0 ? "+" : ""}{money(a.gain)}
                       </span>
                     </>
@@ -260,7 +260,7 @@ function AssetModal({ a, onClose, onDone }: any) {
         {TYPES.map((t) => (
           <button key={t} onClick={() => setF({ ...f, type: t })} aria-pressed={f.type === t}
             className={`flex-1 rounded-[10px] border py-2 font-semibold text-[13px] min-h-10 transition ${
-              f.type === t ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{t}</button>
+              f.type === t ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2"}`}>{t}</button>
         ))}
       </div>
       <div className="grid grid-cols-2 gap-3.5">

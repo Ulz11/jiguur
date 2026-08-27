@@ -46,9 +46,9 @@ export default function Collections() {
 
       <div className="command-metrics mb-4">
         <div className="command-hero">
-          <div className="text-white/60 text-[12.5px] font-medium mb-2">Хугацаа хэтэрсэн нийт</div>
+          <div className="text-white/80 text-[12.5px] font-medium mb-2">Хугацаа хэтэрсэн нийт</div>
           <div className="text-[28px] font-extrabold text-white tabular-nums leading-tight">
-            {sayaFmt(d.total_overdue)} <span className="text-sm text-white/40 font-semibold">₮</span>
+            {sayaFmt(d.total_overdue)} <span className="text-sm text-white/70 font-semibold">₮</span>
           </div>
           <div className="mt-2"><span className="pill bg-white/10 text-white/80">{d.rows.length} харилцагч</span></div>
         </div>
@@ -103,7 +103,7 @@ export default function Collections() {
                     {r.person || "—"}
                     {r.phone && (
                       <> · <a href={telHref(r.phone)} title={`${r.phone} руу залгах`}
-                              className="text-t2 font-semibold hover:text-brand hover:underline">
+                              className="text-t2 font-semibold hover:text-brand-ink hover:underline">
                             ☎ {r.phone}
                           </a></>
                     )}
@@ -122,7 +122,7 @@ export default function Collections() {
                   {r.last_contact ? (
                     <>
                       <span className="text-[13px]">{r.last_contact}</span>
-                      <span className="block text-[11.5px] text-t3 truncate max-w-[180px]">{r.last_note}</span>
+                      <span className="block text-[12px] text-t3 truncate max-w-[180px]">{r.last_note}</span>
                     </>
                   ) : <span className="pill-red">Огт холбогдоогүй</span>}
                 </td>
@@ -164,7 +164,7 @@ function NoteModal({ r, onClose, onDone }: any) {
         Хэтэрсэн <b className="text-danger tabular-nums">{money(r.overdue)}</b>
         {r.penalty > 0 && <> · алданги <b className="tabular-nums">{money(r.penalty)}</b></>}
         {r.phone && <> · <a href={telHref(r.phone)} title={`${r.phone} руу залгах`}
-                            className="font-bold text-ink hover:text-brand hover:underline">☎ {r.phone}</a></>}
+                            className="font-bold text-ink hover:text-brand-ink hover:underline">☎ {r.phone}</a></>}
       </div>
 
       {/* Товчны бүлэг — ганц талбар биш тул `label` биш, нэрлэсэн бүлэг */}
@@ -173,7 +173,7 @@ function NoteModal({ r, onClose, onDone }: any) {
         {KINDS.map(([v, l]) => (
           <button key={v} onClick={() => setF({ ...f, kind: v })} aria-pressed={f.kind === v}
             className={`rounded-[7px] border px-4 py-2 font-semibold text-[13px] min-h-10 transition ${
-              f.kind === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{l}</button>
+              f.kind === v ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2"}`}>{l}</button>
         ))}
       </div>
 

@@ -57,7 +57,7 @@ export default function ClientProfile() {
       <Link to="/clients" className="btn-ghost mb-3 inline-flex">← Харилцагчид руу буцах</Link>
       <div className="card p-6">
         <div className="flex gap-4 items-start flex-wrap">
-          <div className="w-14 h-14 rounded-[18px] bg-brand-50 text-brand grid place-items-center font-extrabold text-lg shrink-0">
+          <div className="w-14 h-14 rounded-[18px] bg-brand-50 text-brand-ink grid place-items-center font-extrabold text-lg shrink-0">
             {d.name.slice(0, 2)}
           </div>
           <div className="flex-1 min-w-[230px]">
@@ -101,9 +101,9 @@ export default function ClientProfile() {
           {TABS.map(([v, l, n]: any) => (
             <button key={v} onClick={() => setTab(v)} aria-current={tab === v ? true : undefined}
               className={`tab-btn px-4 py-2.5 font-semibold text-[13.5px] border-b-[2.5px] -mb-px whitespace-nowrap min-h-11 transition ${
-                tab === v ? "text-brand border-brand" : "text-t2 border-transparent hover:text-ink"}`}>
-              {l}{n !== undefined && <span className={`text-[11px] rounded-full px-1.5 py-0.5 ml-1.5 font-bold ${
-                tab === v ? "bg-brand-50 text-brand" : "bg-sunken text-t2"}`}>{n}</span>}
+                tab === v ? "text-brand-ink border-brand" : "text-t2 border-transparent hover:text-ink"}`}>
+              {l}{n !== undefined && <span className={`text-[12px] rounded-full px-1.5 py-0.5 ml-1.5 font-bold ${
+                tab === v ? "bg-brand-50 text-brand-ink" : "bg-sunken text-t2"}`}>{n}</span>}
             </button>
           ))}
         </div>
@@ -239,12 +239,14 @@ export default function ClientProfile() {
           <div>
             {d.files.map((f: any) => (
               <div key={f.id} className="flex items-center gap-3 py-3 border-b border-sunken last:border-0">
-                <div className="w-9 h-9 rounded-[10px] bg-danger-50 text-danger grid place-items-center text-[10px] font-extrabold shrink-0">
+                {/* Файлын өргөтгөл — дүрсний оронд суусан тэмдэг. Нэр нь хажуудаа
+                    бүтнээрээ байгаа тул мэдээллийг давхардуулна; 11px хэвээр. */}
+                <div className="w-9 h-9 rounded-[10px] bg-danger-50 text-danger grid place-items-center text-[11px] font-extrabold shrink-0">
                   {(f.filename.split(".").pop() || "F").toUpperCase().slice(0, 4)}
                 </div>
                 <div className="min-w-0">
                   <b className="text-[13.5px] text-ink block truncate">{f.filename}</b>
-                  <span className="text-[11.5px] text-t3">{(f.size / 1024).toFixed(0)} KB · {f.uploaded_at}</span>
+                  <span className="text-[12px] text-t3">{(f.size / 1024).toFixed(0)} KB · {f.uploaded_at}</span>
                 </div>
                 <a className="btn-ghost ml-auto !min-h-9" href={`/api/files/dl/${f.id}`}
                    onClick={async (e) => {
@@ -271,7 +273,7 @@ export default function ClientProfile() {
 function Stat({ label, val, danger }: any) {
   return (
     <div>
-      <div className="text-[11px] text-t3 font-bold uppercase tracking-wider mb-1">{label}</div>
+      <div className="text-[12px] text-t3 font-bold uppercase tracking-wider mb-1">{label}</div>
       <div className={`text-lg font-extrabold tabular-nums ${danger ? "text-danger" : "text-ink"}`}>{val}</div>
     </div>
   );
@@ -325,16 +327,16 @@ function TimelineCalendar({ events }: { events: TLEvent[] }) {
       <div className="flex items-center justify-between mb-3">
         {/* ‹ › нь дүрс дээрээ л ярьдаг — хаашаа очихыг нь нэрэндээ агуулна */}
         <button onClick={() => go(-1)} aria-label={`Өмнөх сар — ${monthLabelMN(prev.year, prev.month)}`}
-          className="w-10 h-10 rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand text-lg font-bold transition">‹</button>
+          className="w-10 h-10 rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand-ink text-lg font-bold transition">‹</button>
         <b className="text-[14px] text-ink font-bold tabular-nums" aria-live="polite">{monthLabelMN(view.year, view.month)}</b>
         <button onClick={() => go(1)} aria-label={`Дараах сар — ${monthLabelMN(next.year, next.month)}`}
-          className="w-10 h-10 rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand text-lg font-bold transition">›</button>
+          className="w-10 h-10 rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand-ink text-lg font-bold transition">›</button>
       </div>
 
       {/* Гарагийн толгой */}
       <div className="grid grid-cols-7 gap-1 mb-1">
         {WEEKDAYS_MN.map((w, i) => (
-          <div key={w} className={`text-center text-[11px] font-bold py-1 ${i === 6 ? "text-danger" : "text-t3"}`}>{w}</div>
+          <div key={w} className={`text-center text-[12px] font-bold py-1 ${i === 6 ? "text-danger" : "text-t3"}`}>{w}</div>
         ))}
       </div>
 
@@ -355,13 +357,13 @@ function TimelineCalendar({ events }: { events: TLEvent[] }) {
               aria-label={dayCellLabel(c.iso, c.counts, KIND_LABEL)}
               aria-pressed={isSel} {...(isToday ? { "aria-current": "date" as const } : {})}>
               <span className={`text-[13px] font-bold tabular-nums ${
-                isSel ? "text-brand" : isToday ? "text-brand" : "text-t2"}`}>
+                isSel ? "text-brand-ink" : isToday ? "text-brand-ink" : "text-t2"}`}>
                 {c.day}{isToday && <i className="inline-block w-1 h-1 rounded-full bg-brand align-super ml-0.5" />}
               </span>
               {total > 0 && (
                 <span className="mt-auto flex items-center gap-1 flex-wrap" aria-hidden="true">
                   {kinds.map((k) => <i key={k} className={`w-2 h-2 rounded-full ${dotCls(k)}`} />)}
-                  <span className="text-[10px] font-bold text-t3 ml-0.5 tabular-nums">{total}</span>
+                  <span className="text-[12px] font-bold text-t2 ml-0.5 tabular-nums">{total}</span>
                 </span>
               )}
             </button>
@@ -370,7 +372,7 @@ function TimelineCalendar({ events }: { events: TLEvent[] }) {
       </div>
 
       {/* Цэгний тайлбар — өнгө нь юу гэсэн үг болохыг ЭНД хэлнэ */}
-      <ul className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1 text-[11px] text-t2 list-none p-0">
+      <ul className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1 text-[12px] text-t2 list-none p-0">
         {LEGEND.map((k) => (
           <li key={k} className="inline-flex items-center gap-1.5">
             <i className={`w-2 h-2 rounded-full ${dotCls(k)}`} aria-hidden="true" />

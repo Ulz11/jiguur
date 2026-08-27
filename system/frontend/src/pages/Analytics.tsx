@@ -51,9 +51,9 @@ function Materials({ d, months, setMonths }: any) {
     <div>
       <div className="command-metrics mb-4">
         <div className="command-hero">
-          <div className="text-white/60 text-[12.5px] font-medium mb-2">Хөрөнгийн нийт үнэ</div>
+          <div className="text-white/80 text-[12.5px] font-medium mb-2">Хөрөнгийн нийт үнэ</div>
           <div className="text-[28px] font-extrabold text-white tabular-nums leading-tight">
-            {sayaFmt(t.asset_value)} <span className="text-sm text-white/40 font-semibold">₮</span>
+            {sayaFmt(t.asset_value)} <span className="text-sm text-white/70 font-semibold">₮</span>
           </div>
           <div className="mt-2"><span className="pill bg-white/10 text-white/80">
             {months} сард {sayaFmt(t.revenue)}₮ олсон</span></div>
@@ -129,7 +129,7 @@ function Materials({ d, months, setMonths }: any) {
           </tbody>
         </table>
       </div>
-      <p className="text-[11.5px] text-t3 mt-3 leading-relaxed">
+      <p className="text-[12px] text-t3 mt-3 leading-relaxed">
         Өгөөж = тухайн үед олсон түрээс/худалдааны орлого ÷ материалын НБҮнэ.
         Жилээр = түүнийг 12 сард шилжүүлсэн. Бага өгөөжтэй, бага ашиглалттай материалыг
         зарах эсвэл үнээ өөрчлөх талаар бодох хэрэгтэй.
@@ -166,7 +166,7 @@ function Forecast({ d }: any) {
       <div className="grid grid-cols-3 gap-3.5 mb-4 max-lg:grid-cols-1">
         {d.buckets.map((b: any) => (
           <div key={b.label} className="card p-5">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-t3 mb-3">{b.label}</div>
+            <div className="text-[12px] font-bold uppercase tracking-wider text-t3 mb-3">{b.label}</div>
             <div className="flex justify-between items-baseline py-1.5 border-b border-line">
               <span className="text-[13px] text-t2">Орох</span>
               <b className="tabular-nums text-money">{money(b.inflow)}</b>
@@ -191,13 +191,13 @@ function Forecast({ d }: any) {
             {(b.items_in.length > 0 || b.items_out.length > 0) && (
               <div className="mt-3 pt-3 border-t border-line">
                 {b.items_in.slice(0, 4).map((i: any, k: number) => (
-                  <div key={"i" + k} className="flex justify-between gap-2 py-0.5 text-[11.5px]">
+                  <div key={"i" + k} className="flex justify-between gap-2 py-0.5 text-[12px]">
                     <span className="text-t3 truncate">{i.label}</span>
                     <b className="tabular-nums text-money shrink-0">+{sayaFmt(i.amount)}</b>
                   </div>
                 ))}
                 {b.items_out.slice(0, 3).map((i: any, k: number) => (
-                  <div key={"o" + k} className="flex justify-between gap-2 py-0.5 text-[11.5px]">
+                  <div key={"o" + k} className="flex justify-between gap-2 py-0.5 text-[12px]">
                     <span className="text-t3 truncate">{i.label}</span>
                     <b className="tabular-nums text-danger shrink-0">−{sayaFmt(i.amount)}</b>
                   </div>
@@ -212,22 +212,22 @@ function Forecast({ d }: any) {
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 mb-1.5">Хугацаа хэтэрсэн авлага</div>
           <div className="text-[22px] font-extrabold text-danger tabular-nums">{sayaFmt(d.overdue_inflow)}₮</div>
-          <p className="text-[11.5px] text-t3 mt-1">Хэзээ орж ирэх нь тодорхойгүй тул прогнозод ороогүй.</p>
+          <p className="text-[12px] text-t3 mt-1">Хэзээ орж ирэх нь тодорхойгүй тул прогнозод ороогүй.</p>
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 mb-1.5">Хуучин үлдэгдэл</div>
           <div className="text-[22px] font-extrabold text-warn tabular-nums">{sayaFmt(d.legacy_inflow || 0)}₮</div>
-          <p className="text-[11.5px] text-t3 mt-1">Шилжүүлсэн авлага — цуглуулбал нэмэлт мөнгө.</p>
+          <p className="text-[12px] text-t3 mt-1">Шилжүүлсэн авлага — цуглуулбал нэмэлт мөнгө.</p>
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 mb-1.5">Сарын зээлийн төлбөр</div>
           <div className="text-[22px] font-extrabold text-ink tabular-nums">{sayaFmt(d.monthly_loan_due)}₮</div>
-          <p className="text-[11.5px] text-t3 mt-1">Хүүгийн тогтмол дарамт.</p>
+          <p className="text-[12px] text-t3 mt-1">Хүүгийн тогтмол дарамт.</p>
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 mb-1.5">Сарын цалингийн сан</div>
           <div className="text-[22px] font-extrabold text-ink tabular-nums">{sayaFmt(d.monthly_salary)}₮</div>
-          <p className="text-[11.5px] text-t3 mt-1">Сард 2 удаа хуваарилагдана.</p>
+          <p className="text-[12px] text-t3 mt-1">Сард 2 удаа хуваарилагдана.</p>
         </div>
       </div>
     </div>

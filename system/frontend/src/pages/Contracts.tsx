@@ -99,7 +99,7 @@ export default function Contracts() {
                     <span className={`font-bold ${c.state === "overdue" ? "text-danger" : "text-ink"}`}>
                       {sayaFmt(c.balance)}₮
                     </span>
-                    {c.penalty > 0 && <span className="block text-[11px] text-danger">+ алданги {sayaFmt(c.penalty)}₮</span>}
+                    {c.penalty > 0 && <span className="block text-[12px] text-danger">+ алданги {sayaFmt(c.penalty)}₮</span>}
                   </td>
                   <td className="td"><StatePill state={c.state} /></td>
                   {/* Мөр дарагддаг гэдгийг ЗӨВХӨН хулгана дээр нь ирэхэд хэлдэг

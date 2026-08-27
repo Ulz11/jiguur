@@ -58,7 +58,7 @@ export default function Loans() {
 
       <div className="grid grid-cols-3 gap-4 mb-4 max-sm:grid-cols-1">
         <div className="card hero p-5">
-          <div className="text-[12.5px] text-white/60 font-medium mb-2">Нийт өглөг</div>
+          <div className="text-[12.5px] text-white/80 font-medium mb-2">Нийт өглөг</div>
           <div className="text-[26px] font-extrabold text-white tabular-nums leading-tight">{sayaFmt(s.total_debt)}₮</div>
           <div className="mt-2"><span className="pill bg-white/10 text-white/80">{s.active_count} идэвхтэй зээл</span></div>
         </div>
@@ -95,7 +95,7 @@ export default function Loans() {
                     <div className="flex items-center gap-1.5">
                       <InlineEdit value={l.name} width="w-44" confirmText="Нэр солих уу?"
                         onSave={(v) => doPatch(`/api/loans/${l.id}`, { name: v }, "Нэр шинэчлэгдлээ")} />
-                      {l.status === "closed" && <span className="pill-grey !text-[10px]">хаагдсан</span>}
+                      {l.status === "closed" && <span className="pill-grey">хаагдсан</span>}
                     </div>
                     <span className="flex items-center gap-1 text-xs text-t3 mt-0.5">
                       <InlineEdit value={l.kind} display={kindLabel(l.kind)} width="w-24"
@@ -242,7 +242,7 @@ function PayLoanModal({ l, onClose, onDone }: any) {
           <button key={v} aria-pressed={f.part === v}
             onClick={() => setF({ ...f, part: v, amount: v === "interest" ? String(l.monthly_due) : "" })}
             className={`flex-1 rounded-[10px] border py-2.5 font-semibold text-sm min-h-11 transition ${
-              f.part === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{lb}</button>
+              f.part === v ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2"}`}>{lb}</button>
         ))}
       </div>
       <div className="grid grid-cols-2 gap-3.5">
@@ -302,7 +302,7 @@ function AddLoanModal({ onClose, onDone }: any) {
         {[["bank", "Банк"], ["private", "Хувь хүн"], ["credit", "Кредит"]].map(([v, lb]) => (
           <button key={v} onClick={() => setF({ ...f, kind: v })} aria-pressed={f.kind === v}
             className={`flex-1 rounded-[10px] border py-2 font-semibold text-[13px] min-h-10 transition ${
-              f.kind === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{lb}</button>
+              f.kind === v ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2"}`}>{lb}</button>
         ))}
       </div>
       <div className="grid grid-cols-3 gap-3.5 max-sm:grid-cols-1">

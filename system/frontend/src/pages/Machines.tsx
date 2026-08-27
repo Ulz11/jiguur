@@ -47,11 +47,11 @@ export default function Machines() {
               <span className="pill-grey">{m.log_count} бичилт</span>
             </div>
             <div className="flex gap-5">
-              <div><div className="text-[11px] text-t3 font-bold uppercase">Орлого</div>
+              <div><div className="text-[12px] text-t3 font-bold uppercase">Орлого</div>
                 <div className="font-extrabold tabular-nums text-money">{sayaFmt(m.income)}₮</div></div>
-              <div><div className="text-[11px] text-t3 font-bold uppercase">Зарлага</div>
+              <div><div className="text-[12px] text-t3 font-bold uppercase">Зарлага</div>
                 <div className="font-extrabold tabular-nums text-danger">{sayaFmt(m.expense)}₮</div></div>
-              <div><div className="text-[11px] text-t3 font-bold uppercase">Цэвэр</div>
+              <div><div className="text-[12px] text-t3 font-bold uppercase">Цэвэр</div>
                 <div className={`font-extrabold tabular-nums ${m.net >= 0 ? "text-ink" : "text-danger"}`}>{sayaFmt(m.net)}₮</div></div>
             </div>
           </button>
@@ -124,7 +124,7 @@ function LogModal({ kind, m, onClose, onDone }: any) {
           <button key={lb} aria-pressed={f.label === lb}
             onClick={() => setF({ ...f, label: lb, method: lb === "Дотоод ажил" ? "INTERNAL" : f.method })}
             className={`rounded-[10px] border px-4 py-2 font-semibold text-[13px] min-h-10 transition ${
-              f.label === lb ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{lb}</button>
+              f.label === lb ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2"}`}>{lb}</button>
         ))}
       </div>
       <div className="grid grid-cols-2 gap-3.5">
@@ -144,7 +144,7 @@ function LogModal({ kind, m, onClose, onDone }: any) {
                 {[["CASH", "Бэлэн"], ["BANK", "Данс"], ["BARTER", "Бартер"]].map(([v, lb]) => (
                   <button key={v} onClick={() => setF({ ...f, method: v })} aria-pressed={f.method === v}
                     className={`flex-1 rounded-[10px] border py-2 font-semibold text-[13px] min-h-10 transition ${
-                      f.method === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{lb}</button>
+                      f.method === v ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2"}`}>{lb}</button>
                 ))}
               </div></div>
           )}

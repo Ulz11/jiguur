@@ -77,7 +77,7 @@ export default function Clients() {
                 <td className="td text-right tabular-nums">{c.active_contracts}</td>
                 <td className="td text-right tabular-nums">
                   <span className={`font-bold ${c.overdue ? "text-danger" : "text-ink"}`}>{sayaFmt(c.receivable)}₮</span>
-                  {c.penalty > 0 && <span className="block text-[11px] text-danger">+ алданги {sayaFmt(c.penalty)}₮</span>}
+                  {c.penalty > 0 && <span className="block text-[12px] text-danger">+ алданги {sayaFmt(c.penalty)}₮</span>}
                 </td>
                 <td className="td text-right tabular-nums">{c.deposit > 0 ? sayaFmt(c.deposit) + "₮" : "—"}</td>
                 <td className="td">

@@ -11,7 +11,9 @@ const SERIES = [
 export default function RevChart(data: Props) {
   const [on, setOn] = useState<Record<string, boolean>>({ rent: true, sale: true, barter: true });
   const [hover, setHover] = useState<number | null>(null);
-  const W = 640, H = 240, P = { l: 50, r: 16, t: 16, b: 30 };
+  /* Тэнхлэгийн бичээс 10/11px байсан — график ЯМАР хэмжээтэйг эдгээр хэлдэг
+     тул мэдээлэл. 12px болгоход зүүн талын "51.1 сая" илүү өргөн зай нэхнэ. */
+  const W = 640, H = 240, P = { l: 64, r: 16, t: 16, b: 32 };
   const active = SERIES.filter((s) => on[s.key]);
   const vals = (k: string) => (data as any)[k] as number[];
   const allVals = active.length ? active.flatMap((s) => vals(s.key)) : [1];
@@ -27,14 +29,14 @@ export default function RevChart(data: Props) {
           return (
             <g key={g}>
               <line x1={P.l} x2={W - P.r} y1={gy} y2={gy} stroke="var(--color-line)" strokeDasharray="3 4" />
-              <text x={P.l - 8} y={gy + 4} textAnchor="end" fontSize="10" fill="var(--color-t3)">
+              <text x={P.l - 9} y={gy + 4} textAnchor="end" fontSize="12" fill="var(--color-t3)">
                 {sayaFmt(max - (g * max) / 4)}
               </text>
             </g>
           );
         })}
         {data.months.map((m, i) => (
-          <text key={m + i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="11" fill="var(--color-t3)">{m}</text>
+          <text key={m + i} x={x(i)} y={H - 9} textAnchor="middle" fontSize="12" fill="var(--color-t3)">{m}</text>
         ))}
         {hover !== null && (
           <line x1={x(hover)} x2={x(hover)} y1={P.t} y2={H - P.b}
@@ -63,13 +65,13 @@ export default function RevChart(data: Props) {
         <div className="absolute top-2 rounded-xl px-3.5 py-2.5 text-xs pointer-events-none shadow-2xl min-w-[160px] z-10 text-white"
              style={{ background: "#19296B",
                       left: `min(max(${(x(hover) / W) * 100}% - 80px, 4px), calc(100% - 170px))` }}>
-          <div className="text-[10px] uppercase tracking-wider text-white/60 font-semibold mb-1.5">
+          <div className="text-[12px] uppercase tracking-[.03em] text-white/80 font-semibold mb-1.5">
             {data.months[hover]} сар · нийт {sayaFmt(active.reduce((s, sr) => s + vals(sr.key)[hover], 0))}₮
           </div>
           {active.map((s) => (
             <div key={s.key} className="flex items-center gap-2 mt-1">
               <i className="w-2 h-2 rounded-[3px] inline-block" style={{ background: s.color }} />
-              <span className="text-white/70">{s.name}</span>
+              <span className="text-white/85">{s.name}</span>
               <b className="ml-auto tabular-nums">{sayaFmt(vals(s.key)[hover])}₮</b>
             </div>
           ))}

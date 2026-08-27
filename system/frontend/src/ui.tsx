@@ -30,7 +30,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <span className="min-w-0 break-words leading-5">{toast.msg}</span>
           {toast.kind === "err" && (
             <button onClick={() => { clear(); setToast(null); }} aria-label="Мэдэгдлийг хаах"
-                    className="shrink-0 -mr-1.5 -my-1 px-2 py-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition text-base leading-5">
+                    className="shrink-0 -mr-1.5 -my-1 px-2 py-1 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition text-base leading-5">
               ✕
             </button>
           )}
@@ -184,7 +184,9 @@ export function ConfirmModal({ title, intro, rows, total, note, confirmLabel, ca
 /** `sub` — нэрийн доор орох жижиг хоёрдогч мөр (ж: нэхэмжлэлийн №). Мөрийн
  *  үндсэн нэр нь юу болохыг хэлж, sub нь хаанаас хайхыг хэлнэ. */
 export type ReceiptRow = { label: string; sub?: string; value: string; accent?: "money" | "danger" | "violet" | "dim" };
-const RC_COLOR: Record<string, string> = { money: "#7de8b8", danger: "#ffb3b6", violet: "#cdb9ff", dim: "rgba(255,255,255,0.55)" };
+/* `dim` нь 0.55 байхад navy дээр 4.37:1 — 14px хагас тод тоонд хүрэлцэхгүй.
+   0.72 (6.30:1) болгоход бусад мөрнөөс (10.56:1) ялгарсан хэвээр. */
+const RC_COLOR: Record<string, string> = { money: "#7de8b8", danger: "#ffb3b6", violet: "#cdb9ff", dim: "rgba(255,255,255,0.72)" };
 
 export function Receipt({ rows, total, className = "" }: {
   rows: ReceiptRow[];
@@ -237,7 +239,7 @@ export function TypePill({ type }: { type: string }) {
 export function Empty({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="py-12 text-center">
-      <div className="w-16 h-16 mx-auto mb-3.5 rounded-[20px] bg-brand-50 grid place-items-center text-brand text-2xl">▦</div>
+      <div className="w-16 h-16 mx-auto mb-3.5 rounded-[20px] bg-brand-50 grid place-items-center text-brand-ink text-2xl">▦</div>
       <h3 className="font-bold text-ink text-[15px] mb-1">{title}</h3>
       {sub && <p className="text-t2 text-[13px] max-w-sm mx-auto">{sub}</p>}
     </div>
@@ -299,7 +301,7 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
       {/* Баталгаажуулах/цуцлах товчнууд target-sm (36px) — хуруугаар ч оносон дарагдана */}
       {mode === "edit" ? (
         <>
-          <button className="w-9 h-9 rounded-lg bg-brand-50 text-brand font-bold shrink-0"
+          <button className="w-9 h-9 rounded-lg bg-brand-50 text-brand-ink font-bold shrink-0"
                   aria-label="Хадгалахаар үргэлжлүүлэх" onClick={() => setMode("confirm")}>✓</button>
           <button className="w-9 h-9 rounded-lg bg-sunken text-t2 shrink-0"
                   aria-label="Болих" onClick={() => setMode("view")}>✕</button>

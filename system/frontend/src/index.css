@@ -16,21 +16,38 @@
   --color-ink: #233681;
   --color-navy2: #1d2d6d;
   --color-navy3: #304699;
-  --color-t1: #26314d;
-  --color-t2: #63708b;
-  --color-t3: #8993a8;
+  /* ---- Бичгийн гурван шат (text ramp) ----
+     Отгоо 60 настай, нүд нь ойрын харааны хувьд суларсан. Гурван шат
+     ХАРАГДАХ ялгаатай хэвээр, гэхдээ хамгийн бүдэг нь ч WCAG AA (4.5:1)
+     босгыг цагаан ба canvas хоёул дээр давна. Хэмжсэн харьцаа:
+       t1  цагаан 14.04 · canvas 12.98   — гол бичиг, тоо
+       t2  цагаан  6.70 · canvas  6.20   — хоёрдогч мөр, тайлбар
+       t3  цагаан  5.18 · canvas  4.79   — хүснэгтийн толгой, тэмдэглэл
+     Шатны алхам: t3→t2 1.42×, t2→t1 1.91× (нүдээр гурван шат хэвээр). */
+  --color-t1: #212b45;
+  --color-t2: #4a5670;
+  --color-t3: #626d86;
 
   --color-brand: #f88712;
   --color-sky: #ff9b36;
   --color-brand-50: #fff0de;
   --color-brand-100: #ffe0bb;
+  /* Улбар шар нь ГАДАРГУУГИЙН өнгө — цагаан дээр 2.48:1 тул БИЧИГ болж
+     чадахгүй. Бичгийн улбар нь энэ гүн амбер: цагаан 5.95 · canvas 5.50 ·
+     brand-50 дээр 5.31. Брэндийн өнгө (хүрээ, цэг, дэвсгэр) хэвээрээ. */
+  --color-brand-ink: #9c4f00;
+  /* Улбар ГАДАРГУУ дээр суух бичиг — логоны өөрийнх нь эсрэг өнгө.
+     #ff8a0b дээр 5.66:1, hover #e87900 дээр 4.56:1. */
+  --color-onbrand: #19296b;
 
-  --color-money: #1f8b69;
+  /* Сануулга/мөнгө/алдааны өнгө ӨӨРИЙН СҮҮДЭРТЭЙ дэвсгэр дээрээ (pill)
+     уншигдах ёстой — бүгд тэр дэвсгэр дээрээ 4.5:1-ээс дээш болтол гүнзгийрэв. */
+  --color-money: #17755a;
   --color-money-50: #e4f4ee;
-  --color-warn: #bd640f;
+  --color-warn: #a2530a;
   --color-warn-500: #ef8c22;
   --color-warn-50: #fff0db;
-  --color-danger: #c9363b;
+  --color-danger: #b3272d;
   --color-danger-50: #fbe6e7;
   --color-violet: #6756a4;
   --color-violet-50: #eeeafa;
@@ -67,8 +84,12 @@ body::before {
       linear-gradient(135deg, #19296b 0%, #253886 70%, #304699 130%) !important;
     border-color: transparent !important;
   }
+  /* Гол товч: улбар шар дэвсгэр + ГҮН NAVY бичиг. Цагаан бичиг улбар дээр
+     ердөө 2.36:1 байсан — логоны өөрийнх нь хослол (navy+улбар) үүнийг
+     5.66:1 болгож, брэнд өнгө нь огт хөдлөхгүй. */
   .btn-primary {
-    @apply inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 font-semibold text-sm min-h-11 cursor-pointer transition active:scale-[.97] disabled:opacity-50 disabled:cursor-not-allowed text-white;
+    @apply inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 font-semibold text-sm min-h-11 cursor-pointer transition active:scale-[.97] disabled:opacity-50 disabled:cursor-not-allowed;
+    color: var(--color-onbrand);
     background: #ff8a0b;
     box-shadow: 0 8px 18px rgba(255, 138, 11, 0.22);
   }
@@ -81,13 +102,15 @@ body::before {
   .btn-ghost {
     @apply inline-flex items-center gap-2 rounded-xl px-3 py-2 font-semibold text-sm min-h-9 cursor-pointer transition active:scale-[.97] disabled:opacity-50 text-t2 hover:text-ink hover:bg-sunken;
   }
-  .pill { @apply inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap; }
-  .pill-green { @apply inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-money-50 text-money; }
-  .pill-amber { @apply inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-warn-50 text-warn; }
-  .pill-red { @apply inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-danger-50 text-danger; }
-  .pill-blue { @apply inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-brand-50 text-brand; }
-  .pill-grey { @apply inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-sunken text-t1; }
-  .pill-violet { @apply inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-violet-50 text-violet; }
+  /* Төлөв хаяг (pill) — гэрээний ТӨЛӨВ гэдэг мэдээлэл, чимэглэл биш.
+     11px байсныг 12px болгож, өнгө бүр өөрийн дэвсгэр дээрээ 4.5:1 давав. */
+  .pill { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap; }
+  .pill-green { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-money-50 text-money; }
+  .pill-amber { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-warn-50 text-warn; }
+  .pill-red { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-danger-50 text-danger; }
+  .pill-blue { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-brand-50 text-brand-ink; }
+  .pill-grey { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-sunken text-t1; }
+  .pill-violet { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-violet-50 text-violet; }
   .inp {
     @apply w-full border border-line rounded-2xl px-3.5 py-3 outline-none min-h-[46px] text-[14px] transition text-ink;
     background: var(--color-cardbg);
@@ -96,7 +119,10 @@ body::before {
   .lbl { @apply block text-[12px] font-semibold text-t1 mb-1.5; }
   /* Хүснэгт бүр excel шиг бүрэн нүдтэй тор — border-collapse-аар зэргэлдээ ирмэгүүд нэг шугам болно */
   table { border-collapse: collapse; }
-  .th { @apply text-[11px] font-bold tracking-wider uppercase text-t3 text-left px-3 py-2.5 border border-line-strong whitespace-nowrap; }
+  /* Баганын толгой — ЖИЖИГ + ТОМ ҮСЭГ + ӨРГӨН ЗАЙ гурав нэг дор Отгоог
+     гурван талаас нь торгодог байсан. Хэмжээ 12px болж, зай нь хагасалж,
+     өнгө нь 3.06:1-ээс 5.18:1 болов. */
+  .th { @apply text-[12px] font-bold tracking-[.03em] uppercase text-t3 text-left px-3 py-2.5 border border-line-strong whitespace-nowrap; }
   .td { @apply px-3 py-3.5 border border-line-strong text-[13.5px] align-middle; }
 
   /* Sidebar */
@@ -130,16 +156,22 @@ body::before {
   /* Card title dot */
   .cdot { @apply w-1.5 h-1.5 rounded-full inline-block; background: var(--color-brand); box-shadow: 0 0 0 3px var(--color-brand-50); }
 
-  /* Inline edit */
+  /* Inline edit — ЮУ ЗАСАГДАХЫГ ХУЛГАНА ХҮРЭХЭЭС ӨМНӨ ХЭЛНЭ.
+     Тасархай зураас #c6ccd8 (1.61:1) байсан нь бараг үл үзэгдэх; одоо t3-ын
+     хүчээр 5.18:1 — 1.4.11-ийн 3:1 босгыг давсан жинхэнэ дохио. Харандаа
+     байнга харагдаж, хүрэх/фокуслахад брэнд өнгөөр бүрэн асна. */
   .inline-val {
     @apply inline-flex items-center gap-1.5 cursor-pointer rounded-lg px-2 -mx-2 py-1 transition;
     /* Хүснэгтэд дарагдах талбар — target-sm-ийн доод хязгаарт ойртуулав */
     min-height: 32px;
-    border-bottom: 1px dashed var(--color-line-strong);
+    border-bottom: 1px dashed var(--color-t3);
   }
   .inline-val:hover { background: var(--color-brand-50); border-bottom-color: var(--color-brand); }
-  .inline-val .pen { @apply opacity-0 transition text-t3 text-[11px]; }
-  .inline-val:hover .pen { @apply opacity-100; }
+  /* Харандаа 0.8-аас доош унавал (0.55 → 2.21:1) дүрсний 3:1 босгоос гарна —
+     Отгоо харахгүй. 0.8 нь 3.45:1 (цагаан) / 3.27:1 (canvas): бүдэг ч БАЙГАА. */
+  .inline-val .pen { @apply opacity-80 transition text-t3 text-[12px]; }
+  .inline-val:hover .pen,
+  .inline-val:focus-visible .pen { @apply opacity-100 text-brand-ink; }
 }
 
 /* Navy calc-receipt (live тооцооны хайрцаг) */
@@ -170,13 +202,16 @@ body::before {
   display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
   position: relative; z-index: 1;
 }
-.receipt-row > span { color: rgba(255, 255, 255, 0.65); font-size: 12px; }
-/* Хоёрдогч мөр (нэхэмжлэлийн № г.м.) — хэмжээгээрээ л жижигрэнэ, уншигдахаа
-   болих хэмжээнд бүдгэрэхгүй (navy дээр 4.6:1 контраст). */
-.receipt-row .rc-sub { display: block; font-size: 11px; color: rgba(255, 255, 255, 0.58); margin-top: 1px; }
+/* Тооцооны хайрцаг navy дээр — доор нь улбар шар бүдгэрүүлэг (::after) байгаа
+   тул дэвсгэр нь ГЭРЭЛТЭЖ, цагаан бичгийн контраст ЛОКАЛААР унадаг. Тиймээс
+   нэрлэсэн харьцаанаас нөөцтэй авав: 0.65→0.80 (navy дээр 7.38:1). */
+.receipt-row > span { color: rgba(255, 255, 255, 0.8); font-size: 12.5px; }
+/* Хоёрдогч мөр (нэхэмжлэлийн № г.м.) — 11px/0.58 (4.68:1) байсныг 12px/0.72
+   (6.30:1) болгов. Ялгаа нь хэмжээ+бүдэгрэлтээр хэвээр уншигдана. */
+.receipt-row .rc-sub { display: block; font-size: 12px; color: rgba(255, 255, 255, 0.72); margin-top: 1px; }
 .receipt-row > b { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.receipt-total { border-top: 1px dashed rgba(255, 255, 255, 0.2); padding-top: 10px; margin-top: 3px; }
-.receipt-total > span { font-size: 12.5px; color: rgba(255, 255, 255, 0.8); }
+.receipt-total { border-top: 1px dashed rgba(255, 255, 255, 0.28); padding-top: 10px; margin-top: 3px; }
+.receipt-total > span { font-size: 13px; color: rgba(255, 255, 255, 0.88); }
 .receipt-total > b { font-size: 21px; font-weight: 700; letter-spacing: -0.02em; }
 
 /* Техникийн задаргаа (алдааны мессеж) — хаалттай байхдаа чимээгүй, нээгдэхэд
@@ -233,9 +268,13 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .jz-collapse { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center;
   border-radius: 7px; font-size: 15px; line-height: 1; font-weight: 700; color: var(--jz-blue);
   background: var(--color-sunken); transition: background .15s, color .15s; }
-.jz-collapse:hover { background: var(--jz-orange); color: #fff; }
+/* Улбар дэвсгэр дээр цагаан тэмдэг 2.36:1 — товчтойгоо адил navy болгов. */
+.jz-collapse:hover { background: var(--jz-orange); color: var(--jz-blue-deep); }
 
-.nav-caption { position: relative; z-index: 1; color: rgba(255,255,255,.5); font: 10.5px var(--jz-mono); letter-spacing: .15em; margin: 0 11px 9px; }
+/* Цэсний бүлгийн нэр — 10.5px/0.5 (4.47:1) байсан нь босгоос ҮЛ ЯЛИГ доогуур
+   унадаг байв. 11.5px/0.62 (navy дээр 6.0:1) — цэсний мөрнөөс (8.7:1) доогуур
+   хэвээр тул шатлал хөдлөхгүй. */
+.nav-caption { position: relative; z-index: 1; color: rgba(255,255,255,.62); font: 11.5px var(--jz-mono); letter-spacing: .11em; margin: 0 11px 9px; }
 .jz-nav + .nav-caption { margin-top: 22px; }
 .jz-nav { position: relative; z-index: 1; display: grid; gap: 3px; }
 .nav-btn { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 10px 12px; color: rgba(255,255,255,.78); text-decoration: none; border-left: 2px solid transparent; font-size: 14.5px; font-weight: 500; transition: color .18s, background .18s, transform .18s; }
@@ -257,7 +296,9 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .jz-sidebar.collapsed .side-foot-actions { flex-direction: column; align-items: center; margin-top: 6px; }
 .side-foot-card { position: relative; z-index: 1; flex: none; margin-top: 12px; color: #fff; border-radius: 8px !important; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.075) !important; overflow: hidden; }
 .side-foot-card::after { content: ""; position: absolute; inset: 0; background-image: url("./assets/jiguur-pattern-navy.jpg"); background-size: 120px auto; opacity: .12; mix-blend-mode: screen; }
-.user-monogram { width: 40px; height: 40px; border-radius: 6px; flex: 0 0 40px; display: grid; place-items: center; color: var(--jz-blue); background: var(--jz-orange); font: 600 12px var(--jz-mono); position: relative; z-index: 1; }
+/* Нэрийн товчлол — улбар дээрх navy. #253886 нь 4.64:1 (босгын ирмэг дээр);
+   товчтойгоо нэг ижил гүн navy болгоход 5.66:1 болж, брэнд хослол хэвээрээ. */
+.user-monogram { width: 40px; height: 40px; border-radius: 6px; flex: 0 0 40px; display: grid; place-items: center; color: var(--jz-blue-deep); background: var(--jz-orange); font: 600 12.5px var(--jz-mono); position: relative; z-index: 1; }
 /* Нууц үг солих 🔑 / гарах ⎋ — 13px өргөн бичиг байсныг 40×40 товч болгов */
 .side-foot-btn { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center;
   border-radius: 7px; font-size: 15px; line-height: 1; color: rgba(255,255,255,.72);
@@ -266,7 +307,9 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .side-foot-actions { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
 .jz-main { min-width: 0; flex: 1; }
 .jz-topbar { position: sticky; top: 0; z-index: 25; height: 66px; display: flex; align-items: center; gap: 14px; padding: 0 42px; border-bottom: 1px solid var(--color-line); background: rgba(255,255,255,.86); backdrop-filter: saturate(150%) blur(12px); }
-.jz-location { color: var(--color-t2); font: 11px var(--jz-mono); letter-spacing: .07em; }
+/* Хаана байгааг хэлдэг мөр — 11px mono, том үсэг, өргөн зайтай байв. Контраст
+   нь өнгөрдөг ч ХЭМЖЭЭ нь Отгоод торгодог. 12px + зай нь хагаслав. */
+.jz-location { color: var(--color-t2); font: 12px var(--jz-mono); letter-spacing: .045em; }
 .jz-location i { display: inline-block; width: 4px; height: 4px; margin: 0 10px 2px; border-radius: 50%; background: var(--jz-orange); }
 .jz-topbar-actions { display: flex; align-items: center; gap: 15px; margin-left: auto; }
 .top-pulse { width: 8px; height: 8px; background: var(--color-money); border-radius: 50%; box-shadow: 0 0 0 4px var(--color-money-50); }
@@ -279,15 +322,17 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .btn-primary { border-radius: 7px !important; background: var(--jz-orange) !important; box-shadow: 0 8px 18px rgba(255,138,11,.22) !important; }
 .btn-primary:hover { background: #e87900 !important; }
 .btn-secondary { border-radius: 7px !important; }
-.pill, .pill-green, .pill-amber, .pill-red, .pill-blue, .pill-grey, .pill-violet { border-radius: 4px !important; font-size: 11.5px !important; letter-spacing: .01em; padding: 4px 9px; }
+.pill, .pill-green, .pill-amber, .pill-red, .pill-blue, .pill-grey, .pill-violet { border-radius: 4px !important; font-size: 12px !important; letter-spacing: .01em; padding: 4px 9px; }
 .td { font-size: 14px; }
-.th { font-size: 11.5px; }
+.th { font-size: 12px; letter-spacing: .03em; }
 .inp { border-radius: 7px !important; background: #fff; }
 .receipt { border-radius: 9px; background: linear-gradient(140deg, var(--jz-blue-deep), var(--jz-blue)) !important; }
 
 /* Dashboard — a branded control ledger rather than generic KPI cards. */
 .dashboard-header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 22px; flex-wrap: wrap; }
-.dashboard-kicker { color: var(--jz-orange); font: 10px var(--jz-mono); letter-spacing: .13em; }
+/* Хуудасны замын мөр (kicker) — чимэглэл боловч уншигдах ёстой. Улбар шар нь
+   canvas дээр 2.18:1 байсныг бичгийн амбер (5.50:1) болгож, 10px→11.5px. */
+.dashboard-kicker { color: var(--color-brand-ink); font: 11.5px var(--jz-mono); letter-spacing: .1em; }
 .dashboard-kicker span { color: var(--jz-blue); margin: 0 5px; }
 .dashboard-title { font: 700 clamp(26px, 3.2vw, 38px)/1.08 var(--jz-display); color: var(--jz-blue-deep); letter-spacing: -.045em; margin: 7px 0 5px; }
 .dashboard-subtitle { color: var(--color-t2); font-size: 13px; margin: 0; }
@@ -296,12 +341,16 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .command-hero { min-height: 176px; padding: 23px; color: white; overflow: hidden; border: 1px solid var(--jz-blue); background: linear-gradient(125deg, var(--jz-blue-deep), var(--jz-blue)); box-shadow: 0 16px 30px rgba(25,41,107,.17); }
 .command-hero::after { content: ""; position: absolute; inset: 0 0 0 auto; width: 53%; background: url("./assets/jiguur-pattern-navy.jpg") center / 155px auto repeat; opacity: .19; mix-blend-mode: screen; mask-image: linear-gradient(90deg, transparent, black 35%); }
 .command-hero > * { position: relative; z-index: 1; }
-.command-hero [class~="text-white/60"] { color: rgba(255,255,255,.7); font: 12px var(--jz-mono); letter-spacing: .035em; }
+/* Navy hero дээр pattern давхарга (.19 screen) дэвсгэрийг гэрэлтүүлдэг —
+   0.7-оос 0.82 болгож нөөц авав (navy дээр 7.67:1). */
+.command-hero [class~="text-white/80"] { color: rgba(255,255,255,.82); font: 12px var(--jz-mono); letter-spacing: .035em; }
 .command-hero [class~="text-[28px]"] { font: 700 34px/1.1 var(--jz-display); letter-spacing: -.045em; }
 .command-hero .pill { border: 1px solid rgba(255,255,255,.16); }
 .command-metric { padding: 21px !important; position: relative; overflow: hidden; border: 1px solid var(--color-line); background: rgba(255,255,255,.89); }
 .command-metric::before { content: ""; position: absolute; top: 0; left: 0; width: 27px; border-top: 2px solid var(--jz-orange); }
-.command-metric [class~="text-[12.5px]"], .command-metrics .card [class~="text-[12.5px]"] { color: var(--color-t2); font: 11px var(--jz-mono); letter-spacing: .04em; text-transform: uppercase; }
+/* KPI-ийн нэр — тухайн тоо ЮУ болохыг хэлдэг тул мэдээлэл. 11px байсныг
+   12px болгож, том үсгийн өргөн зайг багасгав. */
+.command-metric [class~="text-[12.5px]"], .command-metrics .card [class~="text-[12.5px]"] { color: var(--color-t2); font: 12px var(--jz-mono); letter-spacing: .03em; text-transform: uppercase; }
 .command-metric [class~="text-[28px]"], .command-metrics .card [class~="text-[28px]"] { font: 700 30px/1.15 var(--jz-display); letter-spacing: -.04em; }
 .dashboard-analysis { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, .9fr); gap: 13px; }
 .dashboard-operations { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 13px; margin-top: 13px; }
@@ -427,7 +476,9 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 }
 @media (max-width: 760px) {
   .jz-topbar { height: 57px; padding: 0 12px; gap: 8px; }
-  .jz-location { font-size: 9px; }
+  /* Явцуу дэлгэц ч гэсэн мэдээллийн доод хязгаараас доош ордоггүй — 9px
+     байсныг 11px болгож, зайг нь хасаж багтаав (… -ээр таслагдана). */
+  .jz-location { font-size: 11px; letter-spacing: .02em; }
   .jz-topbar-actions { margin-left: auto; }
   .jz-content { padding: 22px 14px 45px; }
   .dashboard-header { align-items: start; margin-bottom: 18px; }

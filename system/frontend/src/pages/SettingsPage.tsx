@@ -30,7 +30,7 @@ export default function SettingsPage() {
           <div className="card p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold text-ink text-[15.5px]">Зэрэглэл</h3>
-              <button className="btn-ghost text-brand btn-row" onClick={() => setGradeModal({})}>+ Нэмэх</button>
+              <button className="btn-ghost text-brand-ink btn-row" onClick={() => setGradeModal({})}>+ Нэмэх</button>
             </div>
             <p className="text-[12px] text-t3 mb-3">Шинэ, А, В, С… — дуртай хэдэн зэрэглэл нэмнэ. Бараа хүлээж авахдаа дарга сонгоно.</p>
             {grades.map((g) => (
@@ -59,7 +59,7 @@ export default function SettingsPage() {
             <input id={`${uid}-ndsh`} className="inp mb-1" inputMode="decimal" value={settings.ndsh_percent || "11.5"}
                    aria-describedby={`${uid}-ndsh-hint`}
                    onChange={(e) => setSettings({ ...settings, ndsh_percent: e.target.value })} />
-            <p id={`${uid}-ndsh-hint`} className="text-[11.5px] text-t3 mb-4">Дараагийн цалингийн бодолтоос шинэ хувиар суутгана.</p>
+            <p id={`${uid}-ndsh-hint`} className="text-[12px] text-t3 mb-4">Дараагийн цалингийн бодолтоос шинэ хувиар суутгана.</p>
             {/* Барихгүй бол алдаа чимээгүй залгигдаж, хадгалагдсан мэт харагдана */}
             <button className="btn-primary w-full justify-center" onClick={async () => {
               try {
@@ -74,7 +74,7 @@ export default function SettingsPage() {
         <div className="card overflow-x-auto">
           <div className="flex items-center justify-between px-4 pt-4 pb-1">
             <h3 className="font-bold text-ink text-[15.5px]">Материалын каталог</h3>
-            <button className="btn-ghost text-brand btn-row" onClick={() => setMatModal({})}>+ Материал нэмэх</button>
+            <button className="btn-ghost text-brand-ink btn-row" onClick={() => setMatModal({})}>+ Материал нэмэх</button>
           </div>
           <table className="w-full min-w-[560px]">
             <thead><tr>
@@ -91,7 +91,7 @@ export default function SettingsPage() {
                   <td className="td">
                     <div className="flex gap-1.5 flex-wrap">
                       {m.prices.map((p: any) => (
-                        <span key={p.grade_id} className="pill-grey !text-[11px]">
+                        <span key={p.grade_id} className="pill-grey !text-[12px]">
                           {p.grade}: {fmt(p.nb_price)}₮
                         </span>
                       ))}

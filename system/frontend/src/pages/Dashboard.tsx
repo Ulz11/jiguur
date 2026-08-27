@@ -134,7 +134,7 @@ export default function Dashboard() {
           </div>
           <div className="ml-auto text-right shrink-0">
             <b className="text-[17px] tabular-nums text-ink leading-none">{fmt(c.qty_out)}</b>
-            <span className="block text-[11.5px] text-t3 mt-1">ширхэг гадаа</span>
+            <span className="block text-[12px] text-t3 mt-1">ширхэг гадаа</span>
           </div>
         </button>
       ))}
@@ -150,7 +150,7 @@ export default function Dashboard() {
              className="flex gap-3 py-3 border-b border-sunken last:border-0 items-start cursor-pointer hover:bg-canvas -mx-2 px-2 rounded-lg transition">
           <div className={`w-8 h-8 rounded-[10px] grid place-items-center shrink-0 text-sm ${
             n.level === "danger" ? "bg-danger-50 text-danger" :
-            n.level === "warn" ? "bg-warn-50 text-warn" : "bg-brand-50 text-brand"}`}>
+            n.level === "warn" ? "bg-warn-50 text-warn" : "bg-brand-50 text-brand-ink"}`}>
             {n.level === "danger" ? "!" : n.level === "warn" ? "◷" : "▤"}
           </div>
           <div className="min-w-0">
@@ -218,9 +218,9 @@ export default function Dashboard() {
       {/* KPI */}
       <div className="command-metrics">
         <div className="command-hero relative overflow-hidden">
-          <div className="text-[12.5px] text-white/60 font-medium mb-2">Авлагын нийт үлдэгдэл</div>
+          <div className="text-[12.5px] text-white/80 font-medium mb-2">Авлагын нийт үлдэгдэл</div>
           <div className="text-[28px] font-extrabold text-white tabular-nums leading-tight">
-            {sayaFmt(k.receivable)} <span className="text-sm text-white/40 font-semibold">₮</span>
+            {sayaFmt(k.receivable)} <span className="text-sm text-white/70 font-semibold">₮</span>
           </div>
           <div className="mt-2"><span className="pill bg-white/10 text-white/80">алданги +{sayaFmt(k.penalty)}₮</span></div>
         </div>
@@ -284,7 +284,7 @@ export default function Dashboard() {
         <div className="card p-5">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-bold text-ink text-[15.5px]">Зээлийн ойрын төлөлт</h3>
-            <button className="text-[12.5px] text-brand font-semibold cursor-pointer"
+            <button className="text-[12.5px] text-brand-ink font-semibold cursor-pointer"
                     onClick={() => nav("/loans")}>Бүгд →</button>
           </div>
           {(d.loans_upcoming || []).length === 0 && <p className="text-t3 text-sm py-4">Идэвхтэй зээл алга.</p>}
@@ -296,7 +296,7 @@ export default function Dashboard() {
               </div>
               <div className="ml-auto text-right shrink-0">
                 <b className="tabular-nums text-[13.5px]">{sayaFmt(l.amount)}₮</b>
-                <span className="block text-[11.5px] text-t3">{l.due}</span>
+                <span className="block text-[12px] text-t3">{l.due}</span>
               </div>
             </div>
           ))}

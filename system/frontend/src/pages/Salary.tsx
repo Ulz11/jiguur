@@ -44,7 +44,7 @@ export default function Salary() {
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Сарын цалингийн сан (ойролцоо)</div>
           <div className="text-[26px] font-extrabold text-ink tabular-nums">{sayaFmt(monthlyFund)}₮</div>
-          <span className="block text-[11.5px] text-t3 mt-1">өдрийнхийг 22 хоногоор тооцов</span>
+          <span className="block text-[12px] text-t3 mt-1">өдрийнхийг 22 хоногоор тооцов</span>
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Сүүлийн бодолт</div>
@@ -179,7 +179,7 @@ function EmpModal({ e, onClose, onDone }: any) {
         {Object.entries(TYPE_LABEL).map(([v, lb]) => (
           <button key={v} onClick={() => setF({ ...f, type: v })} aria-pressed={f.type === v}
             className={`flex-1 rounded-[10px] border py-2 font-semibold text-[13px] min-h-10 transition ${
-              f.type === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{lb}</button>
+              f.type === v ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2"}`}>{lb}</button>
         ))}
       </div>
       {f.type === "daily" ? (
@@ -240,7 +240,7 @@ function RunModal({ emps, onClose, onDone }: any) {
             {[1, 2].map((h) => (
               <button key={h} onClick={() => setHalf(h)} aria-pressed={half === h}
                 className={`flex-1 rounded-[10px] border py-2.5 font-semibold text-sm min-h-[46px] transition ${
-                  half === h ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{h}-р хагас</button>
+                  half === h ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2"}`}>{h}-р хагас</button>
             ))}
           </div></div>
       </div>

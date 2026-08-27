@@ -144,7 +144,7 @@ export default function Stocktake() {
       <div className="flex gap-2.5 mb-3.5 flex-wrap">
         <input className="inp flex-1 min-w-[180px]" placeholder="Материал хайх…"
                aria-label="Материал хайх" value={q} onChange={(e) => setQ(e.target.value)} />
-        <button className={`btn-secondary ${onlyDiff ? "!border-brand !text-brand" : ""}`}
+        <button className={`btn-secondary ${onlyDiff ? "!border-brand !text-brand-ink" : ""}`}
                 onClick={() => setOnlyDiff(!onlyDiff)}>
           Зөрүүтэй ({diffs.length})
         </button>
@@ -159,7 +159,7 @@ export default function Stocktake() {
               <div className="min-w-0 flex-1">
                 <b className="text-[14.5px] text-ink block leading-tight">{r.material}</b>
                 <span className="text-[12px] text-t3">
-                  <span className="pill-grey !text-[10.5px] !py-0 mr-1.5">{r.grade}</span>
+                  <span className="pill-grey !py-0 mr-1.5">{r.grade}</span>
                   системд <b className="tabular-nums">{fmt(r.system)}</b>
                 </span>
               </div>

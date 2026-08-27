@@ -110,7 +110,7 @@ function Shell({ children }: { children: ReactNode }) {
             <div className="user-monogram">{u.name.slice(0, 2)}</div>
             <div className="min-w-0 flex-1 nav-label">
               <div className="text-[13px] font-semibold truncate">{u.name}</div>
-              <div className="text-[11px] opacity-70 truncate">{roleLabel}</div>
+              <div className="text-[12px] opacity-70 truncate">{roleLabel}</div>
             </div>
           </div>
           {/* Өөрийн мөрөнд гарсан тул нэр хумигдахгүй; nav-label ЗҮҮГДЭХГҮЙ —

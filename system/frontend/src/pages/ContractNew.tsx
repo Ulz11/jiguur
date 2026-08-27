@@ -78,7 +78,7 @@ export default function ContractNew() {
         {steps.map((s, i) => (
           <div key={s} className="flex-1">
             <div className={`h-[5px] rounded-full mb-2 transition ${i + 1 <= step ? "bg-brand" : "bg-line"}`} />
-            <span className={`text-xs font-semibold ${i + 1 === step ? "text-brand" : "text-t3"}`}>{i + 1} · {s}</span>
+            <span className={`text-xs font-semibold ${i + 1 === step ? "text-brand-ink" : "text-t3"}`}>{i + 1} · {s}</span>
           </div>
         ))}
       </div>
@@ -92,7 +92,7 @@ export default function ContractNew() {
               {[["rent", "Түрээс"], ["sale", "Худалдаа"]].map(([v, l]) => (
                 <button key={v} onClick={() => setType(v as any)} aria-pressed={type === v}
                   className={`rounded-[10px] border px-6 py-2.5 font-semibold text-sm min-h-11 transition ${
-                    type === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{l}</button>
+                    type === v ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2"}`}>{l}</button>
               ))}
             </div>
             <div className="lbl" id={`${uid}-client`}>Харилцагч</div>
@@ -115,7 +115,7 @@ export default function ContractNew() {
               <button onClick={() => { setClientId(null); setShowNew(true); }} aria-pressed={showNew}
                 className={`pick-card text-left border-[1.5px] border-dashed rounded-[14px] px-4 py-3.5 min-h-16 transition ${
                   showNew ? "border-brand bg-brand-50" : "border-line hover:border-line-strong"}`}>
-                <b className="block text-sm text-brand">+ Шинэ харилцагч</b>
+                <b className="block text-sm text-brand-ink">+ Шинэ харилцагч</b>
                 <span className="text-xs text-t2">Нэр, утас оруулаад л болно</span>
               </button>
             </div>
@@ -169,7 +169,7 @@ export default function ContractNew() {
                             <input type="number" min={0} aria-label={`${m?.name} — тоо ширхэг`}
                               className={`inp !min-h-10 !py-2 w-24 text-right ${over ? "!border-danger" : ""}`}
                               value={it.qty} onChange={(e) => setItems(items.map((x, j) => j === i ? { ...x, qty: +e.target.value } : x))} />
-                            {over && <span className="block text-[11px] text-danger mt-1">нөөцөөс их!</span>}
+                            {over && <span className="block text-[12px] text-danger mt-1">нөөцөөс их!</span>}
                           </td>
                           <td className="td text-right">
                             <input type="number" min={0} className="inp !min-h-10 !py-2 w-28 text-right"
@@ -302,10 +302,10 @@ function MaterialPicker({ materials, items, addItem, type }: any) {
         <div className="inline-flex bg-white border border-line rounded-full p-1 gap-0.5"
              role="group" aria-label="Материалыг ангиллаар шүүх">
           <button onClick={() => setCat("")} aria-pressed={!cat}
-            className={`rounded-full px-3.5 py-1 text-[12.5px] font-semibold min-h-9 ${!cat ? "bg-brand text-white" : "text-t2"}`}>Бүгд</button>
+            className={`rounded-full px-3.5 py-1 text-[12.5px] font-semibold min-h-9 ${!cat ? "bg-brand text-onbrand" : "text-t2"}`}>Бүгд</button>
           {cats.map((c: any) => (
             <button key={c} onClick={() => setCat(c)} aria-pressed={cat === c}
-              className={`rounded-full px-3.5 py-1 text-[12.5px] font-semibold min-h-9 ${cat === c ? "bg-brand text-white" : "text-t2"}`}>{c}</button>
+              className={`rounded-full px-3.5 py-1 text-[12.5px] font-semibold min-h-9 ${cat === c ? "bg-brand text-onbrand" : "text-t2"}`}>{c}</button>
           ))}
         </div>
       </div>
@@ -318,7 +318,7 @@ function MaterialPicker({ materials, items, addItem, type }: any) {
                 picked ? "border-brand bg-brand-50 opacity-60" : "border-line hover:border-line-strong hover:shadow-md"}`}>
               <b className="block text-[13.5px] text-ink">{m.name}</b>
               <span className="text-xs text-t2">{s.grade} · <b className="text-money">{fmt(s.on_hand)}ш</b> агуулахад</span>
-              <span className="block text-[11.5px] text-t3">
+              <span className="block text-[12px] text-t3">
                 {type === "rent" ? `суурь тариф ${fmt(m.base_rate)}₮` :
                  `үнэ ${fmt(m.prices.find((p: any) => p.grade_id === s.grade_id)?.sale_price || 0)}₮`}
               </span>
@@ -333,15 +333,15 @@ function MaterialPicker({ materials, items, addItem, type }: any) {
 function Sum({ label, val, accent }: any) {
   return (
     <div className="text-right">
-      <div className="text-[11.5px] text-t3 font-semibold uppercase tracking-wider">{label}</div>
-      <div className={`text-xl font-extrabold tabular-nums ${accent ? "text-brand" : "text-ink"}`}>{val}</div>
+      <div className="text-[12px] text-t3 font-semibold uppercase tracking-wider">{label}</div>
+      <div className={`text-xl font-extrabold tabular-nums ${accent ? "text-brand-ink" : "text-ink"}`}>{val}</div>
     </div>
   );
 }
 function SumHero({ label, val, small }: any) {
   return (
     <div>
-      <div className="text-[11px] text-white/50 font-semibold uppercase tracking-wider mb-1">{label}</div>
+      <div className="text-[12px] text-white/75 font-semibold uppercase tracking-wider mb-1">{label}</div>
       <div className={`font-extrabold tabular-nums ${small ? "text-base" : "text-[22px]"}`}>{val}</div>
     </div>
   );

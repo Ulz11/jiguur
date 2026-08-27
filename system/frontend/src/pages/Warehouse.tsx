@@ -64,7 +64,7 @@ export default function Warehouse() {
                         <button key={s.grade_id} title="Тооллогын залруулга"
                           aria-label={`${m.name} · ${s.grade} зэрэглэл — агуулахад ${fmt(s.on_hand)}ш, тооллогын залруулга`}
                           onClick={() => (u?.role !== "finance") && setAdjust({ m, s })}
-                          className="pill-grey hover:bg-brand-50 hover:text-brand transition cursor-pointer">
+                          className="pill-grey hover:bg-brand-50 hover:text-brand-ink transition cursor-pointer">
                           {s.grade}: <b className="tabular-nums">{fmt(s.on_hand)}</b>
                         </button>
                       ))}

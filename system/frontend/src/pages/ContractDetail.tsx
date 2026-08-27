@@ -130,7 +130,7 @@ export default function ContractDetail() {
         {d.penalty > 0 && <Num label="Алданги (өнөөдрөөр)" val={sayaFmt(d.penalty) + "₮"} danger />}
         {cyc && (
           <div className="flex-1 min-w-[210px]">
-            <div className="text-[11.5px] text-t3 font-semibold uppercase tracking-wider mb-2.5">
+            <div className="text-[12px] text-t3 font-semibold uppercase tracking-wider mb-2.5">
               Цикл {cyc.cycle_start} – {cyc.cycle_end} · {cyc.days_done}/{cyc.days_total} хоног
             </div>
             <Prog pct={(cyc.days_done / cyc.days_total) * 100} />
@@ -204,12 +204,12 @@ export default function ContractDetail() {
                     <td className="td">
                       {/* Үеийн огноо хоёр мөр болж таслагдвал уншихад хүнд */}
                       <span className="font-semibold text-ink whitespace-nowrap">{lb.title}</span>
-                      {lb.sub && <span className="block text-[11.5px] text-t3">{lb.sub}</span>}
+                      {lb.sub && <span className="block text-[12px] text-t3">{lb.sub}</span>}
                     </td>
                     <td className="td text-right tabular-nums">
                       {money(inv.total)}
-                      {inv.penalty > 0 && <span className="block text-[11px] text-danger">+ алданги {money(inv.penalty)}</span>}
-                      {inv.charge_amount > 0 && <span className="block text-[11px] text-t3">үүнд засвар/акт {money(inv.charge_amount)}</span>}
+                      {inv.penalty > 0 && <span className="block text-[12px] text-danger">+ алданги {money(inv.penalty)}</span>}
+                      {inv.charge_amount > 0 && <span className="block text-[12px] text-t3">үүнд засвар/акт {money(inv.charge_amount)}</span>}
                     </td>
                     <td className="td text-right tabular-nums">{money(inv.paid)}</td>
                     <td className="td"><StatePill state={inv.status} /></td>
@@ -247,8 +247,8 @@ export default function ContractDetail() {
                     mv.type === "ISSUE" ? "border-brand" : mv.type === "RETURN" ? "border-warn" : "border-danger"}`} />
                   <div className="cursor-pointer" onClick={() => setOpenMv(open ? null : mv.id)}
                        title="Дарж дэлгэрэнгүйг нээнэ">
-                    <span className="text-[11.5px] text-t3 font-semibold">{mv.date}</span>
-                    {mv.status === "pending" && <span className="pill-amber ml-2 !text-[10px]">хүлээгдэж буй</span>}
+                    <span className="text-[12px] text-t3 font-semibold">{mv.date}</span>
+                    {mv.status === "pending" && <span className="pill-amber ml-2">хүлээгдэж буй</span>}
                     <b className="block text-[13.5px] text-ink font-semibold">
                       <span className="text-t3 font-normal mr-1">{open ? "▾" : "›"}</span>
                       {mv.type === "ISSUE" ? "Ачилт" : mv.type === "RETURN" ? "Буцаалт" : "Акт"} — {fmt(mv.lines.reduce((s: number, l: any) => s + l.qty, 0))}ш
@@ -279,7 +279,7 @@ export default function ContractDetail() {
                         <div key={l.id} className="flex items-center gap-2 py-1.5 border-b border-line last:border-0 flex-wrap">
                           <div className="min-w-0">
                             <b className="text-[12.5px] text-ink">{l.material}</b>
-                            <span className="block text-[11.5px] text-t3">
+                            <span className="block text-[12px] text-t3">
                               {l.grade}{l.return_grade && l.return_grade !== l.grade ? ` → ${l.return_grade}` : ""}
                               {l.repair_fee > 0 && <span className="text-warn"> · засвар {money(l.repair_fee)}</span>}
                               {l.writeoff_fee > 0 && <span className="text-danger"> · акт {money(l.writeoff_fee)}</span>}
@@ -324,7 +324,7 @@ export default function ContractDetail() {
               <div key={p.id} className="flex items-center gap-3 py-2.5 border-b border-sunken last:border-0">
                 <div>
                   <b className="text-[13.5px] tabular-nums text-ink">{money(p.amount)}</b>
-                  <span className="block text-[11.5px] text-t3">{p.date}</span>
+                  <span className="block text-[12px] text-t3">{p.date}</span>
                 </div>
                 <span className={`ml-auto ${p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green" : "pill-blue"}`}>
                   {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн" : "Данс"}
@@ -470,7 +470,7 @@ function RebuildModal({ p, onClose, onDone }: {
 function Num({ label, val, danger }: { label: string; val: string; danger?: boolean }) {
   return (
     <div>
-      <div className="text-[11.5px] text-t3 font-semibold uppercase tracking-wider mb-1">{label}</div>
+      <div className="text-[12px] text-t3 font-semibold uppercase tracking-wider mb-1">{label}</div>
       <div className={`text-xl font-extrabold tabular-nums ${danger ? "text-danger" : "text-ink"}`}>{val}</div>
     </div>
   );
@@ -533,7 +533,7 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
                 <div className="min-w-0 flex-1">
                   <b className="text-[15.5px] text-ink block leading-tight">{r.material}</b>
                   <span className="text-[12.5px] text-t2">
-                    <span className="pill-grey !text-[10.5px] !py-0 mr-1.5">{r.grade}</span>
+                    <span className="pill-grey !py-0 mr-1.5">{r.grade}</span>
                     гадаа <b className="tabular-nums">{fmt(r.qty)}</b>ш
                   </span>
                 </div>
@@ -773,7 +773,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
         {[["CASH", "Бэлэн"], ["BANK", "Данс"], ["BARTER", "Бартер"]].map(([v, l]) => (
           <button key={v} onClick={() => setMethod(v)} aria-pressed={method === v}
             className={`flex-1 rounded-[10px] border py-2.5 font-semibold text-sm transition min-h-11 ${
-              method === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2 hover:border-line-strong"}`}>
+              method === v ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2 hover:border-line-strong"}`}>
             {l}
           </button>
         ))}
@@ -792,11 +792,11 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
             <div className="min-w-0">
               <b className="text-[13px] text-ink">Хуваарилалт — гараар</b>
               {/* Юуг хуваарилж байгаагаа хараагүй бол хэтрүүлэх нь амархан */}
-              <span className="block text-[11.5px] text-t3">
+              <span className="block text-[12px] text-t3">
                 Хуваарилах төлбөр: <b className="tabular-nums text-t2">{money(amt)}</b>
               </span>
             </div>
-            <button className="text-[12.5px] font-semibold text-brand hover:underline shrink-0"
+            <button className="text-[12.5px] font-semibold text-brand-ink hover:underline shrink-0"
                     onClick={() => setManual(null)}>Автоматаар</button>
           </div>
           {cand.length === 0 && <p className="text-[12.5px] text-t2">Нээлттэй нэхэмжлэл алга — бүх дүн кредит болно.</p>}
@@ -807,9 +807,9 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
               <div className="min-w-0">
                 <div className="text-[13px] text-ink truncate">
                   {n.title}
-                  {n.sub && <span className="text-[11.5px] text-t3 ml-1.5">{n.sub}</span>}
+                  {n.sub && <span className="text-[12px] text-t3 ml-1.5">{n.sub}</span>}
                 </div>
-                <div className="text-[11.5px] text-t3">
+                <div className="text-[12px] text-t3">
                   Үлдэгдэл {money(i.outstanding)}
                   {i.penalty_due > 0 && <> · алданги {money(i.penalty_due)}</>}
                 </div>
@@ -826,7 +826,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
             <span>{manualLeft < 0 ? "Төлбөрөөс хэтэрсэн" : "Хуваарилагдаагүй"}</span>
             <b className="tabular-nums">{money(Math.abs(manualLeft))}</b>
           </div>
-          <p className="text-[11.5px] text-t3 mt-1.5">
+          <p className="text-[12px] text-t3 mt-1.5">
             Хуваарилагдаагүй үлдсэн дүн хамгийн хуучин нэхэмжлэлээс эхэлж автоматаар хаагдана.
           </p>
         </div>
