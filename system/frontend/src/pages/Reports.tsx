@@ -1,18 +1,27 @@
 import { useState } from "react";
 import { api, money, sayaFmt, token } from "../api";
-import { Spinner, useToast } from "../ui";
+import { Spinner, useToast, Refreshing } from "../ui";
 import { useLive } from "../lib/live";
 
 export default function Reports() {
   const [months, setMonths] = useState(6);
   const [d, setD] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
   const toast = useToast();
 
-  const load = (m: number) => { setD(null); api(`/api/reports?months=${m}`).then(setD).catch((e) => toast(e.message, "err")); };
-  /** Фонд шинэчлэх — эргэлдэгч гаргахгүй, алдааг чимээгүй залгина. */
+  /* Сар солиход `setD(null)` хийж БҮТЭН хуудсыг нурааж байв: Отгоо 6 сарын
+     тайлангаа хараад 12 руу дарахад дэлгэц хоосорч, юутай харьцуулж байснаа
+     алддаг. Одоо өмнөх тоо байрандаа үлдэж, зөвхөн бүдгэрнэ. */
+  const load = (m: number) => {
+    setBusy(true);
+    return api(`/api/reports?months=${m}`).then(setD)
+      .catch((e) => toast(e.message, "err"))
+      .finally(() => setBusy(false));
+  };
+  /** Фонд шинэчлэх — бүдгэрүүлэг ч гаргахгүй, алдааг чимээгүй залгина. */
   const refresh = (m: number) => api(`/api/reports?months=${m}`).then(setD).catch(() => {});
   useLive((bg) => (bg ? refresh(months) : load(months)), [months]);
-  if (!d) return <Spinner />;
+  if (!d) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
   const p = d.pnl;
 
   async function download() {
@@ -26,7 +35,7 @@ export default function Reports() {
   }
 
   return (
-    <div>
+    <Refreshing busy={busy}>
       <div className="flex items-end justify-between gap-4 mb-5 flex-wrap">
         <div>
           <h1 className="text-[22px] font-bold text-ink tracking-tight">Тайлан</h1>
@@ -133,7 +142,7 @@ export default function Reports() {
           <CashBars s={d.series} />
         </div>
       </div>
-    </div>
+    </Refreshing>
   );
 }
 

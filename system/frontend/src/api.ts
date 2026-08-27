@@ -1,4 +1,5 @@
 import { errorMessage, FALLBACK_ERROR } from "./lib/errors";
+import { markSessionExpired } from "./lib/session";
 
 export type User = { id: number; name: string; role: string; username: string };
 
@@ -26,7 +27,12 @@ export async function api(path: string, opts: RequestInit = {}): Promise<any> {
   const res = await fetch(path, { ...opts, headers });
   if (res.status === 401) {
     clearAuth();
-    if (!location.pathname.includes("login")) location.href = "/login";
+    if (!location.pathname.includes("login")) {
+      // Хуудас руу шидэгдэхийн ӨМНӨ шалтгааныг үлдээнэ — эс бөгөөс Отгоо
+      // гэрээ бөглөж байгаад гэнэт нэвтрэх дэлгэц дээр тайлбаргүй зогсоно.
+      markSessionExpired();
+      location.href = "/login";
+    }
     throw new Error("Нэвтрэлт дууссан");
   }
   if (!res.ok) {

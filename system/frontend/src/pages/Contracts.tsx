@@ -1,19 +1,33 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, money, sayaFmt, user } from "../api";
-import { Spinner, StatePill, TypePill, Prog, Empty } from "../ui";
+import { Spinner, StatePill, TypePill, Prog, Empty, Refreshing, useToast } from "../ui";
+import { rowClickProps } from "../lib/rowClick";
 import { useScope } from "../App";
 
 export default function Contracts() {
   const { scope } = useScope();
   const [rows, setRows] = useState<any[] | null>(null);
+  const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("all");
   const [q, setQ] = useState("");
   const nav = useNavigate();
+  const toast = useToast();
   const u = user();
 
-  useEffect(() => { setRows(null); api(`/api/contracts?scope=${scope}`).then(setRows); }, [scope]);
-  if (!rows) return <Spinner />;
+  /* Түрээс/Худалдаа солиход жагсаалтыг null болгож хуудсыг хоослодог байв.
+     Одоо өмнөх жагсаалт байрандаа үлдэж, зөвхөн бүдгэрнэ. Татаж чадаагүй бол
+     хуучин жагсаалт ЧИМЭЭГҮЙ үлдэх ёсгүй — хэлнэ. */
+  useEffect(() => {
+    let live = true;
+    setBusy(true);
+    api(`/api/contracts?scope=${scope}`)
+      .then((r) => { if (live) setRows(r); })
+      .catch((e) => { if (live) toast(e.message, "err"); })
+      .finally(() => { if (live) setBusy(false); });
+    return () => { live = false; };
+  }, [scope]);
+  if (!rows) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
 
   // «Хуучин үлдэгдэл» (OB-) гэрээнүүд жагсаалтыг дүүргэхгүйн тулд тусдаа шүүлтүүрт
   const isOB = (c: any) => c.state === "opening";
@@ -27,8 +41,11 @@ export default function Contracts() {
     ["overdue", "Хэтэрсэн"], ["closed", "Хаагдсан"], ["opening", "Хуучин үлдэгдэл"],
   ];
 
+  // Шүүлтүүр/хайлт нь хоосон болгосон уу, эсвэл үнэхээр гэрээ алга уу
+  const filtered = filter !== "all" || q.trim() !== "";
+
   return (
-    <div>
+    <Refreshing busy={busy}>
       <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-extrabold text-ink tracking-tight">Гэрээнүүд</h1>
@@ -69,7 +86,8 @@ export default function Contracts() {
               const pct = c.cycle ? (c.cycle.days_done / c.cycle.days_total) * 100 : c.type === "sale" ? 100 : 0;
               return (
                 <tr key={c.id} className="cursor-pointer hover:bg-canvas transition group"
-                    onClick={() => nav(`/contracts/${c.id}`)}>
+                    {...rowClickProps(() => nav(`/contracts/${c.id}`),
+                                      `Гэрээ №${c.no} · ${c.client} — нээх`, "row")}>
                   <td className="td">
                     <span className="font-bold text-ink">{c.client}</span>
                     <span className="block text-xs text-t3 mt-0.5">№{c.no} · {c.start_date}-с
@@ -110,8 +128,14 @@ export default function Contracts() {
             })}
           </tbody>
         </table>
-        {shown.length === 0 && <Empty title="Илэрц алга" sub="Энэ шүүлтүүрт тохирох гэрээ байхгүй." />}
+        {/* Хоосон нүүр нь гарцгүй байх ёсгүй — шүүлтүүр нуусан бол буцаах товч */}
+        {shown.length === 0 && (
+          <Empty title="Илэрц алга" sub="Энэ шүүлтүүрт тохирох гэрээ байхгүй."
+                 action={filtered
+                   ? { label: "Бүгдийг харах", onClick: () => { setFilter("all"); setQ(""); } }
+                   : undefined} />
+        )}
       </div>
-    </div>
+    </Refreshing>
   );
 }

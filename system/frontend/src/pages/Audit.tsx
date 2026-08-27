@@ -69,13 +69,15 @@ export default function Audit() {
               const [label, cls] = ACTIONS[r.action] || [r.action, "pill-grey"];
               return (
                 <tr key={r.id}>
-                  <td className="td whitespace-nowrap text-t2 tabular-nums text-[12.5px]">{r.at}</td>
+                  {/* `text-[12.5px]` энд байсан ч огт үйлчилдэггүй байв — `.td`
+                      өөрөө 14px тавьдаг. Худал ангиллыг үлдээхгүй. */}
+                  <td className="td whitespace-nowrap text-t2 tabular-nums">{r.at}</td>
                   <td className="td font-semibold text-ink">{r.user_name || "—"}</td>
                   <td className="td"><span className={cls}>{label}</span></td>
                   <td className="td text-t2">
                     {ENTITIES[r.entity] || r.entity}{r.entity_id ? ` #${r.entity_id}` : ""}
                   </td>
-                  <td className="td text-t2 text-[13px]">{r.detail}</td>
+                  <td className="td text-t2">{r.detail}</td>
                 </tr>
               );
             })}

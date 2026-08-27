@@ -251,8 +251,29 @@ export default function ContractNew() {
               const deposit = parseMoney(cond.deposit);
               const base = type === "rent" ? daySum * 30 : saleSum;
               const vatAmt = base * vat / 100;
+              /* Баталгаажуулах алхам нь МӨНГИЙГ л харуулж, ЮУГ түрээслэж
+                 байгааг харуулдаггүй байв — Отгоо 2-р алхам дээр бөглөсөн
+                 мөрүүдээ дахин харалгүйгээр гэрээ үүсгэдэг. Тоо ширхэг ба
+                 тарифаа эндээс сүүлчийн удаа хардаг. */
+              const picked = items.filter((i) => i.qty > 0);
+              const lineLabel = (it: Item) => {
+                const m = materials.find((x: any) => x.id === it.material_id);
+                const st = m?.stock?.find((s: any) => s.grade_id === it.grade_id);
+                return `${m?.name ?? "—"}${st?.grade ? ` (${st.grade})` : ""}`;
+              };
               const rows: any[] = [
                 { label: "Харилцагч", value: client?.name || newClient.name },
+                { label: "Материал",
+                  value: `${picked.length} мөр · ${fmt(picked.reduce((s, i) => s + i.qty, 0))}ш` },
+                ...picked.slice(0, 3).map((it) => ({
+                  label: lineLabel(it),
+                  value: type === "rent"
+                    ? `${fmt(it.qty)}ш × ${fmt(it.daily_rate)}₮/хоног`
+                    : `${fmt(it.qty)}ш × ${fmt(it.unit_price)}₮`,
+                  accent: "dim",
+                })),
+                ...(picked.length > 3
+                  ? [{ label: "…", value: `бас ${picked.length - 3} мөр`, accent: "dim" }] : []),
                 ...(type === "rent"
                   ? [{ label: "Өдрийн тооцоо", value: money(daySum) },
                      { label: "30 хоногийн цикл", value: money(daySum * 30) },
@@ -330,19 +351,3 @@ function MaterialPicker({ materials, items, addItem, type }: any) {
   );
 }
 
-function Sum({ label, val, accent }: any) {
-  return (
-    <div className="text-right">
-      <div className="text-[12px] text-t3 font-semibold uppercase tracking-wider">{label}</div>
-      <div className={`text-xl font-extrabold tabular-nums ${accent ? "text-brand-ink" : "text-ink"}`}>{val}</div>
-    </div>
-  );
-}
-function SumHero({ label, val, small }: any) {
-  return (
-    <div>
-      <div className="text-[12px] text-white/75 font-semibold uppercase tracking-wider mb-1">{label}</div>
-      <div className={`font-extrabold tabular-nums ${small ? "text-base" : "text-[22px]"}`}>{val}</div>
-    </div>
-  );
-}

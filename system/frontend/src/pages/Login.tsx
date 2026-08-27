@@ -1,6 +1,7 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, setAuth } from "../api";
+import { takeSessionExpired } from "../lib/session";
 import brandLogo from "../assets/jiguur-logo.png";
 
 export default function Login() {
@@ -8,6 +9,12 @@ export default function Login() {
   const [password, setP] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  /* Хугацаа дуусаад шидэгдсэн үү, эсвэл өөрөө гарч ирсэн үү. Тугийг РЕНДЕРИЙН
+     үед биш, effect дотор уншина: StrictMode нь `useState`-ийн эхлүүлэгчийг
+     хоёр удаа дуудаж, эхний дуудалт тугийг идчихээд хоёр дахь нь «юу ч
+     байхгүй» гэж хариулдаг (шалтгаан чимээгүй алга болдог). */
+  const [expired, setExpired] = useState(false);
+  useEffect(() => { if (takeSessionExpired()) setExpired(true); }, []);
   const nav = useNavigate();
   const uid = useId();
 
@@ -41,6 +48,15 @@ export default function Login() {
             </div>
           </div>
 
+          {expired && (
+            /* Алдаа биш — тайлбар. Тиймээс улаан биш, брэнд өнгийн тайван мөр,
+               `role="status"` (assertive биш) — гэхдээ ХАРАГДАНА. */
+            <div role="status"
+                 className="mb-4 rounded-[7px] bg-brand-50 px-3.5 py-2.5 text-[12.5px] text-t1 leading-snug">
+              <b className="text-brand-ink">Нэвтрэлтийн хугацаа дууссан.</b>{" "}
+              Аюулгүй байдлын үүднээс системээс гарсан тул дахин нэвтэрнэ үү.
+            </div>
+          )}
           <label className="lbl" htmlFor={`${uid}-user`}>Нэвтрэх нэр</label>
           <input id={`${uid}-user`} className="inp mb-4" value={username} onChange={(e) => setU(e.target.value)}
                  placeholder="otgoo" autoFocus autoCapitalize="none" autoComplete="username" />

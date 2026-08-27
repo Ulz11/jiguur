@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, money, sayaFmt } from "../api";
-import { Spinner, useToast, Prog, Empty } from "../ui";
+import { Spinner, useToast, Prog, Refreshing } from "../ui";
 import { useLive } from "../lib/live";
 
 /** Материалын ашигт байдал + мөнгөний урсгалын прогноз. */
@@ -8,14 +8,18 @@ export default function Analytics() {
   const [tab, setTab] = useState<"materials" | "forecast">("materials");
   const [months, setMonths] = useState(6);
   const [mat, setMat] = useState<any>(null);
+  const [matBusy, setMatBusy] = useState(false);
   const [fc, setFc] = useState<any>(null);
   const toast = useToast();
 
-  // Хоёр эх сурвалж хоёулаа амьд: сар солигдоход эргэлдэгчтэй, фонд чимээгүй.
+  /* Хоёр эх сурвалж хоёулаа амьд. Сар солиход хүснэгтийг null болгож бүтэн
+     хуудсыг эргэлдэгчээр солидог байв — одоо өмнөх мөрүүд байрандаа үлдэж
+     бүдгэрнэ; фонд шинэчлэлт нь тэр ч бүдгэрүүлгийг гаргахгүй. */
   useLive((bg) => {
-    if (!bg) setMat(null);
+    if (!bg) setMatBusy(true);
     api(`/api/reports/materials?months=${months}`).then(setMat)
-      .catch((e) => { if (!bg) toast(e.message, "err"); });
+      .catch((e) => { if (!bg) toast(e.message, "err"); })
+      .finally(() => { if (!bg) setMatBusy(false); });
   }, [months]);
   useLive(() => { api("/api/reports/forecast").then(setFc).catch(() => {}); }, []);
 
@@ -35,20 +39,25 @@ export default function Analytics() {
         </div>
       </div>
 
-      {tab === "materials" ? <Materials d={mat} months={months} setMonths={setMonths} />
+      {tab === "materials" ? <Materials d={mat} busy={matBusy} months={months} setMonths={setMonths} />
                            : <Forecast d={fc} />}
     </div>
   );
 }
 
 /* ------------------------- Материалын өгөөж ------------------------- */
-function Materials({ d, months, setMonths }: any) {
-  if (!d) return <Spinner />;
+/** Ашиглалтын өнгө нь дангаараа утга зөөж байсан (улаан/улбар/ногоон). Улаан
+ *  ногоог ялгадаггүй хүнд, хэвлэсэн цаасан дээр тэр утга алга болно — ҮГ нь
+ *  авч явж, өнгө нь ард нь дэмжинэ (Гэрээнүүдийн мөртэй ижил дүрэм). */
+const utilWord = (p: number) => (p < 20 ? "бага" : p < 50 ? "дунд" : "хэвийн");
+
+function Materials({ d, busy, months, setMonths }: any) {
+  if (!d) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
   const t = d.totals;
   const worst = d.rows.filter((r: any) => r.utilization < 20 && r.idle_value > 0).slice(0, 3);
 
   return (
-    <div>
+    <Refreshing busy={busy}>
       <div className="command-metrics mb-4">
         <div className="command-hero">
           <div className="text-white/80 text-[12.5px] font-medium mb-2">Хөрөнгийн нийт үнэ</div>
@@ -62,7 +71,8 @@ function Materials({ d, months, setMonths }: any) {
           <div className="text-[12.5px] text-t2 font-medium mb-2">Ерөнхий ашиглалт</div>
           <div className="text-[28px] font-extrabold text-ink tabular-nums leading-tight">
             {t.utilization}<span className="text-sm text-t2 font-semibold"> %</span></div>
-          <div className="mt-3"><Prog pct={t.utilization} color={t.utilization < 40 ? "#C9363B" : "#1F8B69"} /></div>
+          <div className="mt-3"><Prog pct={t.utilization} label={`Ерөнхий ашиглалт ${t.utilization}%`}
+                                      color={t.utilization < 40 ? "#C9363B" : "#1F8B69"} /></div>
         </div>
         <div className="command-metric">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Хэвтэж буй хөрөнгө</div>
@@ -109,11 +119,17 @@ function Materials({ d, months, setMonths }: any) {
                     {r.in_repair > 0 && <span className="text-warn"> · засварт {r.in_repair}</span>}</span></td>
                 <td className="td text-right tabular-nums">{money(r.owned).replace("₮", "")}ш</td>
                 <td className="td text-right tabular-nums">{money(r.on_rent).replace("₮", "")}ш</td>
-                <td className="td min-w-[120px]">
+                <td className="td min-w-[150px]">
                   <div className="flex items-center gap-2">
                     <div className="flex-1"><Prog pct={r.utilization}
+                      label={`${r.material} — ашиглалт ${r.utilization}% (${utilWord(r.utilization)})`}
                       color={r.utilization < 20 ? "#C9363B" : r.utilization < 50 ? "#F88712" : "#1F8B69"} /></div>
-                    <span className="tabular-nums text-[12px] w-10 text-right">{r.utilization}%</span>
+                    <span className="tabular-nums text-[12px] w-[74px] text-right whitespace-nowrap">
+                      {r.utilization}%
+                      <b className={r.utilization < 20 ? "text-danger" : r.utilization < 50 ? "text-warn" : "text-money"}>
+                        {" · "}{utilWord(r.utilization)}
+                      </b>
+                    </span>
                   </div>
                 </td>
                 <td className="td text-right tabular-nums text-t2">{sayaFmt(r.asset_value)}₮</td>
@@ -134,7 +150,7 @@ function Materials({ d, months, setMonths }: any) {
         Жилээр = түүнийг 12 сард шилжүүлсэн. Бага өгөөжтэй, бага ашиглалттай материалыг
         зарах эсвэл үнээ өөрчлөх талаар бодох хэрэгтэй.
       </p>
-    </div>
+    </Refreshing>
   );
 }
 

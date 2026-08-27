@@ -4,6 +4,7 @@ import { api, fmt, money, sayaFmt, token, user } from "../api";
 import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit } from "../ui";
 import { PayModal } from "./ContractDetail";
 import { invoiceLabel } from "../lib/invoice";
+import { rowClickProps } from "../lib/rowClick";
 import {
   buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth, dayCellLabel,
   parseIso, isoOf, WEEKDAYS_MN, monthLabelMN, type TLEvent, type YearMonth,
@@ -140,7 +141,9 @@ export default function ClientProfile() {
                 <th className="th text-right">Үлдэгдэл</th><th className="th">Төлөв</th></tr></thead>
               <tbody>
                 {d.contracts.map((c: any) => (
-                  <tr key={c.id} className="cursor-pointer hover:bg-canvas group" onClick={() => nav(`/contracts/${c.id}`)}>
+                  <tr key={c.id} className="cursor-pointer hover:bg-canvas group"
+                      {...rowClickProps(() => nav(`/contracts/${c.id}`),
+                                        `Гэрээ №${c.no} нээх`, "row")}>
                     <td className="td"><b className="text-ink">№{c.no}</b>
                       <span className="block text-xs text-t3">{c.start_date}-с</span></td>
                     <td className="td"><TypePill type={c.type} /></td>

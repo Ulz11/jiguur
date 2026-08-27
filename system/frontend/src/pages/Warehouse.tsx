@@ -17,6 +17,14 @@ export default function Warehouse() {
   useEffect(() => { load(); }, []);
   if (!d) return <Spinner />;
 
+  /* Санхүүч тооллого залруулж чадахгүй. Гэсэн ч зэрэглэлийн үлдэгдэл нь бүх
+     хүнд <button> хэлбэрээр, хулгана хүрэхэд өнгө нь солигдож, «Тооллогын
+     залруулга» гэсэн тайлбартай зогсдог байв — 40 орчим ХУДАЛ товч. Түүнд
+     эдгээр нь зүгээр л тоо. */
+  const canAdjust = u?.role !== "finance";
+  const shown = d.rows.filter((m: any) => !q || m.name.toLowerCase().includes(q.toLowerCase())
+                                            || (m.category || "").toLowerCase().includes(q.toLowerCase()));
+
   return (
     <div>
       <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
@@ -48,9 +56,7 @@ export default function Warehouse() {
             <th className="th min-w-[130px]">Ашиглалт</th><th className="th"></th>
           </tr></thead>
           <tbody>
-            {d.rows.filter((m: any) => !q || m.name.toLowerCase().includes(q.toLowerCase())
-                                        || (m.category || "").toLowerCase().includes(q.toLowerCase()))
-                 .map((m: any) => {
+            {shown.map((m: any) => {
               const hand = m.on_hand_total, rent = m.on_rent_total;
               const repair = (m.stock || []).reduce((s: number, x: any) => s + x.in_repair, 0);
               const util = hand + rent ? (rent / (hand + rent)) * 100 : 0;
@@ -60,14 +66,18 @@ export default function Warehouse() {
                     <span className="block text-xs text-t3">{m.category} · тариф {fmt(m.base_rate)}₮ · засвар {fmt(m.repair_fee)}₮/ш</span></td>
                   <td className="td">
                     <div className="flex gap-1.5 flex-wrap">
-                      {(m.stock || []).map((s: any) => (
+                      {(m.stock || []).map((s: any) => (canAdjust ? (
                         <button key={s.grade_id} title="Тооллогын залруулга"
                           aria-label={`${m.name} · ${s.grade} зэрэглэл — агуулахад ${fmt(s.on_hand)}ш, тооллогын залруулга`}
-                          onClick={() => (u?.role !== "finance") && setAdjust({ m, s })}
+                          onClick={() => setAdjust({ m, s })}
                           className="pill-grey hover:bg-brand-50 hover:text-brand-ink transition cursor-pointer">
                           {s.grade}: <b className="tabular-nums">{fmt(s.on_hand)}</b>
                         </button>
-                      ))}
+                      ) : (
+                        <span key={s.grade_id} className="pill-grey">
+                          {s.grade}: <b className="tabular-nums">{fmt(s.on_hand)}</b>
+                        </span>
+                      )))}
                       {(m.stock || []).length === 0 && <span className="text-xs text-t3">—</span>}
                     </div>
                   </td>
@@ -81,7 +91,7 @@ export default function Warehouse() {
                   <td className="td"><Prog pct={util} label={`Ашиглалт ${Math.round(util)}%`}
                                            color={util > 85 ? "#EF4444" : util > 70 ? "#F5A524" : undefined} /></td>
                   <td className="td">
-                    {repair > 0 && u?.role !== "finance" && (
+                    {repair > 0 && canAdjust && (
                       <button className="btn-ghost btn-row text-money"
                         onClick={() => {
                           const s = (m.stock || []).find((x: any) => x.in_repair > 0);
@@ -94,6 +104,11 @@ export default function Warehouse() {
             })}
           </tbody>
         </table>
+        {/* Хайлт юу ч олоогүй бол хоосон хүснэгт биш — хайлтаа цэвэрлэх зам */}
+        {shown.length === 0 && (q.trim()
+          ? <Empty title="Илэрц алга" sub={`«${q}» гэсэн материал, ангилал байхгүй.`}
+                   action={{ label: "Хайлт цэвэрлэх", onClick: () => setQ("") }} />
+          : <Empty title="Материал бүртгэгдээгүй" sub="Тохиргооноос материал нэмнэ." />)}
       </div>
 
       {adjust && (

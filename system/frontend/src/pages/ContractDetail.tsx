@@ -5,8 +5,11 @@ import { Spinner, StatePill, TypePill, Prog, Modal, useToast, InlineEdit, Receip
 import { allocationPreview } from "../lib/alloc";
 import { invoiceLabel } from "../lib/invoice";
 import { parseMoney } from "../lib/num";
+import { rowClickProps } from "../lib/rowClick";
 
 const today = () => new Date().toISOString().slice(0, 10);
+/** Хөдөлгөөний нэр — мөрөн дээр ч, дуудагдах нэрэнд ч НЭГ эх сурвалж. */
+const mvName = (t: string) => (t === "ISSUE" ? "Ачилт" : t === "RETURN" ? "Буцаалт" : "Акт");
 
 export default function ContractDetail() {
   const { id } = useParams();
@@ -245,13 +248,16 @@ export default function ContractDetail() {
                 <div key={mv.id} className="relative pb-4 last:pb-0">
                   <i className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-white border-[3px] ${
                     mv.type === "ISSUE" ? "border-brand" : mv.type === "RETURN" ? "border-warn" : "border-danger"}`} />
-                  <div className="cursor-pointer" onClick={() => setOpenMv(open ? null : mv.id)}
-                       title="Дарж дэлгэрэнгүйг нээнэ">
+                  {/* Задардаг мөр — хулганаар ч, Tab+Enter-ээр ч нээгдэнэ */}
+                  <div className="cursor-pointer" title="Дарж дэлгэрэнгүйг нээнэ"
+                       aria-expanded={open}
+                       {...rowClickProps(() => setOpenMv(open ? null : mv.id),
+                         `${mv.date} · ${mvName(mv.type)} — дэлгэрэнгүйг ${open ? "хаах" : "нээх"}`)}>
                     <span className="text-[12px] text-t3 font-semibold">{mv.date}</span>
                     {mv.status === "pending" && <span className="pill-amber ml-2">хүлээгдэж буй</span>}
                     <b className="block text-[13.5px] text-ink font-semibold">
                       <span className="text-t3 font-normal mr-1">{open ? "▾" : "›"}</span>
-                      {mv.type === "ISSUE" ? "Ачилт" : mv.type === "RETURN" ? "Буцаалт" : "Акт"} — {fmt(mv.lines.reduce((s: number, l: any) => s + l.qty, 0))}ш
+                      {mvName(mv.type)} — {fmt(mv.lines.reduce((s: number, l: any) => s + l.qty, 0))}ш
                     </b>
                   </div>
                   {!open ? (

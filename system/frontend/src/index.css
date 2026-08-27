@@ -53,49 +53,63 @@
   --color-violet-50: #eeeafa;
 }
 
-html { font-feature-settings: "tnum" 1; }
+html { font-feature-settings: "tnum" 1, "ss01" 1; }
+/* Дэвсгэр нь брэндийн цаасан хээ. Өмнө нь энд хоёр радиал өнгө байсан ч доорх
+   хээ нь тэдгээрийг бүрэн дардаг байсан тул үлдээгээгүй — үзэгдэхгүй код. */
 body {
   background: var(--color-canvas);
   color: var(--color-t1);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.012em;
   position: relative;
 }
 body::before {
   content: "";
   position: fixed;
-  inset: -200px;
-  background:
-    radial-gradient(900px 600px at 12% -10%, rgba(248, 135, 18, 0.06), transparent 60%),
-    radial-gradient(700px 500px at 105% 110%, rgba(37, 56, 134, 0.05), transparent 65%);
+  inset: 0;
   z-index: -1;
   pointer-events: none;
+  background-image: url("./assets/jiguur-pattern-paper.jpg");
+  background-size: 330px auto;
+  background-repeat: repeat;
+  opacity: 0.028;
+  filter: saturate(0.8);
 }
 
 @layer components {
+  /* Радиус 9px, зөөлөн өргөгдсөн сүүдэр — «precision operational interface»-ийн
+     ЖИНХЭНЭ утга. Өмнө нь энэ хоёр дахин тодорхойлогдож, доорхи нь дээрхийг
+     `!important`-оор дардаг байв; одоо нэг л газар. */
   .card {
-    @apply border border-line rounded-[22px];
-    background: var(--color-cardbg);
-    box-shadow: 0 1px 0 rgba(11, 37, 69, 0.04), 0 1px 2px rgba(11, 37, 69, 0.04);
+    @apply border border-line rounded-[9px];
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 6px 18px rgba(28, 43, 93, 0.045), 0 1px 0 rgba(28, 43, 93, 0.035);
     transition: box-shadow 240ms cubic-bezier(0.22, 1, 0.36, 1);
   }
+  .card:hover { box-shadow: 0 12px 27px rgba(28, 43, 93, 0.075), 0 1px 0 rgba(28, 43, 93, 0.035); }
+  /* `.card`-ийн ДАРАА бичигдэж байгаа тул `!important`-гүйгээр дарна */
   .hero {
     background:
       radial-gradient(600px 260px at 100% 0%, rgba(255, 138, 11, 0.16), transparent 60%),
-      linear-gradient(135deg, #19296b 0%, #253886 70%, #304699 130%) !important;
-    border-color: transparent !important;
+      linear-gradient(135deg, #19296b 0%, #253886 70%, #304699 130%);
+    border-color: transparent;
   }
   /* Гол товч: улбар шар дэвсгэр + ГҮН NAVY бичиг. Цагаан бичиг улбар дээр
      ердөө 2.36:1 байсан — логоны өөрийнх нь хослол (navy+улбар) үүнийг
      5.66:1 болгож, брэнд өнгө нь огт хөдлөхгүй. */
   .btn-primary {
-    @apply inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 font-semibold text-sm min-h-11 cursor-pointer transition active:scale-[.97] disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center gap-2 rounded-[7px] px-4 py-2.5 font-semibold text-sm min-h-11 cursor-pointer transition active:scale-[.97] disabled:opacity-50 disabled:cursor-not-allowed;
     color: var(--color-onbrand);
-    background: #ff8a0b;
+    background: var(--jz-orange);
     box-shadow: 0 8px 18px rgba(255, 138, 11, 0.22);
   }
-  .btn-primary:hover { box-shadow: 0 10px 24px rgba(255, 138, 11, 0.32); transform: translateY(-1px); }
+  /* `!bg-money` мэтийн онцгойлсон өнгө үүнийг дарсан хэвээр (utilities давхарга) */
+  .btn-primary:hover {
+    background: #e87900;
+    box-shadow: 0 10px 24px rgba(255, 138, 11, 0.32);
+    transform: translateY(-1px);
+  }
   .btn-secondary {
-    @apply inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 font-semibold text-sm min-h-11 cursor-pointer transition active:scale-[.97] disabled:opacity-50 disabled:cursor-not-allowed border border-line text-ink;
+    @apply inline-flex items-center gap-2 rounded-[7px] px-4 py-2.5 font-semibold text-sm min-h-11 cursor-pointer transition active:scale-[.97] disabled:opacity-50 disabled:cursor-not-allowed border border-line text-ink;
     background: var(--color-cardbg);
   }
   .btn-secondary:hover { background: var(--color-sunken); border-color: var(--color-line-strong); }
@@ -104,16 +118,21 @@ body::before {
   }
   /* Төлөв хаяг (pill) — гэрээний ТӨЛӨВ гэдэг мэдээлэл, чимэглэл биш.
      11px байсныг 12px болгож, өнгө бүр өөрийн дэвсгэр дээрээ 4.5:1 давав. */
-  .pill { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap; }
-  .pill-green { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-money-50 text-money; }
-  .pill-amber { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-warn-50 text-warn; }
-  .pill-red { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-danger-50 text-danger; }
-  .pill-blue { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-brand-50 text-brand-ink; }
-  .pill-grey { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-sunken text-t1; }
-  .pill-violet { @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap bg-violet-50 text-violet; }
+  /* Хэлбэр нь ДУГУЙ биш, 4px — Excel-ийн нүд шиг тайван тэгш өнцөгт.
+     Өмнө нь `rounded-full`-ыг доор `4px !important`-оор дарж байв. */
+  .pill,
+  .pill-green, .pill-amber, .pill-red, .pill-blue, .pill-grey, .pill-violet {
+    @apply inline-flex items-center gap-1.5 text-[12px] font-semibold px-[9px] py-[4px] rounded-[4px] tracking-[.01em] whitespace-nowrap;
+  }
+  .pill-green { @apply bg-money-50 text-money; }
+  .pill-amber { @apply bg-warn-50 text-warn; }
+  .pill-red { @apply bg-danger-50 text-danger; }
+  .pill-blue { @apply bg-brand-50 text-brand-ink; }
+  .pill-grey { @apply bg-sunken text-t1; }
+  .pill-violet { @apply bg-violet-50 text-violet; }
   .inp {
-    @apply w-full border border-line rounded-2xl px-3.5 py-3 outline-none min-h-[46px] text-[14px] transition text-ink;
-    background: var(--color-cardbg);
+    @apply w-full border border-line rounded-[7px] px-3.5 py-3 outline-none min-h-[46px] text-[14px] transition text-ink;
+    background: #fff;
   }
   .inp:focus { border-color: var(--color-brand); box-shadow: 0 0 0 3px rgba(248, 135, 18, 0.18); background: #fff; }
   .lbl { @apply block text-[12px] font-semibold text-t1 mb-1.5; }
@@ -123,34 +142,62 @@ body::before {
      гурван талаас нь торгодог байсан. Хэмжээ 12px болж, зай нь хагасалж,
      өнгө нь 3.06:1-ээс 5.18:1 болов. */
   .th { @apply text-[12px] font-bold tracking-[.03em] uppercase text-t3 text-left px-3 py-2.5 border border-line-strong whitespace-nowrap; }
-  .td { @apply px-3 py-3.5 border border-line-strong text-[13.5px] align-middle; }
-
-  /* Sidebar */
-  .side-panel {
-    background: linear-gradient(180deg, var(--color-cardbg) 0%, var(--color-card2) 100%);
-    @apply border-r border-line;
+  .td { @apply px-3 py-3.5 border border-line-strong text-[14px] align-middle; }
+  /* Эрэмбэлдэг баганын толгой. Бичиг нь `.th`-ээсээ ЯГ хэвээр өвлөгдөнө —
+     зөвхөн дарагддаг болно. Босоо зай нь өөрийгөө сөрөг захаар нөхөж авдаг тул
+     толгойн өндөр хөдлөхгүй, гэхдээ хүрэх талбай 24px-ээс намхан болохгүй. */
+  .th-sort {
+    @apply inline-flex items-center gap-1.5 cursor-pointer;
+    font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
+    padding: 5px 0; margin: -5px 0;
   }
-  .nav-btn { @apply flex items-center gap-3 px-3 py-2.5 rounded-2xl font-medium text-sm mb-0.5 min-h-[42px] transition text-t1 relative; }
-  .nav-btn:hover { background: rgba(79, 184, 255, 0.06); color: var(--color-ink); }
+  .th-sort:hover { color: var(--color-ink); }
+
+  /* ---------- Sidebar ----------
+     Navy дэвсгэр дээрх цэсний мөр. Идэвхтэйг нь ЗҮҮН ЗАХЫН улбар зураас
+     заана (border-left) — цайвар үеийн brand-50 дэвсгэр энд хэрэггүй. */
+  .nav-btn {
+    @apply flex items-center rounded-2xl mb-0.5 relative;
+    gap: 12px;
+    min-height: 46px;
+    padding: 10px 12px;
+    color: rgba(255, 255, 255, 0.78);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    font-size: 14.5px;
+    font-weight: 500;
+    transition: color .18s, background .18s, transform .18s;
+  }
+  .nav-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.07); transform: translateX(2px); }
   .nav-btn.on {
-    background: linear-gradient(135deg, var(--color-brand-50) 0%, rgba(228, 242, 254, 0.4) 100%);
-    color: var(--color-ink);
+    color: #fff;
+    background: linear-gradient(90deg, rgba(255, 138, 11, 0.23), rgba(255, 138, 11, 0.03));
+    border-left-color: var(--jz-orange);
     font-weight: 600;
   }
-  /* Идэвхтэй цэсний заагчийг navy sidebar-т border-left-ээр өгнө (доор) */
+  /* Хэрэглэгчийн хайрцаг — sidebar-ийн ёроолд наалдана */
   .side-foot-card {
-    background: linear-gradient(135deg, #0b2545 0%, #1e3a6e 100%);
-    @apply rounded-[18px] text-white relative overflow-hidden;
+    @apply rounded-[8px] text-white relative overflow-hidden;
+    z-index: 1;
+    flex: none;
+    margin-top: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.075);
   }
+  /* Хоёр тусдаа дүрэм болж НИЙЛЭЭД санамсаргүй нэг хэлбэр гаргадаг байсныг
+     (цэнхэр бүдгэрүүлэг + navy хээ) яг тэр утгуудаараа нэг дүрэм болгов. */
   .side-foot-card::after {
     content: "";
     position: absolute;
+    inset: 0;
     width: 80px; height: 80px;
     border-radius: 50%;
-    background: #4fb8ff;
+    background-color: #4fb8ff;
+    background-image: url("./assets/jiguur-pattern-navy.jpg");
+    background-size: 120px auto;
     filter: blur(40px);
-    opacity: 0.4;
-    top: -20px; right: -20px;
+    opacity: 0.12;
+    mix-blend-mode: screen;
   }
 
   /* Card title dot */
@@ -174,13 +221,13 @@ body::before {
   .inline-val:focus-visible .pen { @apply opacity-100 text-brand-ink; }
 }
 
-/* Navy calc-receipt (live тооцооны хайрцаг) */
+/* Navy calc-receipt (live тооцооны хайрцаг).
+   Улбар гэрэлтэлт нь ::after-ийн бүдгэрүүлэг — дэвсгэрийн радиал давхарга нь
+   доор дарагдаж, огт зурагддаггүй байсан тул хассан. */
 .receipt {
-  background:
-    radial-gradient(500px 220px at 100% 0%, rgba(255, 138, 11, 0.14), transparent 60%),
-    linear-gradient(135deg, #19296b 0%, #253886 100%);
+  background: linear-gradient(140deg, var(--jz-blue-deep), var(--jz-blue));
   color: #fff;
-  border-radius: 18px;
+  border-radius: 9px;
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
@@ -214,6 +261,27 @@ body::before {
 .receipt-total > span { font-size: 13px; color: rgba(255, 255, 255, 0.88); }
 .receipt-total > b { font-size: 21px; font-weight: 700; letter-spacing: -0.02em; }
 
+/* ---------- Дахин татаж байх үе ----------
+   Сар/хамрах хүрээ солиход хуудсыг null болгож БҮТНЭЭР нь эргэлдэгчээр
+   солидог байв. Одоо өмнөх тоо байрандаа үлдэж бүдгэрнэ: Отгоо хаана байснаа
+   санаж, тоонууд солигдохыг нь хардаг. Цэг нь ажил ЯВЖ байгааг хэлнэ. */
+.refresh-body { transition: opacity .18s ease; }
+.refresh-body.is-busy { opacity: .5; pointer-events: none; }
+.refresh-note {
+  position: fixed; top: 78px; left: 50%; transform: translateX(-50%); z-index: 30;
+  display: flex; align-items: center; gap: 8px;
+  border-radius: 7px; padding: 7px 14px;
+  font-size: 12.5px; font-weight: 600; color: #fff;
+  background: var(--jz-blue-deep);
+  box-shadow: 0 10px 24px rgba(25, 41, 107, 0.22);
+}
+.refresh-note::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--jz-orange); animation: jz-pulse 1.2s ease-in-out infinite;
+}
+@keyframes jz-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .refresh-note::before { animation: none; } }
+
 /* Техникийн задаргаа (алдааны мессеж) — хаалттай байхдаа чимээгүй, нээгдэхэд
    зүүн тийш эгнэсэн код. Сумны эргэлт нь нээгдсэнийг хэлнэ. */
 .tech-details > summary { list-style: none; cursor: pointer; }
@@ -221,17 +289,17 @@ body::before {
 .tech-details > summary .chev { display: inline-block; transition: transform 0.18s ease; }
 .tech-details[open] > summary .chev { transform: rotate(90deg); }
 
-/* segment (Apple-style) */
-.segment { @apply inline-flex rounded-2xl p-[3px] gap-0.5 border border-line; background: var(--color-sunken); }
-.segment > button { @apply rounded-xl px-4 py-1.5 text-[13px] font-semibold min-h-9 transition text-t1; }
-.segment > button.on { background: var(--color-cardbg); color: var(--color-ink); box-shadow: 0 1px 0 rgba(11,37,69,.04), 0 1px 2px rgba(11,37,69,.04); }
+/* Сегмент — хажуу хажуугаа зогссон шүүлтүүрүүд (Apple-style биш, 5-7px ирмэг) */
+.segment { @apply inline-flex rounded-[7px] gap-0.5 border border-line; padding: 3px; background: #eff1f5; }
+.segment > button { @apply rounded-[5px] font-semibold transition text-t1; min-height: 34px; padding: 5px 14px; font-size: 12.5px; }
+.segment > button.on { background: var(--color-cardbg); color: var(--jz-blue); box-shadow: 0 2px 6px rgba(25,41,107,.1); }
 
 
 /* ============================================================
    Жигүүр Зам — precision operational interface
    Source assets: Primary logo + brand patterns supplied by client.
    ============================================================ */
-:root { --jz-blue: #253886; --jz-blue-deep: #19296b; --jz-orange: #ff8a0b; --jz-paper: #f5f6f8; --jz-mono: "IBM Plex Mono", monospace; --jz-display: "Manrope", "IBM Plex Sans", sans-serif;
+:root { --jz-blue: #253886; --jz-blue-deep: #19296b; --jz-orange: #ff8a0b; --jz-mono: "IBM Plex Mono", monospace; --jz-display: "Manrope", "IBM Plex Sans", sans-serif;
   /* ---- Хүрэлцэх талбайн шат (target size scale) ----
      lg  52px — хуруугаар дарах гол товч: тооллого, буцаалт, даргын ажлын дараалал
      md  44px — энгийн товч/талбар (btn-primary, btn-secondary, .inp)
@@ -242,9 +310,6 @@ body::before {
 .tap { min-height: var(--target); }
 /* Хүснэгтийн мөрөн дэх үйлдэл (PDF · Хавсралт · Төлөлт · Засах) */
 .btn-row { min-height: var(--target-sm); padding: 6px 11px; font-size: 12.5px; }
-html { font-feature-settings: "tnum" 1, "ss01" 1; }
-body { background: var(--jz-paper); color: var(--color-t1); letter-spacing: -0.012em; }
-body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-pattern-paper.jpg"); background-size: 330px auto; background-repeat: repeat; filter: saturate(.8); }
 .jz-app-shell { display: flex; min-height: 100vh; }
 .jz-sidebar { width: 262px; flex: 0 0 262px; display: flex; flex-direction: column; padding: 18px 13px 15px; color: #f9fbff; background: var(--jz-blue-deep); position: sticky; top: 0; height: 100vh; overflow: hidden; border-right: 1px solid rgba(255,255,255,.08); transition: width .22s cubic-bezier(.22,1,.36,1), flex-basis .22s cubic-bezier(.22,1,.36,1); }
 .jz-sidebar::before { content: ""; position: absolute; inset: auto -64px -86px auto; width: 275px; height: 275px; opacity: .15; background-image: url("./assets/jiguur-pattern-navy.jpg"); background-size: 170px auto; transform: rotate(-14deg); mix-blend-mode: screen; }
@@ -277,9 +342,6 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .nav-caption { position: relative; z-index: 1; color: rgba(255,255,255,.62); font: 11.5px var(--jz-mono); letter-spacing: .11em; margin: 0 11px 9px; }
 .jz-nav + .nav-caption { margin-top: 22px; }
 .jz-nav { position: relative; z-index: 1; display: grid; gap: 3px; }
-.nav-btn { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 10px 12px; color: rgba(255,255,255,.78); text-decoration: none; border-left: 2px solid transparent; font-size: 14.5px; font-weight: 500; transition: color .18s, background .18s, transform .18s; }
-.nav-btn:hover { color: #fff; background: rgba(255,255,255,.07); transform: translateX(2px); }
-.nav-btn.on { color: #fff; background: linear-gradient(90deg, rgba(255,138,11,.23), rgba(255,138,11,.03)); border-left-color: var(--jz-orange); font-weight: 600; }
 .nav-icon { width: 24px; text-align: center; color: #aab5e8; line-height: 1; font-size: 20px; flex: 0 0 24px; }
 .nav-btn.on .nav-icon { color: var(--jz-orange); }
 
@@ -290,12 +352,10 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .jz-sidebar.collapsed .brand-plate { min-height: 56px; padding: 8px; margin-bottom: 16px; }
 .jz-sidebar.collapsed .nav-btn { justify-content: center; padding: 11px 4px; gap: 0; }
 .jz-sidebar.collapsed .nav-btn:hover { transform: none; }
-.jz-sidebar.collapsed .side-foot-card { padding: 9px !important; }
+.jz-sidebar.collapsed .side-foot-card { padding: 9px; }
 .jz-sidebar.collapsed .side-foot-card > div:first-child { justify-content: center; }
 /* Хураасан горимд 🔑/⎋ нэрний хамт алга болдог байсныг баганаар өрж үлдээв */
 .jz-sidebar.collapsed .side-foot-actions { flex-direction: column; align-items: center; margin-top: 6px; }
-.side-foot-card { position: relative; z-index: 1; flex: none; margin-top: 12px; color: #fff; border-radius: 8px !important; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.075) !important; overflow: hidden; }
-.side-foot-card::after { content: ""; position: absolute; inset: 0; background-image: url("./assets/jiguur-pattern-navy.jpg"); background-size: 120px auto; opacity: .12; mix-blend-mode: screen; }
 /* Нэрийн товчлол — улбар дээрх navy. #253886 нь 4.64:1 (босгын ирмэг дээр);
    товчтойгоо нэг ижил гүн navy болгоход 5.66:1 болж, брэнд хослол хэвээрээ. */
 .user-monogram { width: 40px; height: 40px; border-radius: 6px; flex: 0 0 40px; display: grid; place-items: center; color: var(--jz-blue-deep); background: var(--jz-orange); font: 600 12.5px var(--jz-mono); position: relative; z-index: 1; }
@@ -314,20 +374,6 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .jz-topbar-actions { display: flex; align-items: center; gap: 15px; margin-left: auto; }
 .top-pulse { width: 8px; height: 8px; background: var(--color-money); border-radius: 50%; box-shadow: 0 0 0 4px var(--color-money-50); }
 .jz-content { max-width: 1560px; margin: 0 auto; padding: 35px 42px 64px; }
-.segment { border-radius: 7px; padding: 3px; border-color: var(--color-line); background: #eff1f5; }
-.segment > button { border-radius: 5px; min-height: 34px; padding: 5px 14px; font-size: 12.5px; }
-.segment > button.on { color: var(--jz-blue); box-shadow: 0 2px 6px rgba(25,41,107,.1); }
-.card { border-radius: 9px !important; border-color: var(--color-line); background: rgba(255,255,255,.92); box-shadow: 0 6px 18px rgba(28,43,93,.045), 0 1px 0 rgba(28,43,93,.035); }
-.card:hover { box-shadow: 0 12px 27px rgba(28,43,93,.075), 0 1px 0 rgba(28,43,93,.035); }
-.btn-primary { border-radius: 7px !important; background: var(--jz-orange) !important; box-shadow: 0 8px 18px rgba(255,138,11,.22) !important; }
-.btn-primary:hover { background: #e87900 !important; }
-.btn-secondary { border-radius: 7px !important; }
-.pill, .pill-green, .pill-amber, .pill-red, .pill-blue, .pill-grey, .pill-violet { border-radius: 4px !important; font-size: 12px !important; letter-spacing: .01em; padding: 4px 9px; }
-.td { font-size: 14px; }
-.th { font-size: 12px; letter-spacing: .03em; }
-.inp { border-radius: 7px !important; background: #fff; }
-.receipt { border-radius: 9px; background: linear-gradient(140deg, var(--jz-blue-deep), var(--jz-blue)) !important; }
-
 /* Dashboard — a branded control ledger rather than generic KPI cards. */
 .dashboard-header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 22px; flex-wrap: wrap; }
 /* Хуудасны замын мөр (kicker) — чимэглэл боловч уншигдах ёстой. Улбар шар нь
@@ -346,7 +392,7 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .command-hero [class~="text-white/80"] { color: rgba(255,255,255,.82); font: 12px var(--jz-mono); letter-spacing: .035em; }
 .command-hero [class~="text-[28px]"] { font: 700 34px/1.1 var(--jz-display); letter-spacing: -.045em; }
 .command-hero .pill { border: 1px solid rgba(255,255,255,.16); }
-.command-metric { padding: 21px !important; position: relative; overflow: hidden; border: 1px solid var(--color-line); background: rgba(255,255,255,.89); }
+.command-metric { padding: 21px; position: relative; overflow: hidden; border: 1px solid var(--color-line); background: rgba(255,255,255,.89); }
 .command-metric::before { content: ""; position: absolute; top: 0; left: 0; width: 27px; border-top: 2px solid var(--jz-orange); }
 /* KPI-ийн нэр — тухайн тоо ЮУ болохыг хэлдэг тул мэдээлэл. 11px байсныг
    12px болгож, том үсгийн өргөн зайг багасгав. */
@@ -354,7 +400,7 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .command-metric [class~="text-[28px]"], .command-metrics .card [class~="text-[28px]"] { font: 700 30px/1.15 var(--jz-display); letter-spacing: -.04em; }
 .dashboard-analysis { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, .9fr); gap: 13px; }
 .dashboard-operations { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 13px; margin-top: 13px; }
-.dashboard-analysis .card, .dashboard-operations .card { padding: 21px !important; }
+.dashboard-analysis .card, .dashboard-operations .card { padding: 21px; }
 .dashboard-analysis h3, .dashboard-operations h3 { color: var(--jz-blue-deep); }
 .dashboard-operations .card { border-top: 2px solid transparent; }
 .dashboard-operations .card:nth-child(1) { border-top-color: var(--jz-orange); }
@@ -364,7 +410,7 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 /* Үйлдвэрийн даргын ажлын дараалал — түүний нүүр хуудас энэ хоёр хайрцгаар эхэлнэ.
    Санхүүгийн блокууд түүнд харагдахгүй тул дэлгэцийн эхний дэлгэцэнд ажил нь багтана. */
 .work-queue { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin-bottom: 13px; }
-.work-queue .card { padding: 21px !important; border-top: 2px solid transparent; }
+.work-queue .card { padding: 21px; border-top: 2px solid transparent; }
 .work-queue .card:nth-child(1) { border-top-color: var(--jz-orange); }
 .work-queue .card:nth-child(2) { border-top-color: var(--jz-blue); }
 .work-queue h3 { color: var(--jz-blue-deep); }
@@ -379,7 +425,7 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .login-stage { min-height: 100vh; display: grid; place-items: center; position: relative; background: linear-gradient(135deg, #f5f6f8, #e9ecf3); overflow: hidden; }
 .login-stage::before { content: ""; position: absolute; inset: 0; background: url("./assets/jiguur-pattern-paper.jpg") center / 255px auto repeat; opacity: .075; }
 .login-stage::after { content: ""; position: absolute; width: min(54vw, 680px); height: 100%; right: -22vw; top: 0; background: var(--jz-blue-deep) url("./assets/jiguur-pattern-navy.jpg") center / 170px auto repeat; opacity: .98; transform: skewX(-11deg); box-shadow: -28px 0 80px rgba(25,41,107,.18); }
-.login-card { position: relative; z-index: 1; border: 1px solid #e2e5ec; background: rgba(255,255,255,.95); box-shadow: 0 28px 70px rgba(25,41,107,.15); border-radius: 8px !important; }
+.login-card { position: relative; z-index: 1; border: 1px solid #e2e5ec; background: rgba(255,255,255,.95); box-shadow: 0 28px 70px rgba(25,41,107,.15); border-radius: 8px; }
 .login-logo { display: block; width: 224px; height: auto; max-height: 58px; object-fit: contain; object-position: left center; }
 .login-rule { height: 2px; width: 40px; background: var(--jz-orange); margin: 16px 0 13px; }
 .login-title { color: var(--jz-blue-deep); font: 700 22px/1.2 var(--jz-display); letter-spacing: -.035em; }
@@ -410,6 +456,10 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .btn-ghost:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 /* Хүснэгтийн мөрөн дэх нягт үйлдэл — зэргэлдээ нүд рүү халихгүйгээр */
 .btn-row:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.th-sort:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+/* Бүтэн мөр дарагддаг бол Tab-аар түүн дээр зогсоно — бөгж нь мөрийн ДОТОГШ
+   татагдана, эс бөгөөс хүснэгтийн ирмэгээр таслагдана. */
+tr[tabindex]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 /* Дарж заслаг талбар: доогуураа тасархай зураастай тул бөгж нь ойрхон суух ёстой */
 .inline-val:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .segment > button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
@@ -464,7 +514,7 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
   .jz-sidebar.collapsed .nav-label, .jz-sidebar.collapsed .nav-caption { display: block; }
   .jz-sidebar .nav-btn, .jz-sidebar.collapsed .nav-btn { justify-content: flex-start; padding: 11px 12px; gap: 12px; }
   .jz-sidebar .brand-plate, .jz-sidebar.collapsed .brand-plate { width: auto; min-height: 66px; margin: 0 3px 18px; padding: 10px 14px; }
-  .jz-sidebar .side-foot-card, .jz-sidebar.collapsed .side-foot-card { padding: 12px !important; }
+  .jz-sidebar .side-foot-card, .jz-sidebar.collapsed .side-foot-card { padding: 12px; }
   /* Хураасан төлөвтэй хэрэглэгч drawer нээхэд бүтэн хэлбэрээрээ харагдана */
   .jz-sidebar.collapsed .side-foot-card > div:first-child { justify-content: flex-start; }
   .jz-sidebar.collapsed .side-foot-actions { flex-direction: row; align-items: stretch; margin-top: 8px; }
@@ -479,6 +529,7 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
   /* Явцуу дэлгэц ч гэсэн мэдээллийн доод хязгаараас доош ордоггүй — 9px
      байсныг 11px болгож, зайг нь хасаж багтаав (… -ээр таслагдана). */
   .jz-location { font-size: 11px; letter-spacing: .02em; }
+  .refresh-note { top: 69px; }   /* topbar 66 → 57px болоход дагана */
   .jz-topbar-actions { margin-left: auto; }
   .jz-content { padding: 22px 14px 45px; }
   .dashboard-header { align-items: start; margin-bottom: 18px; }

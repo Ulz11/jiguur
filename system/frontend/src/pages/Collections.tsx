@@ -4,6 +4,7 @@ import { api, money, sayaFmt } from "../api";
 import { Spinner, Modal, useToast, Empty } from "../ui";
 import { parseMoney } from "../lib/num";
 import { useLive } from "../lib/live";
+import { nextSort, ariaSort, sortByNumber, type SortState } from "../lib/sort";
 
 const today = () => new Date().toISOString().slice(0, 10);
 /** «9911-2233» → «tel:99112233» — зай, зураас утасны програмыг төөрөгдүүлнэ. */
@@ -11,10 +12,15 @@ const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;
 const KINDS: [string, string][] = [["call", "Утсаар"], ["visit", "Уулзсан"],
                                    ["message", "Мессеж"], ["other", "Бусад"]];
 
+type SortKey = "overdue" | "oldest";
+
 export default function Collections() {
   const [d, setD] = useState<any>(null);
   const [note, setNote] = useState<any>(null);
   const [filter, setFilter] = useState("all");
+  /* Анхны эрэмбэ = хамгийн их хэтэрсэн нь дээрээ. Энэ жагсаалт «хэнд эхэлж
+     залгах вэ» гэсэн нэг асуултад хариулдаг тул эрэмбэ нь ХООСОН байж болохгүй. */
+  const [sort, setSort] = useState<SortState<SortKey>>({ key: "overdue", dir: "desc" });
   const toast = useToast();
   const nav = useNavigate();
 
@@ -32,7 +38,25 @@ export default function Collections() {
     ["old", "90+ хоног", (r) => r.oldest_days >= 90],
   ];
   const test = FILTERS.find((f) => f[0] === filter)![2];
-  const rows = d.rows.filter(test);
+  const rows = sortByNumber(
+    d.rows.filter(test),
+    (r: any) => (sort.key === "overdue" ? r.overdue : r.oldest_days),
+    sort.dir);
+  const SORT_ARROW = sort.dir === "desc" ? "↓" : "↑";
+  /** Эрэмбэлдэг баганын толгой — дарагдана, ямар эрэмбэтэй байгаагаа хэлнэ. */
+  const sortTh = (key: SortKey, label: string, right?: boolean) => (
+    <th className={`th ${right ? "text-right" : ""}`} aria-sort={ariaSort(sort, key)}>
+      {/* Сум нь ЧИМЭГ биш — энэ багана эрэмбэлэгддэг гэдгийг хэлдэг тайван дохио.
+          Идэвхтэй үед брэнд өнгөөр чиглэлээ, идэвхгүй үед бүдэг ↕ хэлбэрээр. */}
+      <button className="th-sort" onClick={() => setSort(nextSort(sort, key))}
+              aria-label={`${label} — эрэмбэлэх`}>
+        {label}
+        <span className={sort.key === key ? "text-brand-ink" : "text-t3"} aria-hidden="true">
+          {sort.key === key ? SORT_ARROW : "↕"}
+        </span>
+      </button>
+    </th>
+  );
 
   return (
     <div>
@@ -84,9 +108,9 @@ export default function Collections() {
         <table className="w-full min-w-[900px]">
           <thead><tr>
             <th className="th">Харилцагч</th>
-            <th className="th text-right">Хэтэрсэн</th>
+            {sortTh("overdue", "Хэтэрсэн", true)}
             <th className="th text-right">Алданги</th>
-            <th className="th">Хамгийн хуучин</th>
+            {sortTh("oldest", "Хамгийн хуучин")}
             <th className="th">Сүүлд холбогдсон</th>
             <th className="th">Амлалт</th>
             <th className="th"></th>
@@ -142,7 +166,10 @@ export default function Collections() {
           </tbody>
         </table>
         {rows.length === 0 && (
-          <Empty title="Илэрц алга" sub="Энэ шүүлтүүрт тохирох харилцагч байхгүй. 🎉" />
+          <Empty title="Илэрц алга" sub="Энэ шүүлтүүрт тохирох харилцагч байхгүй. 🎉"
+                 action={filter !== "all"
+                   ? { label: "Бүгдийг харах", onClick: () => setFilter("all") }
+                   : undefined} />
         )}
       </div>
 

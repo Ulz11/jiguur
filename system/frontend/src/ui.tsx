@@ -236,18 +236,53 @@ export function TypePill({ type }: { type: string }) {
     : <span className="pill-violet">Худалдаа</span>;
 }
 
-export function Empty({ title, sub }: { title: string; sub?: string }) {
+/** Хоосон төлөв. Шүүлтүүрээс болж хоосорсон бол энэ нь ГАРЦГҮЙ ХАНА байх
+ *  ёсгүй — `action` өгвөл буцаж гарах ганц товч гарч ирнэ («Бүгдийг харах»). */
+export function Empty({ title, sub, action }: {
+  title: string;
+  sub?: string;
+  action?: { label: string; onClick: () => void };
+}) {
   return (
     <div className="py-12 text-center">
       <div className="w-16 h-16 mx-auto mb-3.5 rounded-[20px] bg-brand-50 grid place-items-center text-brand-ink text-2xl">▦</div>
       <h3 className="font-bold text-ink text-[15px] mb-1">{title}</h3>
       {sub && <p className="text-t2 text-[13px] max-w-sm mx-auto">{sub}</p>}
+      {action && (
+        <button className="btn-secondary mt-4" onClick={action.onClick}>{action.label}</button>
+      )}
     </div>
   );
 }
 
 export function Spinner() {
   return <div className="py-16 text-center text-t3 text-sm animate-pulse">Ачаалж байна…</div>;
+}
+
+/* ---------- Дахин татаж байх үе ----------
+   Сар/хамрах хүрээ солиход хуудсыг ЦООХОР ХООСОН болгож, эргэлдэгч тавьдаг
+   байв — Отгоо юу харж байснаа алдаж, шинэ тоо ирэхийг хоосон дэлгэц ширтэж
+   хүлээнэ. Өмнөх тоо байрандаа үлдэж, зөвхөн бүдгэрч, дарагдахаа болино:
+   хаана байсныг санаж, солигдохыг нь хардаг. */
+export function Refreshing({ busy, children }: { busy: boolean; children: ReactNode }) {
+  /* Хариу 40ms-д ирэхэд бүдгэрүүлэг ЦАВЧИЛЖ өнгөрөх нь тайвшруулахын оронд
+     цочроодог. Тиймээс 180ms-ээс удаж байж л мэдэгдэнэ — хурдан шинэчлэлт
+     чимээгүй, удаан шинэчлэлт тайлбартай. */
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (!busy) { setShow(false); return; }
+    const t = window.setTimeout(() => setShow(true), 180);
+    return () => window.clearTimeout(t);
+  }, [busy]);
+  return (
+    <>
+      {show && <div className="refresh-note" role="status">Шинэчилж байна…</div>}
+      <div className={show ? "refresh-body is-busy" : "refresh-body"}
+           {...(show ? { "aria-busy": true } : {})}>
+        {children}
+      </div>
+    </>
+  );
 }
 
 /* ---------- Inline editor (2 алхамт баталгаажуулалттай) ---------- */
@@ -318,9 +353,16 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   );
 }
 
-/** Явцын зураас. Дэргэд нь тоо/үг байвал энэ бол зөвхөн ЧИМЭГ — давхардуулж
- *  уншуулахгүйн тулд нуугдана. Ганцаараа зогсож байвал (ж: агуулахын ашиглалт)
- *  `label` өгч НЭРЛЭ — эс бөгөөс утга нь зөвхөн өнгө/уртаараа үлдэнэ. */
+/** Явцын зураас. Дүрэм нь ЗУРААС ӨӨРӨӨ ЮУ ХЭЛЖ БАЙНА гэдгээр шийдэгдэнэ:
+ *
+ *  · Зураас нь дэргэдээ бүтэн үг+тоотой бол (ж: Гэрээний цикл «29/30 · хэтэрсэн»)
+ *    энэ бол ЧИМЭГ — `label` бүү өг, давхардуулж уншуулахгүй.
+ *  · Зураас нь хажуудаа байхгүй ямар нэг зүйл авч явдаг бол — ганцаараа зогсох
+ *    (агуулахын ашиглалт), 100%-ийн шатыг зурах (KPI), эсвэл хамгийн том
+ *    хувинтай харьцуулах (авлагын насжилт) — `label` өгч НЭРЛЭ.
+ *
+ *  Аль ч тохиолдолд ӨНГӨ дангаараа утга зөөж болохгүй: улаан/улбар/ногоон
+ *  ялгаа нь дэргэдээ ҮГТЭЙ явна (Аналитикийн «бага/дунд/хэвийн»). */
 export function Prog({ pct, color, label }: { pct: number; color?: string; label?: string }) {
   return (
     <div className="h-[7px] rounded-full bg-sunken overflow-hidden"

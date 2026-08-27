@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, fmt, sayaFmt, user } from "../api";
-import { Spinner, Prog, useToast, ConfirmModal } from "../ui";
+import { Spinner, Prog, useToast, ConfirmModal, Refreshing } from "../ui";
 import { useScope } from "../App";
 import { useLive } from "../lib/live";
+import { rowClickProps } from "../lib/rowClick";
 import RevChart from "../components/RevChart";
 
 /** Даргад хамаарах мэдэгдлүүд — ачилт, гэрээний хугацаа. Нэхэмжлэлийн
@@ -13,6 +14,7 @@ const FACTORY_NOTE_KINDS = new Set(["shipment", "ending", "expired"]);
 export default function Dashboard() {
   const { scope } = useScope();
   const [d, setD] = useState<any>(null);
+  const [busyScope, setBusyScope] = useState(false);
   const [outQueue, setOutQueue] = useState<any[] | null>(null); // гадаа материалтай гэрээнүүд
   const [busy, setBusy] = useState<number | null>(null);
   const [ask, setAsk] = useState<any>(null);          // баталгаажуулах гэж буй ачилт
@@ -32,18 +34,24 @@ export default function Dashboard() {
         .sort((a, b) => b.qty_out - a.qty_out)))
       .catch(() => setOutQueue([]));   // дараалал татагдаагүй нь ачилтын ажлыг зогсоох ёсгүй
   }
+  /* Түрээс/Худалдаа солиход самбарыг null болгож БҮТНЭЭР нь нурааж байв —
+     нэг тоог нөгөөтэй нь харьцуулах гэж дарсан хүн хоосон дэлгэц хардаг.
+     Одоо өмнөх тоо байрандаа үлдэж, зөвхөн бүдгэрнэ. */
   const load = () => {
     loadQueue();
-    return api(`/api/dashboard?scope=${scope}`).then(setD).catch((e) => toast(e.message, "err"));
+    setBusyScope(true);
+    return api(`/api/dashboard?scope=${scope}`).then(setD)
+      .catch((e) => toast(e.message, "err"))
+      .finally(() => setBusyScope(false));
   };
-  /** Фонд шинэчлэх — эргэлдэгч гаргахгүй, алдааг чимээгүй залгина. */
+  /** Фонд шинэчлэх — бүдгэрүүлэг ч гаргахгүй, алдааг чимээгүй залгина. */
   const refresh = () => {
     loadQueue();
     return api(`/api/dashboard?scope=${scope}`).then(setD).catch(() => {});
   };
-  useLive((bg) => { if (bg) refresh(); else { setD(null); load(); } }, [scope]);
+  useLive((bg) => (bg ? refresh() : load()), [scope]);
 
-  if (!d) return <Spinner />;
+  if (!d) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
   const k = d.kpi;
   const agingMax = Math.max(...d.aging.map((a: any) => a.amount), 1);
   const agingColors = ["#1F8B69", "#253886", "#F88712", "#C9363B"];
@@ -88,8 +96,10 @@ export default function Dashboard() {
       {d.pending_shipments.map((p: any) => (
         <div key={p.id} className={`flex gap-3 border-b border-sunken last:border-0 ${
               touch ? "flex-wrap items-center py-3.5" : "items-center py-3"}`}>
+          {/* Мөр дарагддаг — гараар ч дарагдана (Tab → Enter) */}
           <div className={`min-w-0 cursor-pointer ${touch ? "flex-1 min-w-[170px]" : ""}`}
-               onClick={() => nav(`/contracts/${p.contract_id}`)}>
+               {...rowClickProps(() => nav(`/contracts/${p.contract_id}`),
+                                 `Гэрээ №${p.contract_no} · ${p.client} — нээх`, "link")}>
             <b className={`text-ink font-semibold block ${touch ? "text-[15.5px] leading-tight" : "text-[13.5px]"}`}>
               {p.client} — №{p.contract_no}
             </b>
@@ -127,7 +137,8 @@ export default function Dashboard() {
       {outQueue === null && <p className="text-t3 text-sm py-4">Ачаалж байна…</p>}
       {outQueue?.length === 0 && <p className="text-t3 text-sm py-4">Гадаа байгаа материал алга.</p>}
       {outQueue?.map((c: any) => (
-        <button key={c.id} className="work-row" onClick={() => nav(`/contracts/${c.id}`)}>
+        <button key={c.id} className="work-row" onClick={() => nav(`/contracts/${c.id}`)}
+                aria-label={`Гэрээ №${c.no} · ${c.client} — ${fmt(c.qty_out)}ш гадаа, нээх`}>
           <div className="min-w-0">
             <b className="text-[15px] text-ink font-semibold block truncate">{c.client}</b>
             <span className="text-[12.5px] text-t2">№{c.no} · {c.start_date}-с</span>
@@ -146,8 +157,14 @@ export default function Dashboard() {
       <h3 className="font-bold text-ink text-[15.5px] mb-3">Мэдэгдэл</h3>
       {notes.length === 0 && <p className="text-t3 text-sm py-4">Одоогоор мэдэгдэл алга. 🙌</p>}
       {notes.map((n: any, i: number) => (
-        <div key={i} onClick={() => n.contract_id && nav(`/contracts/${n.contract_id}`)}
-             className="flex gap-3 py-3 border-b border-sunken last:border-0 items-start cursor-pointer hover:bg-canvas -mx-2 px-2 rounded-lg transition">
+        /* Гэрээ рүү аваачдаг мэдэгдэл нь гараар ч дарагдана; аваачдаггүй
+           мэдэгдэл фокус татахгүй — хоосон зогсоол үлдээхгүй. */
+        <div key={i}
+             {...(n.contract_id
+               ? rowClickProps(() => nav(`/contracts/${n.contract_id}`), `${n.title} — гэрээг нээх`, "link")
+               : {})}
+             className={`flex gap-3 py-3 border-b border-sunken last:border-0 items-start -mx-2 px-2 rounded-lg transition ${
+               n.contract_id ? "cursor-pointer hover:bg-canvas" : ""}`}>
           <div className={`w-8 h-8 rounded-[10px] grid place-items-center shrink-0 text-sm ${
             n.level === "danger" ? "bg-danger-50 text-danger" :
             n.level === "warn" ? "bg-warn-50 text-warn" : "bg-brand-50 text-brand-ink"}`}>
@@ -184,7 +201,7 @@ export default function Dashboard() {
      Авлага, орлогын график, насжилт, зээл нь түүний ажил биш — санхүүгийн
      блокуудыг огт үзүүлэхгүй. Эхлээд ачилт, дараа нь гадаа байгаа материал. */
   if (isFactory) return (
-    <div>
+    <Refreshing busy={busyScope}>
       <div className="dashboard-header">
         <div>
           <div className="dashboard-kicker">ӨДРИЙН АЖИЛ <span>•</span> АМЬД</div>
@@ -198,11 +215,11 @@ export default function Dashboard() {
       </div>
       {notificationsCard}
       {confirmDialog}
-    </div>
+    </Refreshing>
   );
 
   return (
-    <div>
+    <Refreshing busy={busyScope}>
       <div className="dashboard-header">
         <div>
           <div className="dashboard-kicker">УДИРДЛАГЫН ТОЙМ <span>•</span> АМЬД</div>
@@ -247,7 +264,7 @@ export default function Dashboard() {
           <div className="card p-5">
             <div className="text-[12.5px] text-t2 font-medium mb-2">Нөөц түрээсэнд</div>
             <div className="text-[28px] font-extrabold text-ink tabular-nums leading-tight">{k.utilization}<span className="text-sm text-t2 font-semibold"> %</span></div>
-            <div className="mt-3"><Prog pct={k.utilization} color="#22C55E" /></div>
+            <div className="mt-3"><Prog pct={k.utilization} label={`Нөөц түрээсэнд ${k.utilization}%`} color="#22C55E" /></div>
           </div>
         )}
       </div>
@@ -266,7 +283,10 @@ export default function Dashboard() {
           {d.aging.map((a: any, i: number) => (
             <div key={a.label} className="flex items-center gap-3 mb-3">
               <span className="w-[84px] text-[12.5px] text-t2 font-medium">{a.label}</span>
-              <div className="flex-1"><Prog pct={(a.amount / agingMax) * 100} color={agingColors[i]} /></div>
+              {/* Зураасны урт нь хамгийн том хувингийн ХЭД дүйцэхийг хэлдэг —
+                  тэр харьцаа хаана ч бичээстэй байгаагүй. */}
+              <div className="flex-1"><Prog pct={(a.amount / agingMax) * 100} color={agingColors[i]}
+                     label={`${a.label} — ${sayaFmt(a.amount)}₮, хамгийн том хувингийн ${Math.round((a.amount / agingMax) * 100)}%`} /></div>
               <b className="w-[80px] text-right tabular-nums text-[13px]">{sayaFmt(a.amount)}</b>
             </div>
           ))}
@@ -310,6 +330,6 @@ export default function Dashboard() {
       </div>
 
       {confirmDialog}
-    </div>
+    </Refreshing>
   );
 }

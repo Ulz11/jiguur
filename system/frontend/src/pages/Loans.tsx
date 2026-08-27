@@ -2,6 +2,7 @@ import { Fragment, useEffect, useId, useState } from "react";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, Modal, useToast, Empty, InlineEdit, Receipt, ConfirmModal } from "../ui";
 import { parseMoney } from "../lib/num";
+import { rowClickProps } from "../lib/rowClick";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const kindLabel = (k: string) => (k === "bank" ? "Банк" : k === "private" ? "Хувь" : "Кредит");
@@ -90,7 +91,10 @@ export default function Loans() {
             {d.loans.map((l: any) => (
               <Fragment key={l.id}>
                 <tr className="cursor-pointer hover:bg-canvas transition"
-                    onClick={() => setOpen(open === l.id ? null : l.id)}>
+                    aria-expanded={open === l.id}
+                    {...rowClickProps(() => setOpen(open === l.id ? null : l.id),
+                                      `${l.name} — төлөлтийн түүхийг ${open === l.id ? "хаах" : "нээх"}`,
+                                      "row")}>
                   <td className="td" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-1.5">
                       <InlineEdit value={l.name} width="w-44" confirmText="Нэр солих уу?"
