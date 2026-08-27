@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, money, sayaFmt, openPdf, fmt, user } from "../api";
-import { Spinner, StatePill, TypePill, Prog, Modal, useToast, InlineEdit, Receipt } from "../ui";
+import { Spinner, StatePill, TypePill, Prog, Modal, useToast, InlineEdit, Receipt, ConfirmModal } from "../ui";
 import { allocationPreview } from "../lib/alloc";
+import { parseMoney } from "../lib/num";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -10,7 +11,7 @@ export default function ContractDetail() {
   const { id } = useParams();
   const [d, setD] = useState<any>(null);
   const [grades, setGrades] = useState<any[]>([]);
-  const [modal, setModal] = useState<"" | "return" | "add" | "pay" | "extend" | "deposit">("");
+  const [modal, setModal] = useState<"" | "return" | "add" | "pay" | "extend" | "deposit" | "close">("");
   const [openMv, setOpenMv] = useState<number | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const toast = useToast();
@@ -19,15 +20,27 @@ export default function ContractDetail() {
   const load = () => api(`/api/contracts/${id}`).then(setD).catch((e) => toast(e.message, "err"));
   useEffect(() => { load(); api("/api/grades").then(setGrades); }, [id]);
 
+  /* InlineEdit-ийн хадгалалт: алдааг toast-оор гаргаад ДАХИН шиднэ. Тэгснээр
+     талбар засварын горимд үлдэж, бичсэн утга алдагдахгүй — Loans.tsx-ийн
+     doPatch-тай яг ижил зан төлөв. Барихгүй бол алдаа чимээгүй залгигдана. */
+  async function savePatch(path: string, body: any, okMsg: string) {
+    try {
+      await api(path, { method: "PATCH", body: JSON.stringify(body) });
+      toast(okMsg); load();
+    } catch (e: any) { toast(e.message, "err"); throw e; }
+  }
+
   /* Тооцоог хөндөх засвар: сервер "дахин бодогдоно" гэвэл эхлээд зөрүүг харуулна. */
   async function gatedPatch(path: string, body: any, okMsg: string) {
-    const r = await api(path, { method: "PATCH", body: JSON.stringify(body) });
-    if (r?.rebuild_required) {
-      setPending({ path, body, okMsg, diffs: r.diffs || [], warnings: r.warnings || [] });
-      return;
-    }
-    toast(okMsg);
-    load();
+    try {
+      const r = await api(path, { method: "PATCH", body: JSON.stringify(body) });
+      if (r?.rebuild_required) {
+        setPending({ path, body, okMsg, diffs: r.diffs || [], warnings: r.warnings || [] });
+        return;
+      }
+      toast(okMsg);
+      load();
+    } catch (e: any) { toast(e.message, "err"); throw e; }
   }
 
   if (!d) return <Spinner />;
@@ -59,29 +72,20 @@ export default function ContractDetail() {
                 <span className="inline-flex items-center gap-1.5">Дуусах:
                   <InlineEdit type="date" value={d.end_date || ""} display={d.end_date || "тодорхойгүй"}
                     confirmText="Огноо солих уу?" width="w-36"
-                    onSave={async (v) => {
-                      await api(`/api/contracts/${d.id}`, { method: "PATCH",
-                        body: JSON.stringify(v ? { end_date: v } : { clear_end_date: true }) });
-                      toast("Дуусах огноо шинэчлэгдлээ"); load();
-                    }} />
+                    onSave={(v) => savePatch(`/api/contracts/${d.id}`,
+                      v ? { end_date: v } : { clear_end_date: true }, "Дуусах огноо шинэчлэгдлээ")} />
                 </span>
                 <span className="inline-flex items-center gap-1.5">Алданги:
                   <InlineEdit type="number" value={d.penalty_percent} suffix="%/хоног" width="w-20" right
                     confirmText="Алданги солих уу?"
-                    onSave={async (v) => {
-                      await api(`/api/contracts/${d.id}`, { method: "PATCH",
-                        body: JSON.stringify({ penalty_percent: parseFloat(v) || 0 }) });
-                      toast("Алдангийн хувь шинэчлэгдлээ"); load();
-                    }} />
+                    onSave={(v) => savePatch(`/api/contracts/${d.id}`,
+                      { penalty_percent: parseMoney(v) }, "Алдангийн хувь шинэчлэгдлээ")} />
                 </span>
                 <span className="inline-flex items-center gap-1.5">Барьцаа:
                   <InlineEdit type="number" value={d.deposit} display={d.deposit > 0 ? sayaFmt(d.deposit) + "₮" : "—"}
                     confirmText="Барьцаа солих уу?" width="w-28" right
-                    onSave={async (v) => {
-                      await api(`/api/contracts/${d.id}`, { method: "PATCH",
-                        body: JSON.stringify({ deposit: parseFloat(v.replace(/,/g, "")) || 0 }) });
-                      toast("Барьцаа шинэчлэгдлээ"); load();
-                    }} />
+                    onSave={(v) => savePatch(`/api/contracts/${d.id}`,
+                      { deposit: parseMoney(v) }, "Барьцаа шинэчлэгдлээ")} />
                 </span>
               </>
             ) : (
@@ -92,10 +96,7 @@ export default function ContractDetail() {
             <div className="text-t2 text-[13px] mt-1.5 inline-flex items-center gap-1.5">Тэмдэглэл:
               <InlineEdit value={d.note} display={d.note || "нэмэх…"} width="w-72"
                 confirmText="Хадгалах уу?"
-                onSave={async (v) => {
-                  await api(`/api/contracts/${d.id}`, { method: "PATCH", body: JSON.stringify({ note: v }) });
-                  toast("Тэмдэглэл хадгалагдлаа"); load();
-                }} />
+                onSave={(v) => savePatch(`/api/contracts/${d.id}`, { note: v }, "Тэмдэглэл хадгалагдлаа")} />
             </div>
           )}
         </div>
@@ -165,14 +166,13 @@ export default function ContractDetail() {
                           value={d.type === "rent" ? it.daily_rate : it.unit_price}
                           display={fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}
                           confirmText="Энэ циклээс шинэ үнээр?"
-                          onSave={async (v) => {
-                            const num = parseFloat(v.replace(/,/g, "")) || 0;
-                            await api(`/api/contracts/${d.id}/items`, { method: "PATCH",
-                              body: JSON.stringify({ material_id: it.material_id, grade_id: it.grade_id,
+                          onSave={(v) => {
+                            const num = parseMoney(v);
+                            return savePatch(`/api/contracts/${d.id}/items`,
+                              { material_id: it.material_id, grade_id: it.grade_id,
                                 old_rate: d.type === "rent" ? it.daily_rate : it.unit_price,
-                                ...(d.type === "rent" ? { daily_rate: num } : { unit_price: num }) }) });
-                            toast("Үнэ шинэчлэгдлээ — одоогийн циклээс шинэ утгаар бодогдоно");
-                            load();
+                                ...(d.type === "rent" ? { daily_rate: num } : { unit_price: num }) },
+                              "Үнэ шинэчлэгдлээ — одоогийн циклээс шинэ утгаар бодогдоно");
                           }} />
                       ) : fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}
                     </td>
@@ -286,7 +286,7 @@ export default function ContractDetail() {
                               <InlineEdit type="number" right width="w-20" value={l.qty} display={fmt(l.qty)}
                                 confirmText="Тоо солих уу?"
                                 onSave={(v) => gatedPatch(`/api/movement-lines/${l.id}`,
-                                                          { qty: parseFloat(v.replace(/,/g, "")) || 0 },
+                                                          { qty: parseMoney(v) },
                                                           "Хөдөлгөөний тоо шинэчлэгдлээ")} />
                             ) : fmt(l.qty)}
                           </span>
@@ -297,7 +297,7 @@ export default function ContractDetail() {
                                   display={l.rate != null ? fmt(l.rate) : "—"}
                                   confirmText="Тариф солих уу?"
                                   onSave={(v) => gatedPatch(`/api/movement-lines/${l.id}`,
-                                                            { rate: parseFloat(v.replace(/,/g, "")) || 0 },
+                                                            { rate: parseMoney(v) },
                                                             "Паданны тариф шинэчлэгдлээ")} />
                               ) : (l.rate != null ? fmt(l.rate) : "—")}
                             </span>
@@ -368,10 +368,7 @@ export default function ContractDetail() {
           {u?.role === "manager" && d.status === "active" && (
             <div className="card p-5 flex gap-2.5 flex-wrap">
               <button className="btn-secondary" onClick={() => setModal("extend")}>Гэрээ сунгах</button>
-              <button className="btn-ghost text-danger" onClick={async () => {
-                try { await api(`/api/contracts/${d.id}/close`, { method: "POST" }); toast("Гэрээ хаагдлаа"); load(); }
-                catch (e: any) { toast(e.message, "err"); }
-              }}>Гэрээ хаах</button>
+              <button className="btn-ghost text-danger" onClick={() => setModal("close")}>Гэрээ хаах</button>
             </div>
           )}
         </div>
@@ -382,6 +379,38 @@ export default function ContractDetail() {
       {modal === "pay" && <PayModal d={d} invoices={d.invoices} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "extend" && <ExtendModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "deposit" && <DepositModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+      {modal === "close" && (() => {
+        /* Гэрээ хаах нь буцаагдахгүй үйлдэл — юу үлдэж байгааг эхлээд харуулна. */
+        const depositOpen = d.deposit > 0 && d.deposit_status !== "settled";
+        return (
+          <ConfirmModal
+            title="Гэрээ хаах"
+            intro={<>Гэрээ №{d.no} · <b className="text-ink">{d.client}</b> — хаасны дараа шинэ хуримтлал
+                    бодогдохгүй. Үлдэгдэл авлага, алданги хэвээр үлдэнэ.</>}
+            rows={[
+              { label: "Үлдэгдэл авлага", value: money(d.balance),
+                accent: d.balance > 0 ? "danger" : undefined },
+              ...(d.penalty > 0
+                ? [{ label: "Алданги (өнөөдрөөр)", value: money(d.penalty), accent: "danger" as const }] : []),
+              ...(depositOpen
+                ? [{ label: "⚠ Барьцааны тооцоо хийгдээгүй байна", value: money(d.deposit),
+                     accent: "danger" as const }] : []),
+            ]}
+            total={{ label: "Хаах үед үлдэх нийт тооцоо", value: money(d.balance + d.penalty),
+                     accent: d.balance + d.penalty > 0 ? "danger" : "money" }}
+            note={depositOpen
+              ? "Барьцааг эхлээд «Барьцааны тооцоо хийх»-ээр суутгаж/буцааж дуусгахыг зөвлөе."
+              : undefined}
+            confirmLabel="Гэрээ хаах" danger
+            onClose={() => setModal("")}
+            onConfirm={async () => {
+              try {
+                await api(`/api/contracts/${d.id}/close`, { method: "POST" });
+                toast("Гэрээ хаагдлаа"); setModal(""); load();
+              } catch (e: any) { toast(e.message, "err"); }
+            }} />
+        );
+      })()}
       {pending && <RebuildModal p={pending} onClose={() => setPending(null)}
                                 onDone={() => { setPending(null); load(); }} />}
     </div>
@@ -472,8 +501,11 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
     } catch (e: any) { toast(e.message, "err"); setBusy(false); }
   }
 
+  // Ямар нэг тоо бөглөсөн бол санамсаргүй хаагдаж бүх мөр алдагдахаас хамгаална
+  const dirty = rows.some((r) => r.ret > 0 || r.repair > 0 || r.writeoff > 0);
+
   return (
-    <Modal title="Буцаалт бүртгэх" onClose={onClose} wide>
+    <Modal title="Буцаалт бүртгэх" onClose={onClose} wide dirty={dirty}>
       <label className="lbl">Огноо</label>
       <input type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
       <div className="overflow-x-auto">
@@ -613,7 +645,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   const [busy, setBusy] = useState(false);
   // null = автомат хуваарилалт (хуучин зам). Object = дарга гараар чиглүүлж байна.
   const [manual, setManual] = useState<Record<number, string> | null>(null);
-  const amt = parseFloat(amount.replace(/,/g, "")) || 0;
+  const amt = parseMoney(amount);
   // penalty = бүртгэгдсэн + амьд алданги; төлбөр бүртгэх агшинд яг энэ дүн хөлдөнө
   const list = (invoices || []).map((i: any) => ({
     id: i.id, no: i.no, outstanding: i.outstanding, due_date: i.due_date,
@@ -625,8 +657,11 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   const auto: Record<number, number> = {};
   preview.rows.forEach((r) => { auto[r.id] = (auto[r.id] || 0) + r.take; });
   const manualSum = manual
-    ? Object.values(manual).reduce((s, v) => s + (parseFloat(v) || 0), 0) : 0;
+    ? Object.values(manual).reduce((s, v) => s + parseMoney(v), 0) : 0;
   const manualLeft = amt - manualSum;
+  // Хэтэрсэн хуваарилалтыг сервер аль хэдийн татгалздаг — товчийг идэвхгүй
+  // болгож, дарга дэмий дараад алдаа хүлээхээс сэргийлнэ (DepositModal-тай ижил).
+  const manualOver = !!manual && manualSum > amt + 0.01;
 
   function startManual() {
     const init: Record<number, string> = {};
@@ -635,17 +670,14 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   }
 
   async function submit() {
-    const amt = parseFloat(amount.replace(/,/g, ""));
     if (!amt || amt <= 0) { toast("Дүн оруулна уу", "err"); return; }
     if (method === "BARTER" && !barter.trim()) { toast("Бартераар юу орж ирснийг бичнэ үү", "err"); return; }
     const body: any = { client_id: client_id ?? d.client_id, contract_id: d?.id ?? null,
                         date, amount: amt, method, barter_desc: barter };
     if (manual) {
-      if (manualSum > amt + 0.01) {
-        toast("Хуваарилсан дүн төлбөрөөс их байна", "err"); return;
-      }
+      if (manualOver) { toast("Хуваарилсан дүн төлбөрөөс их байна", "err"); return; }
       body.allocations = Object.entries(manual)
-        .map(([id, v]) => ({ invoice_id: +id, amount: parseFloat(v) || 0 }))
+        .map(([id, v]) => ({ invoice_id: +id, amount: parseMoney(v) }))
         .filter((a) => a.amount > 0);
     }
     setBusy(true);
@@ -657,7 +689,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   }
 
   return (
-    <Modal title="Төлбөр бүртгэх" onClose={onClose}>
+    <Modal title="Төлбөр бүртгэх" onClose={onClose} dirty={amt > 0 || barter.trim().length > 0}>
       <div className="grid grid-cols-2 gap-3.5">
         <div><label className="lbl">Огноо</label>
           <input type="date" className="inp" value={date} onChange={(e) => setDate(e.target.value)} /></div>
@@ -685,9 +717,15 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
       )}
       {amt > 0 ? (manual ? (
         <div className="rounded-2xl border border-line-strong p-3.5 mb-1">
-          <div className="flex items-center justify-between mb-2.5">
-            <b className="text-[13px] text-ink">Хуваарилалт — гараар</b>
-            <button className="text-[12.5px] font-semibold text-brand hover:underline"
+          <div className="flex items-center justify-between gap-3 mb-2.5 flex-wrap">
+            <div className="min-w-0">
+              <b className="text-[13px] text-ink">Хуваарилалт — гараар</b>
+              {/* Юуг хуваарилж байгаагаа хараагүй бол хэтрүүлэх нь амархан */}
+              <span className="block text-[11.5px] text-t3">
+                Хуваарилах төлбөр: <b className="tabular-nums text-t2">{money(amt)}</b>
+              </span>
+            </div>
+            <button className="text-[12.5px] font-semibold text-brand hover:underline shrink-0"
                     onClick={() => setManual(null)}>Автоматаар</button>
           </div>
           {cand.length === 0 && <p className="text-[12.5px] text-t2">Нээлттэй нэхэмжлэл алга — бүх дүн кредит болно.</p>}
@@ -733,7 +771,10 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
       )}
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary !bg-money" disabled={busy} onClick={submit}>{busy ? "…" : "Бүртгэх"}</button>
+        <button className="btn-primary !bg-money" disabled={busy || manualOver} onClick={submit}
+                title={manualOver ? "Хуваарилсан дүн төлбөрөөс их байна" : undefined}>
+          {busy ? "…" : "Бүртгэх"}
+        </button>
       </div>
     </Modal>
   );
@@ -750,8 +791,8 @@ function DepositModal({ d, onClose, onDone }: any) {
     ret: String(Math.round(d.deposit - suggestApply)),
   });
   const [busy, setBusy] = useState(false);
-  const apply = parseFloat(f.apply.replace(/,/g, "")) || 0;
-  const ret = parseFloat(f.ret.replace(/,/g, "")) || 0;
+  const apply = parseMoney(f.apply);
+  const ret = parseMoney(f.ret);
   const over = apply + ret > d.deposit + 0.01;
   const left = d.deposit - apply - ret;
 

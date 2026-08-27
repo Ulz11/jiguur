@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, money, sayaFmt } from "../api";
-import { Spinner, Modal, useToast, Empty, Receipt } from "../ui";
+import { Spinner, Modal, useToast, Empty, Receipt, ConfirmModal } from "../ui";
+import { parseMoney } from "../lib/num";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const TYPE_LABEL: Record<string, string> = { main: "Үндсэн", contract: "Гэрээт", daily: "Өдрийн" };
@@ -10,6 +11,7 @@ export default function Salary() {
   const [runs, setRuns] = useState<any[] | null>(null);
   const [modal, setModal] = useState<any>(null); // {kind:'emp'|'run', emp?}
   const [open, setOpen] = useState<number | null>(null);
+  const [payRun, setPayRun] = useState<any>(null); // олгохоор баталгаажуулж буй бодолт
   const toast = useToast();
 
   const load = () => {
@@ -101,15 +103,7 @@ export default function Salary() {
                     <td className="td">
                       {!r.paid && (
                         <button className="btn-ghost !min-h-8 !py-1 !px-2 text-[12.5px] text-money"
-                          onClick={async (ev) => {
-                            ev.stopPropagation();
-                            try {
-                              await api(`/api/salary/runs/${r.id}/pay`, { method: "POST",
-                                body: JSON.stringify({ date: today() }) });
-                              toast("Олгосон гэж тэмдэглэгдлээ — зардалд тусна");
-                              load();
-                            } catch (e: any) { toast(e.message, "err"); }
-                          }}>Олгох ✓</button>
+                          onClick={(ev) => { ev.stopPropagation(); setPayRun(r); }}>Олгох ✓</button>
                       )}
                     </td>
                   </tr>
@@ -136,6 +130,30 @@ export default function Salary() {
 
       {modal?.kind === "emp" && <EmpModal e={modal.emp} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
       {modal?.kind === "run" && <RunModal emps={emps} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
+      {payRun && (
+        <ConfirmModal
+          title="Цалин олгох"
+          intro={<><b className="text-ink">{payRun.period} · {payRun.half}-р хагас</b> — олгосон гэж
+                  тэмдэглэхэд буцаагдахгүй.</>}
+          rows={[
+            { label: "Ажилтан", value: `${payRun.items.length} хүн` },
+            { label: "Нийт цалин", value: money(payRun.total_base) },
+            ...(payRun.total_ndsh > 0
+              ? [{ label: "НДШ суутгал", value: "−" + money(payRun.total_ndsh), accent: "danger" as const }] : []),
+          ]}
+          total={{ label: "Гарт олгох нийт", value: money(payRun.total_net), accent: "money" }}
+          note="Олгосны дараа зардалд тусна."
+          confirmLabel="Олгох ✓"
+          onClose={() => setPayRun(null)}
+          onConfirm={async () => {
+            try {
+              await api(`/api/salary/runs/${payRun.id}/pay`, { method: "POST",
+                body: JSON.stringify({ date: today() }) });
+              toast("Олгосон гэж тэмдэглэгдлээ — зардалд тусна");
+              setPayRun(null); load();
+            } catch (e: any) { toast(e.message, "err"); }
+          }} />
+      )}
     </div>
   );
 }
@@ -180,8 +198,8 @@ function EmpModal({ e, onClose, onDone }: any) {
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <button className="btn-primary" disabled={!f.name.trim()} onClick={async () => {
-          const body = { ...f, monthly_salary: +f.monthly_salary.replace(/,/g, "") || 0,
-                         daily_rate: +f.daily_rate.replace(/,/g, "") || 0 };
+          const body = { ...f, monthly_salary: parseMoney(f.monthly_salary),
+                         daily_rate: parseMoney(f.daily_rate) };
           try {
             if (e) await api(`/api/salary/employees/${e.id}`, { method: "PUT", body: JSON.stringify(body) });
             else await api("/api/salary/employees", { method: "POST", body: JSON.stringify(body) });
@@ -200,7 +218,7 @@ function RunModal({ emps, onClose, onDone }: any) {
   const [period, setPeriod] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [half, setHalf] = useState(now.getDate() <= 15 ? 1 : 2);
   const [pct, setPct] = useState(11.5);
-  useEffect(() => { api("/api/settings").then((s) => setPct(parseFloat(s.ndsh_percent) || 11.5)); }, []);
+  useEffect(() => { api("/api/settings").then((s) => setPct(parseMoney(s.ndsh_percent) || 11.5)); }, []);
   const dailies = emps.filter((e: any) => e.type === "daily");
   const [days, setDays] = useState<Record<string, string>>(
     Object.fromEntries(dailies.map((e: any) => [String(e.id), ""])));

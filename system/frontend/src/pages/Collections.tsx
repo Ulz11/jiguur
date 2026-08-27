@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, Modal, useToast, Empty } from "../ui";
+import { parseMoney } from "../lib/num";
 import { useLive } from "../lib/live";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -185,7 +186,7 @@ function NoteModal({ r, onClose, onDone }: any) {
             await api(`/api/clients/${r.client_id}/notes`, { method: "POST", body: JSON.stringify({
               date: f.date, kind: f.kind, note: f.note,
               promise_date: f.promise_date || null,
-              promise_amount: parseFloat(f.promise_amount.replace(/,/g, "")) || 0 }) });
+              promise_amount: parseMoney(f.promise_amount) }) });
             toast("Тэмдэглэл хадгалагдлаа");
             onDone();
           } catch (e: any) { toast(e.message, "err"); setBusy(false); }

@@ -57,9 +57,12 @@ export default function SettingsPage() {
             <input className="inp mb-1" inputMode="decimal" value={settings.ndsh_percent || "11.5"}
                    onChange={(e) => setSettings({ ...settings, ndsh_percent: e.target.value })} />
             <p className="text-[11.5px] text-t3 mb-4">Дараагийн цалингийн бодолтоос шинэ хувиар суутгана.</p>
+            {/* Барихгүй бол алдаа чимээгүй залгигдаж, хадгалагдсан мэт харагдана */}
             <button className="btn-primary w-full justify-center" onClick={async () => {
-              await api("/api/settings", { method: "PUT", body: JSON.stringify({ values: settings }) });
-              toast("Тохиргоо хадгалагдлаа");
+              try {
+                await api("/api/settings", { method: "PUT", body: JSON.stringify({ values: settings }) });
+                toast("Тохиргоо хадгалагдлаа");
+              } catch (e: any) { toast(e.message, "err"); }
             }}>Хадгалах</button>
           </div>
         </div>

@@ -1,34 +1,59 @@
-import { createContext, useContext, useState, useCallback, ReactNode, useEffect } from "react";
+import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef } from "react";
 
 /* ---------- Toast ---------- */
 const ToastCtx = createContext<(msg: string, kind?: "ok" | "err") => void>(() => {});
 export const useToast = () => useContext(ToastCtx);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toast, setToast] = useState<{ msg: string; kind: string } | null>(null);
+  const [toast, setToast] = useState<{ msg: string; kind: "ok" | "err" } | null>(null);
+  const timer = useRef<number | null>(null);
+  const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
   const show = useCallback((msg: string, kind: "ok" | "err" = "ok") => {
+    clear();
     setToast({ msg, kind });
-    setTimeout(() => setToast(null), 3200);
+    // Амжилтын мэдэгдэл өөрөө арилна. АЛДАА арилахгүй — Отгоо гар утсаа
+    // хараад эргэж ирэхэд юу болсныг мэдэхгүй үлдэх ёсгүй, өөрөө ✕ дарж хаана.
+    if (kind === "ok") timer.current = window.setTimeout(() => setToast(null), 3200);
   }, []);
+  useEffect(() => clear, []);
   return (
     <ToastCtx.Provider value={show}>
       {children}
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-ink text-white px-5 py-3.5 rounded-xl font-semibold text-sm shadow-2xl z-50 flex items-center gap-2.5 max-w-[90vw]">
-          <span>{toast.kind === "ok" ? "✓" : "⚠"}</span>
-          {toast.msg}
+        <div role="status" aria-live={toast.kind === "err" ? "assertive" : "polite"}
+             className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-ink text-white px-5 py-3.5 rounded-xl font-semibold text-sm shadow-2xl z-50 flex items-start gap-2.5 max-w-[90vw]">
+          <span className="shrink-0 leading-5">{toast.kind === "ok" ? "✓" : "⚠"}</span>
+          <span className="min-w-0 break-words leading-5">{toast.msg}</span>
+          {toast.kind === "err" && (
+            <button onClick={() => { clear(); setToast(null); }} aria-label="Мэдэгдлийг хаах"
+                    className="shrink-0 -mr-1.5 -my-1 px-2 py-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition text-base leading-5">
+              ✕
+            </button>
+          )}
         </div>
       )}
     </ToastCtx.Provider>
   );
 }
 
-/* ---------- Modal ---------- */
-export function Modal({ title, onClose, children, wide }: {
-  title: string; onClose: () => void; children: ReactNode; wide?: boolean;
+/* ---------- Modal ----------
+   `dirty` өгвөл — хэрэглэгч ямар нэг юм бөглөсөн байвал — санамсаргүй дарсан
+   гадна талын товшилт, Escape нь оруулсан зүйлийг чимээгүй устгахгүй:
+   эхлээд модал дотроо баталгаажуулна. ✕ товч ч мөн адил ажиллана. */
+export function Modal({ title, onClose, children, wide, dirty }: {
+  title: string; onClose: () => void; children: ReactNode; wide?: boolean; dirty?: boolean;
 }) {
+  const [askClose, setAskClose] = useState(false);
+  const guardRef = useRef<HTMLDivElement | null>(null);
+  const attemptClose = useCallback(() => {
+    if (dirty) setAskClose(true); else onClose();
+  }, [dirty, onClose]);
+
+  // Урт модал доошоо гүйлгэсэн байхад асуулт нүднээс гарч үлдэх ёсгүй
+  useEffect(() => { if (askClose) guardRef.current?.scrollIntoView({ block: "nearest" }); }, [askClose]);
+
   useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") attemptClose(); };
     window.addEventListener("keydown", h);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";   // ард нь гүйлгэхгүй
@@ -36,20 +61,75 @@ export function Modal({ title, onClose, children, wide }: {
       window.removeEventListener("keydown", h);
       document.body.style.overflow = prev;
     };
-  }, [onClose]);
+  }, [attemptClose]);
+
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto py-10 px-4 backdrop-blur-md"
          style={{ background: "rgba(11,37,69,0.4)" }}
-         onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+         onMouseDown={(e) => e.target === e.currentTarget && attemptClose()}>
       <div className={`rounded-[26px] shadow-2xl w-full border border-line ${wide ? "max-w-3xl" : "max-w-lg"} p-6`}
            style={{ background: "var(--color-cardbg)" }}>
         <div className="flex items-center justify-between mb-5 pb-4 border-b border-line">
           <h3 className="text-[17px] font-bold text-ink tracking-tight">{title}</h3>
-          <button className="btn-ghost !min-h-0 !p-2 text-xl leading-none" onClick={onClose} aria-label="Хаах">×</button>
+          <button className="btn-ghost !min-h-0 !p-2 text-xl leading-none" onClick={attemptClose} aria-label="Хаах">×</button>
         </div>
+        {askClose && (
+          <div ref={guardRef}
+               className="mb-5 rounded-xl bg-danger-50 px-4 py-3 flex items-center gap-3 flex-wrap">
+            <span className="text-[13.5px] font-medium text-danger flex-1 min-w-[180px]">
+              Хаавал оруулсан мэдээлэл устна. Хаах уу?
+            </span>
+            <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]" onClick={onClose}>Хаах</button>
+            <button className="btn-primary !min-h-9 !py-1.5 !px-3 text-[13px]" autoFocus
+                    onClick={() => setAskClose(false)}>Үргэлжлүүлэх</button>
+          </div>
+        )}
         {children}
       </div>
     </div>
+  );
+}
+
+/* ---------- Мөнгө хөдөлгөх үйлдлийн баталгаажуулалт ----------
+   RebuildModal-ийн "үр дагаврыг эхлээд харуул" загварыг дахин ашиглах хэлбэр:
+   болох гэж буй зүйлээ navy Receipt дээр харуулаад л асууна. */
+export function ConfirmModal({ title, intro, rows, total, note, confirmLabel, cancelLabel = "Болих",
+                               danger, onConfirm, onClose }: {
+  title: string;
+  intro?: ReactNode;
+  rows?: ReceiptRow[];
+  total?: ReceiptRow;
+  note?: ReactNode;
+  confirmLabel: string;
+  cancelLabel?: string;
+  danger?: boolean;
+  onConfirm: () => Promise<void> | void;
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+  return (
+    <Modal title={title} onClose={onClose}>
+      {intro && <p className="text-[13.5px] text-t2 mb-4">{intro}</p>}
+      {(rows?.length || total) && <Receipt rows={rows || []} total={total} />}
+      {note && <p className="text-[12.5px] text-t2 mt-3">{note}</p>}
+      <div className="flex justify-end gap-2.5 mt-5">
+        {/* Устгах/хаах төрлийн үйлдэлд Enter дарахад ЦУЦЛАХ нь сонгогдоно —
+            санамсаргүй товшилт мөнгө хөдөлгөх ёсгүй. */}
+        <button className="btn-secondary" disabled={busy} autoFocus={danger}
+                onClick={onClose}>{cancelLabel}</button>
+        <button className={`btn-primary ${danger ? "!bg-danger" : ""}`} disabled={busy} autoFocus={!danger}
+                onClick={async () => {
+                  setBusy(true);
+                  // Амжилттай бол дуудагч тал биднийг хаана; амжилтгүй бол
+                  // товчийг сэргээж дахин оролдох боломж үлдээнэ.
+                  try { await onConfirm(); } finally { if (alive.current) setBusy(false); }
+                }}>
+          {busy ? "…" : confirmLabel}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

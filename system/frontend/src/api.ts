@@ -1,3 +1,5 @@
+import { errorMessage, FALLBACK_ERROR } from "./lib/errors";
+
 export type User = { id: number; name: string; role: string; username: string };
 
 export function token(): string | null {
@@ -28,11 +30,10 @@ export async function api(path: string, opts: RequestInit = {}): Promise<any> {
     throw new Error("Нэвтрэлт дууссан");
   }
   if (!res.ok) {
-    let msg = "Алдаа гарлаа";
-    try {
-      const j = await res.json();
-      msg = j.detail || msg;
-    } catch { /* ignore */ }
+    // FastAPI 422 нь detail-ыг МАССИВ болгож буцаадаг — errorMessage бүх
+    // хэлбэрийг хүн уншихаар мөр болгоно (lib/errors.ts).
+    let msg = FALLBACK_ERROR;
+    try { msg = errorMessage(await res.json()); } catch { /* JSON биш хариу */ }
     throw new Error(msg);
   }
   return res.json();

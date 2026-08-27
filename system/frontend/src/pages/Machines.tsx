@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, money, sayaFmt, user } from "../api";
 import { Spinner, Modal, useToast, Empty } from "../ui";
+import { parseMoney } from "../lib/num";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const JOB_LABELS = ["Бүтэн өдөр", "Хагас өдөр", "Дотоод ажил"];
@@ -113,7 +114,7 @@ function LogModal({ kind, m, onClose, onDone }: any) {
   const toast = useToast();
   const labels = kind === "job" ? JOB_LABELS : EXP_LABELS;
   const [f, setF] = useState({ date: today(), label: labels[0], client: "", amount: "", method: "BANK", note: "" });
-  const amt = parseFloat(f.amount.replace(/,/g, "")) || 0;
+  const amt = parseMoney(f.amount);
   return (
     <Modal title={kind === "job" ? `Ажил бүртгэх — ${m.name}` : `Зарлага — ${m.name}`} onClose={onClose}>
       <label className="lbl">{kind === "job" ? "Ажлын төрөл" : "Зарлагын ангилал"}</label>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, fmt, money, sayaFmt, user } from "../api";
 import { Spinner, Modal, useToast, Empty, Receipt } from "../ui";
+import { parseMoney } from "../lib/num";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const TYPES = ["Машин", "Байр", "Материал", "Бусад"];
@@ -157,7 +158,7 @@ export default function Barter() {
 function SellModal({ a, onClose, onDone }: any) {
   const toast = useToast();
   const [f, setF] = useState({ date: today(), amount: "", sold_to: "", note: "" });
-  const amt = parseFloat(f.amount.replace(/,/g, "")) || 0;
+  const amt = parseMoney(f.amount);
   const gain = amt ? amt - a.value_in : null;
   return (
     <Modal title={`Зарах — ${a.name}`} onClose={onClose}>
@@ -278,8 +279,8 @@ function AssetModal({ a, onClose, onDone }: any) {
       </div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={!f.name.trim() || !+f.value_in.replace(/,/g, "")} onClick={async () => {
-          const body = { ...f, value_in: +f.value_in.replace(/,/g, ""), asking_price: +f.asking_price.replace(/,/g, "") || 0 };
+        <button className="btn-primary" disabled={!f.name.trim() || !parseMoney(f.value_in)} onClick={async () => {
+          const body = { ...f, value_in: parseMoney(f.value_in), asking_price: parseMoney(f.asking_price) };
           try {
             if (a) await api(`/api/barter/${a.id}`, { method: "PUT", body: JSON.stringify(body) });
             else await api("/api/barter", { method: "POST", body: JSON.stringify(body) });

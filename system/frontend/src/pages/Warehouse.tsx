@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, fmt, user } from "../api";
 import { Spinner, Modal, useToast, Prog, Receipt, Empty } from "../ui";
+import { parseMoney } from "../lib/num";
 
 export default function Warehouse() {
   const [d, setD] = useState<any>(null);
@@ -107,7 +108,7 @@ export default function Warehouse() {
 function RepairModal({ m, s, onClose, onDone }: any) {
   const toast = useToast();
   const [val, setVal] = useState(String(s.in_repair));
-  const qty = parseFloat(val) || 0;
+  const qty = parseMoney(val);
   const over = qty > s.in_repair;
   return (
     <Modal title="Засвар дуусгах" onClose={onClose}>
@@ -151,26 +152,49 @@ function Kpi({ label, val, pill, warn }: any) {
   );
 }
 
+/* Залруулга нь нөөцийг шууд хөдөлгөдөг тул 2 алхамтай: эхний дарахад
+   `одоо → шинэ` зөрүүг харуулж, дараа нь баталгаажуулна. */
 function AdjustModal({ m, s, onClose, onDone }: any) {
   const toast = useToast();
   const [val, setVal] = useState(String(s.on_hand));
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const blank = val.trim() === "";
+  const next = parseMoney(val);
+  const diff = next - s.on_hand;
+
   return (
-    <Modal title="Тооллогын залруулга" onClose={onClose}>
+    <Modal title="Тооллогын залруулга" onClose={onClose} dirty={!blank && diff !== 0}>
       <p className="text-[13.5px] text-t2 mb-4">
         <b className="text-ink">{m.name}</b> ({s.grade}) — бодит тоолсон агуулахын үлдэгдлийг оруулна уу.
         Одоо системд: <b className="tabular-nums">{fmt(s.on_hand)}ш</b>
       </p>
-      <input type="number" className="inp mb-5" value={val} onChange={(e) => setVal(e.target.value)} autoFocus />
-      <div className="flex justify-end gap-2.5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" onClick={async () => {
+      <input type="number" className="inp" value={val} autoFocus
+             onChange={(e) => { setVal(e.target.value); setConfirming(false); }} />
+      {confirming && (
+        <Receipt className="mt-4"
+          rows={[{ label: `${m.name} · ${s.grade}`, value: `${fmt(s.on_hand)}ш → ${fmt(next)}ш`,
+                   accent: diff > 0 ? "money" : diff < 0 ? "danger" : undefined }]}
+          total={{ label: diff === 0 ? "Зөрүүгүй — юу ч өөрчлөгдөхгүй"
+                        : diff > 0 ? "Агуулахад нэмэгдэнэ" : "Агуулахаас хасагдана",
+                   value: `${diff > 0 ? "+" : ""}${fmt(diff)} ш`,
+                   accent: diff > 0 ? "money" : diff < 0 ? "danger" : "dim" }} />
+      )}
+      <div className="flex justify-end gap-2.5 mt-5">
+        <button className="btn-secondary" disabled={busy}
+                onClick={() => (confirming ? setConfirming(false) : onClose())}>
+          {confirming ? "Буцах" : "Болих"}
+        </button>
+        <button className="btn-primary" disabled={busy || blank} onClick={async () => {
+          if (!confirming) { setConfirming(true); return; }
+          setBusy(true);
           try {
             await api("/api/stock/adjust", { method: "POST",
-              body: JSON.stringify({ material_id: m.id, grade_id: s.grade_id, on_hand: +val }) });
+              body: JSON.stringify({ material_id: m.id, grade_id: s.grade_id, on_hand: next }) });
             toast("Үлдэгдэл залруулагдлаа");
             onDone();
-          } catch (e: any) { toast(e.message, "err"); }
-        }}>Хадгалах</button>
+          } catch (e: any) { toast(e.message, "err"); setBusy(false); }
+        }}>{busy ? "…" : confirming ? "Баталгаажуулах" : "Хадгалах"}</button>
       </div>
     </Modal>
   );

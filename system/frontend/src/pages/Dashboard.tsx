@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, sayaFmt, user } from "../api";
-import { Spinner, Prog, useToast } from "../ui";
+import { api, fmt, sayaFmt, user } from "../api";
+import { Spinner, Prog, useToast, ConfirmModal } from "../ui";
 import { useScope } from "../App";
 import { useLive } from "../lib/live";
 import RevChart from "../components/RevChart";
@@ -10,6 +10,8 @@ export default function Dashboard() {
   const { scope } = useScope();
   const [d, setD] = useState<any>(null);
   const [busy, setBusy] = useState<number | null>(null);
+  const [ask, setAsk] = useState<any>(null);          // баталгаажуулах гэж буй ачилт
+  const [lines, setLines] = useState<any[] | null>(null); // тухайн ачилтын мөрүүд
   const toast = useToast();
   const nav = useNavigate();
   const u = user();
@@ -24,11 +26,23 @@ export default function Dashboard() {
   const agingMax = Math.max(...d.aging.map((a: any) => a.amount), 1);
   const agingColors = ["#1F8B69", "#253886", "#F88712", "#C9363B"];
 
+  /** Баталгаажуулах өмнө юу хөдлөхийг харуулна. Хяналтын самбарын мөр нь
+   *  зөвхөн тоо ширхэгийн хураангуйтай тул мөрийн задаргааг гэрээнээс татна;
+   *  татаж чадаагүй ч мөр дээрх хураангуйгаар асууна (хаалга нээлттэй үлдэхгүй). */
+  function askShipment(p: any) {
+    setAsk(p);
+    setLines(null);
+    api(`/api/contracts/${p.contract_id}`)
+      .then((c) => setLines(c.movements?.find((m: any) => m.id === p.id)?.lines ?? []))
+      .catch(() => setLines([]));
+  }
+
   async function confirmShipment(id: number) {
     setBusy(id);
     try {
       await api(`/api/movements/${id}/confirm`, { method: "POST" });
       toast("Ачилт баталгаажлаа — нөөц хөдөлж, тооцоо эхэллээ");
+      setAsk(null);
       load();
     } catch (e: any) { toast(e.message, "err"); }
     finally { setBusy(null); }
@@ -146,7 +160,7 @@ export default function Dashboard() {
               </div>
               {(u?.role === "factory" || u?.role === "manager") && (
                 <button className="btn-secondary ml-auto !min-h-9 !py-1.5 !px-3 text-[13px]"
-                        disabled={busy === p.id} onClick={() => confirmShipment(p.id)}>
+                        disabled={busy === p.id} onClick={() => askShipment(p)}>
                   {busy === p.id ? "…" : "Ачсан ✓"}
                 </button>
               )}
@@ -182,6 +196,25 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {ask && (
+        <ConfirmModal
+          title="Ачилт баталгаажуулах"
+          intro={<><b className="text-ink">{ask.client}</b> — Гэрээ №{ask.contract_no} · {ask.date}</>}
+          rows={lines === null
+            ? [{ label: "Ачилтын мөрүүд", value: "уншиж байна…", accent: "dim" as const }]
+            : lines.length > 0
+              ? lines.map((l: any) => ({
+                  label: `${l.material} (${l.grade})`, value: `${fmt(l.qty)} ш` }))
+              : [{ label: "Ачилтын мөр", value: ask.summary || "—", accent: "dim" as const }]}
+          total={lines && lines.length > 0
+            ? { label: "Ачих нийт", value: `${fmt(lines.reduce((s: number, l: any) => s + l.qty, 0))} ш` }
+            : undefined}
+          note="Баталгаажуулмагц нөөц хөдөлж, тооцоо эхэлнэ."
+          confirmLabel="Ачсан ✓"
+          onClose={() => setAsk(null)}
+          onConfirm={() => confirmShipment(ask.id)} />
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, fmt, money } from "../api";
 import { Spinner, useToast, Receipt } from "../ui";
+import { parseMoney, formatMoneyInput } from "../lib/num";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -50,8 +51,11 @@ export default function ContractNew() {
       if (!cid) { toast("Харилцагч сонгоно уу", "err"); setBusy(false); return; }
       const body = {
         client_id: cid, type, no: cond.no, start_date: cond.start_date,
-        end_date: cond.end_date || null, penalty_percent: parseFloat(cond.penalty_percent) || 0.5,
-        deposit: parseFloat(cond.deposit) || 0, vat_percent: parseFloat(cond.vat_percent) || 0,
+        end_date: cond.end_date || null,
+        // Хоосон орхивол л суурь 0.5% — санаатай бичсэн 0-ийг 0.5 болгож
+        // сольж болохгүй (`|| 0.5` нь яг тэгж байсан).
+        penalty_percent: cond.penalty_percent.trim() === "" ? 0.5 : parseMoney(cond.penalty_percent),
+        deposit: parseMoney(cond.deposit), vat_percent: parseMoney(cond.vat_percent),
         note: cond.note,
         items: items.filter((i) => i.qty > 0),
       };
@@ -212,8 +216,10 @@ export default function ContractNew() {
                 <input className="inp" inputMode="decimal" value={cond.penalty_percent}
                        onChange={(e) => setCond({ ...cond, penalty_percent: e.target.value })} /></div>
               <div><label className="lbl">Барьцаа ₮ (заавал биш)</label>
+                {/* Excel-ээс "6,000,000" хуулж тавихад ажиллана; бичиж байх үед
+                    мянгатыг өөрөө бүлэглэж, юу бичсэнээ хараад л мэдэхээр. */}
                 <input className="inp" inputMode="numeric" placeholder="0" value={cond.deposit}
-                       onChange={(e) => setCond({ ...cond, deposit: e.target.value })} /></div>
+                       onChange={(e) => setCond({ ...cond, deposit: formatMoneyInput(e.target.value) })} /></div>
               <div><label className="lbl">НӨАТ %</label>
                 <select className="inp" value={cond.vat_percent} onChange={(e) => setCond({ ...cond, vat_percent: e.target.value })}>
                   <option value="0">Тооцохгүй</option><option value="10">10%</option>
@@ -232,7 +238,8 @@ export default function ContractNew() {
         {step === 4 && (
           <>
             {(() => {
-              const vat = parseFloat(cond.vat_percent) || 0;
+              const vat = parseMoney(cond.vat_percent);
+              const deposit = parseMoney(cond.deposit);
               const base = type === "rent" ? daySum * 30 : saleSum;
               const vatAmt = base * vat / 100;
               const rows: any[] = [
@@ -243,8 +250,8 @@ export default function ContractNew() {
                      { label: "Алданги", value: cond.penalty_percent + " %/хоног", accent: "dim" }]
                   : [{ label: "Худалдааны дүн", value: money(saleSum) }]),
                 ...(vat > 0 ? [{ label: `НӨАТ ${vat}%`, value: "+" + money(vatAmt), accent: "violet" }] : []),
-                ...(parseFloat(cond.deposit) > 0
-                  ? [{ label: "Барьцаа", value: money(parseFloat(cond.deposit)), accent: "money" }] : []),
+                ...(deposit > 0
+                  ? [{ label: "Барьцаа", value: money(deposit), accent: "money" }] : []),
               ];
               return (
                 <Receipt className="mb-4" rows={rows}
