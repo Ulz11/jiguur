@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, fmt, user } from "../api";
-import { Spinner, Modal, useToast, Prog, Receipt, Empty } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Prog, Receipt, Empty } from "../ui";
 import { parseMoney } from "../lib/num";
 
 export default function Warehouse() {
@@ -130,7 +130,9 @@ function RepairModal({ m, s, onClose, onDone }: any) {
   const qty = parseMoney(val);
   const over = qty > s.in_repair;
   return (
-    <Modal title="Засвар дуусгах" onClose={onClose}>
+    /* Талбар нь засварт байгаа бүх тоогоор бөглөгдөж нээгддэг — тэр саналыг
+       хөндөөгүй бол алдах юм алга. */
+    <FormModal title="Засвар дуусгах" onClose={onClose} dirty={val !== String(s.in_repair)}>
       <p className="text-[13.5px] text-t2 mb-4">
         <b className="text-ink">{m.name}</b> ({s.grade}) — засварт байгаа{" "}
         <b className="tabular-nums">{fmt(s.in_repair)}ш</b>-аас хэдийг агуулахад буцаан оруулах вэ?
@@ -147,16 +149,16 @@ function RepairModal({ m, s, onClose, onDone }: any) {
         total={{ label: "Засварт үлдэх", value: `${fmt(Math.max(s.in_repair - qty, 0))} ш` }} />
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={!qty || over} onClick={async () => {
+        <SubmitButton disabled={!qty || over} onSubmit={async () => {
           try {
             await api("/api/stock/repair-done", { method: "POST",
               body: JSON.stringify({ material_id: m.id, grade_id: s.grade_id, qty }) });
             toast("Засвар дууслаа — агуулахад орлоо");
             onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Оруулах</button>
+        }}>Оруулах</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
@@ -184,7 +186,7 @@ function AdjustModal({ m, s, onClose, onDone }: any) {
   const diff = next - s.on_hand;
 
   return (
-    <Modal title="Тооллогын залруулга" onClose={onClose} dirty={!blank && diff !== 0}>
+    <FormModal title="Тооллогын залруулга" onClose={onClose} dirty={!blank && diff !== 0}>
       <p className="text-[13.5px] text-t2 mb-4">
         <b className="text-ink">{m.name}</b> ({s.grade}) — бодит тоолсон агуулахын үлдэгдлийг оруулна уу.
         Одоо системд: <b className="tabular-nums">{fmt(s.on_hand)}ш</b>
@@ -218,6 +220,6 @@ function AdjustModal({ m, s, onClose, onDone }: any) {
           } catch (e: any) { toast(e.message, "err"); setBusy(false); }
         }}>{busy ? "…" : confirming ? "Баталгаажуулах" : "Хадгалах"}</button>
       </div>
-    </Modal>
+    </FormModal>
   );
 }

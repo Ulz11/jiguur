@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { RouterProvider, createBrowserRouter, createRoutesFromElements,
+         Route, NavLink, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ReactNode, createContext, useContext, useState, useEffect } from "react";
 import { user, clearAuth } from "./api";
 import { ToastProvider } from "./ui";
@@ -89,6 +90,8 @@ function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="jz-app-shell">
+      {/* Гарын хүний ЭХНИЙ зогсоол — 13 мөрт цэсийг тойрч агуулга руу */}
+      <a href="#jz-main" className="jz-skip">Агуулга руу алгасах</a>
       {menu && <div className="jz-scrim" onClick={() => setMenu(false)} />}
       <aside id="jz-sidebar" className={`jz-sidebar ${menu ? "open" : ""} ${collapsed ? "collapsed" : ""}`}
              aria-label="Үндсэн навигаци">
@@ -124,7 +127,7 @@ function Shell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="jz-main">
+      <main className="jz-main" id="jz-main" tabIndex={-1}>
         <div className="jz-topbar">
           {/* ☰ нь дүрс дээрээ л ярьдаг тул нэр ба ТӨЛӨВӨӨ хоёуланг хэлнэ */}
           <button className="jz-burger" onClick={() => setMenu((m) => !m)}
@@ -170,34 +173,42 @@ function NotFound() {
   );
 }
 
+/* Замууд хэвээрээ — ГАНЦ ялгаа нь router-ийг `createBrowserRouter`-ээр угсарч
+   байгаа явдал. Ингэснээр `useBlocker` ажиллах боломжтой болно: шинэ гэрээний
+   визард дундуур цэс рүү дарахад бөглөсөн зүйл чимээгүй алдагдахаа болино
+   (`BrowserRouter` дээр энэ дэгээ огт байдаггүй). */
+const router = createBrowserRouter(
+  createRoutesFromElements(
+    <Route>
+      <Route path="/login" element={<Login />} />
+      <Route path="/" element={<Shell><Dashboard /></Shell>} />
+      <Route path="/contracts" element={<Shell><Contracts /></Shell>} />
+      <Route path="/contracts/new" element={<Shell><ContractNew /></Shell>} />
+      <Route path="/contracts/:id" element={<Shell><ContractDetail /></Shell>} />
+      <Route path="/clients" element={<Shell><Clients /></Shell>} />
+      <Route path="/clients/:id" element={<Shell><ClientProfile /></Shell>} />
+      <Route path="/collections" element={<Shell><Collections /></Shell>} />
+      <Route path="/analytics" element={<Shell><Analytics /></Shell>} />
+      <Route path="/audit" element={<Shell><Audit /></Shell>} />
+      <Route path="/warehouse" element={<Shell><Warehouse /></Shell>} />
+      <Route path="/warehouse/stocktake" element={<Shell><Stocktake /></Shell>} />
+      <Route path="/barter" element={<Shell><Barter /></Shell>} />
+      <Route path="/machines" element={<Shell><Machines /></Shell>} />
+      <Route path="/loans" element={<Shell><Loans /></Shell>} />
+      <Route path="/salary" element={<Shell><Salary /></Shell>} />
+      <Route path="/reports" element={<Shell><Reports /></Shell>} />
+      <Route path="/settings" element={<Shell><SettingsPage /></Shell>} />
+      <Route path="*" element={<Shell><NotFound /></Shell>} />
+    </Route>
+  )
+);
+
 export default function App() {
   const [scope, setScope] = useState("all");
   return (
     <ToastProvider>
       <ScopeCtx.Provider value={{ scope, setScope }}>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/" element={<Shell><Dashboard /></Shell>} />
-            <Route path="/contracts" element={<Shell><Contracts /></Shell>} />
-            <Route path="/contracts/new" element={<Shell><ContractNew /></Shell>} />
-            <Route path="/contracts/:id" element={<Shell><ContractDetail /></Shell>} />
-            <Route path="/clients" element={<Shell><Clients /></Shell>} />
-            <Route path="/clients/:id" element={<Shell><ClientProfile /></Shell>} />
-            <Route path="/collections" element={<Shell><Collections /></Shell>} />
-            <Route path="/analytics" element={<Shell><Analytics /></Shell>} />
-            <Route path="/audit" element={<Shell><Audit /></Shell>} />
-            <Route path="/warehouse" element={<Shell><Warehouse /></Shell>} />
-            <Route path="/warehouse/stocktake" element={<Shell><Stocktake /></Shell>} />
-            <Route path="/barter" element={<Shell><Barter /></Shell>} />
-            <Route path="/machines" element={<Shell><Machines /></Shell>} />
-            <Route path="/loans" element={<Shell><Loans /></Shell>} />
-            <Route path="/salary" element={<Shell><Salary /></Shell>} />
-            <Route path="/reports" element={<Shell><Reports /></Shell>} />
-            <Route path="/settings" element={<Shell><SettingsPage /></Shell>} />
-            <Route path="*" element={<Shell><NotFound /></Shell>} />
-          </Routes>
-        </BrowserRouter>
+        <RouterProvider router={router} />
       </ScopeCtx.Provider>
     </ToastProvider>
   );

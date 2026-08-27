@@ -1,10 +1,13 @@
-import { useEffect, useId, useState } from "react";
+import { ReactNode, useEffect, useId, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, money, sayaFmt, openPdf, fmt, user } from "../api";
-import { Spinner, StatePill, TypePill, Prog, Modal, useToast, InlineEdit, Receipt, ConfirmModal } from "../ui";
+import { api, money, fmt, user } from "../api";
+import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, useToast,
+         InlineEdit, Receipt, ConfirmModal } from "../ui";
 import { allocationPreview } from "../lib/alloc";
 import { invoiceLabel } from "../lib/invoice";
 import { parseMoney } from "../lib/num";
+import { formDirty } from "../lib/dirty";
+import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -19,7 +22,12 @@ export default function ContractDetail() {
   const [openMv, setOpenMv] = useState<number | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const toast = useToast();
+  const pdf = usePdf();
   const u = user();
+  /* Үйлдвэрийн дарга материал хөдөлгөх хүн — АВЛАГЫН хүн биш. Түүнд гэрээний
+     үлдэгдэл, нэхэмжлэл, төлбөр, барьцаа, тарифтай PDF харагдах ёсгүй: тэр
+     мэдээллийг агуулахын шалан дээр асуух хүн бий, тэр нь Отгоо. */
+  const seesMoney = u?.role !== "factory";
 
   const load = () => api(`/api/contracts/${id}`).then(setD).catch((e) => toast(e.message, "err"));
   useEffect(() => { load(); api("/api/grades").then(setGrades); }, [id]);
@@ -65,28 +73,31 @@ export default function ContractDetail() {
             <span className="inline-flex items-center gap-1.5">
               Гэрээ №{d.no} ·{" "}
               {u?.role === "manager" ? (
-                <InlineEdit type="date" value={d.start_date} display={`${d.start_date}-с`}
+                <InlineEdit type="date" label="Эхлэх огноо" value={d.start_date} display={`${d.start_date}-с`}
                   confirmText="Эхлэх огноо солих уу?" width="w-36"
                   onSave={(v) => gatedPatch(`/api/contracts/${d.id}`, { start_date: v },
                                             "Гэрээний эхлэх огноо шинэчлэгдлээ")} />
               ) : `${d.start_date}-с`}
             </span>
-            {u?.role !== "factory" ? (
+            {seesMoney ? (
               <>
                 <span className="inline-flex items-center gap-1.5">Дуусах:
-                  <InlineEdit type="date" value={d.end_date || ""} display={d.end_date || "тодорхойгүй"}
+                  <InlineEdit type="date" label="Дуусах огноо" value={d.end_date || ""} display={d.end_date || "тодорхойгүй"}
                     confirmText="Огноо солих уу?" width="w-36"
                     onSave={(v) => savePatch(`/api/contracts/${d.id}`,
                       v ? { end_date: v } : { clear_end_date: true }, "Дуусах огноо шинэчлэгдлээ")} />
                 </span>
                 <span className="inline-flex items-center gap-1.5">Алданги:
-                  <InlineEdit type="number" value={d.penalty_percent} suffix="%/хоног" width="w-20" right
+                  <InlineEdit type="number" label="Алданги" value={d.penalty_percent} suffix="%/хоног" width="w-20" right
                     confirmText="Алданги солих уу?"
                     onSave={(v) => savePatch(`/api/contracts/${d.id}`,
                       { penalty_percent: parseMoney(v) }, "Алдангийн хувь шинэчлэгдлээ")} />
                 </span>
+                {/* Барьцаа нь ГАНЦ гэрээний тодорхой дүн — доорх «Барьцаа»
+                    хайрцаг үүнийг бүтнээр нь харуулдаг. Толгойд нь сая болгож
+                    дугуйлбал нэг тоо хоёр өөр дүн болж харагдана. */}
                 <span className="inline-flex items-center gap-1.5">Барьцаа:
-                  <InlineEdit type="number" value={d.deposit} display={d.deposit > 0 ? sayaFmt(d.deposit) + "₮" : "—"}
+                  <InlineEdit type="number" label="Барьцаа" value={d.deposit} display={d.deposit > 0 ? money(d.deposit) : "—"}
                     confirmText="Барьцаа солих уу?" width="w-28" right
                     onSave={(v) => savePatch(`/api/contracts/${d.id}`,
                       { deposit: parseMoney(v) }, "Барьцаа шинэчлэгдлээ")} />
@@ -96,25 +107,30 @@ export default function ContractDetail() {
               <span>{d.end_date && `→ ${d.end_date} · `}Алданги {d.penalty_percent}%/хоног</span>
             )}
           </div>
-          {u?.role !== "factory" && (
+          {seesMoney && (
             <div className="text-t2 text-[13px] mt-1.5 inline-flex items-center gap-1.5">Тэмдэглэл:
-              <InlineEdit value={d.note} display={d.note || "нэмэх…"} width="w-72"
+              <InlineEdit label="Тэмдэглэл" value={d.note} display={d.note || "нэмэх…"} width="w-72"
                 confirmText="Хадгалах уу?"
                 onSave={(v) => savePatch(`/api/contracts/${d.id}`, { note: v }, "Тэмдэглэл хадгалагдлаа")} />
             </div>
           )}
         </div>
         <div className="flex gap-2.5 flex-wrap">
-          <button className="btn-secondary" onClick={() => openPdf(`/api/contracts/${d.id}/pdf`)}>Гэрээ PDF</button>
-          <button className="btn-secondary" onClick={() => openPdf(`/api/contracts/${d.id}/act-pdf`)}>Акт PDF</button>
-          {/* `cyc` нь явагдаж буй цикл — сервер яг үүн дээр л хавсралт гаргана.
-              `openPdf` алдааг ШИДДЭГ, дуудагч нь барьдаггүй тул товчийг нуух нь засвар. */}
-          {d.type === "rent" && cyc && (
-            <button className="btn-secondary"
-                    onClick={() => openPdf(`/api/contracts/${d.id}/cycle-appendix-pdf`)}>Энэ циклийн хавсралт</button>
-          )}
-          {u?.role !== "factory" && (
-            <button className="btn-secondary" onClick={() => setModal("pay")}>Төлбөр бүртгэх</button>
+          {/* Гурван PDF-ийн аль нь ч тариф, дүн, алданги авч явдаг — үйлдвэрийн
+              дарга эдгээрийг хэвлэдэггүй, харах ч ёсгүй. */}
+          {seesMoney && (
+            <>
+              <PdfButton pdf={pdf} path={`/api/contracts/${d.id}/pdf`}
+                         busyLabel="Гаргаж байна…">Гэрээ PDF</PdfButton>
+              <PdfButton pdf={pdf} path={`/api/contracts/${d.id}/act-pdf`}
+                         busyLabel="Гаргаж байна…">Акт PDF</PdfButton>
+              {/* `cyc` нь явагдаж буй цикл — сервер яг үүн дээр л хавсралт гаргана. */}
+              {d.type === "rent" && cyc && (
+                <PdfButton pdf={pdf} path={`/api/contracts/${d.id}/cycle-appendix-pdf`}
+                           busyLabel="Гаргаж байна…">Энэ циклийн хавсралт</PdfButton>
+              )}
+              <button className="btn-secondary" onClick={() => setModal("pay")}>Төлбөр бүртгэх</button>
+            </>
           )}
           {canManage && d.type === "rent" && d.status === "active" && (
             <>
@@ -129,8 +145,14 @@ export default function ContractDetail() {
       <div className="card p-5 mb-4 flex gap-8 flex-wrap items-center">
         {d.type === "rent" && <Num label="Өдрийн дүн" val={money(d.day_amount)} />}
         {cyc && <Num label="Энэ циклд хуримтлагдсан" val={money(cyc.accrued)} />}
-        <Num label="Нийт үлдэгдэл" val={sayaFmt(d.balance) + "₮"} danger={d.state === "overdue"} />
-        {d.penalty > 0 && <Num label="Алданги (өнөөдрөөр)" val={sayaFmt(d.penalty) + "₮"} danger />}
+        {/* Энэ мөрөнд «Өдрийн дүн», «Хуримтлагдсан» нь ТӨГРӨГӨӨРӨӨ зогсож
+            байхад үлдэгдэл нь «12.3 сая» гэж дугуйлагддаг байв — Отгоо яг
+            хэдийг нэхэхээ мэдэхгүй, доорх нэхэмжлэлүүдтэй нийлүүлж ч чадахгүй.
+            Ганц гэрээний дүн энд бүтнээрээ зогсоно. */}
+        {seesMoney && (
+          <Num label="Нийт үлдэгдэл" val={money(d.balance)} danger={d.state === "overdue"} />
+        )}
+        {seesMoney && d.penalty > 0 && <Num label="Алданги (өнөөдрөөр)" val={money(d.penalty)} danger />}
         {cyc && (
           <div className="flex-1 min-w-[210px]">
             <div className="text-[12px] text-t3 font-semibold uppercase tracking-wider mb-2.5">
@@ -167,6 +189,7 @@ export default function ContractDetail() {
                     <td className="td text-right tabular-nums">
                       {u?.role === "manager" ? (
                         <InlineEdit type="number" right width="w-24"
+                          label={`${it.material} (${it.grade}) · ${d.type === "rent" ? "тариф" : "нэгж үнэ"}`}
                           value={d.type === "rent" ? it.daily_rate : it.unit_price}
                           display={fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}
                           confirmText="Энэ циклээс шинэ үнээр?"
@@ -190,14 +213,16 @@ export default function ContractDetail() {
           </div>
 
           {/* Нэхэмжлэл */}
+          {seesMoney && (
           <div className="card overflow-x-auto">
             <div className="flex items-center justify-between px-4 pt-4 pb-1">
               <h3 className="font-bold text-ink text-[15.5px]">Нэхэмжлэлүүд</h3>
             </div>
-            <table className="w-full min-w-[560px]">
+            <table className="w-full min-w-[640px]">
               <thead><tr>
                 <th className="th">{d.type === "rent" ? "Үе" : "Нэхэмжлэл"}</th><th className="th text-right">Дүн</th>
-                <th className="th text-right">Төлсөн</th><th className="th">Төлөв</th><th className="th"></th>
+                <th className="th text-right">Төлсөн</th><th className="th text-right">Үлдэгдэл</th>
+                <th className="th">Төлөв</th><th className="th"></th>
               </tr></thead>
               <tbody>
                 {d.invoices.map((inv: any) => {
@@ -215,16 +240,23 @@ export default function ContractDetail() {
                       {inv.charge_amount > 0 && <span className="block text-[12px] text-t3">үүнд засвар/акт {money(inv.charge_amount)}</span>}
                     </td>
                     <td className="td text-right tabular-nums">{money(inv.paid)}</td>
+                    {/* «Дүн − Төлсөн»-ийг Отгоо толгойдоо бодож сууж байв — 30
+                        нэхэмжлэлийн аль нь хаагдаагүйг ялгах ганц багана. */}
+                    <td className={`td text-right tabular-nums font-bold ${
+                          inv.outstanding > 0 && inv.status === "overdue" ? "text-danger"
+                          : inv.outstanding > 0 ? "text-ink" : "text-t3"}`}>
+                      {inv.outstanding > 0 ? money(inv.outstanding) : "—"}
+                    </td>
                     <td className="td"><StatePill state={inv.status} /></td>
                     <td className="td">
                       <div className="flex gap-1.5 flex-wrap">
-                        <button className="btn-ghost btn-row"
-                                onClick={() => openPdf(`/api/invoices/${inv.id}/pdf`)}>PDF</button>
+                        <PdfButton pdf={pdf} className="btn-ghost btn-row"
+                                   path={`/api/invoices/${inv.id}/pdf`}>PDF</PdfButton>
                         {/* Хавсралт нь ЗӨВХӨН түрээст: худалдааны нэхэмжлэлд
                             хоногийн цонх байхгүй тул сервер 400 буцаана. */}
                         {d.type === "rent" && (
-                          <button className="btn-ghost btn-row"
-                                  onClick={() => openPdf(`/api/invoices/${inv.id}/appendix-pdf`)}>Хавсралт</button>
+                          <PdfButton pdf={pdf} className="btn-ghost btn-row"
+                                     path={`/api/invoices/${inv.id}/appendix-pdf`}>Хавсралт</PdfButton>
                         )}
                       </div>
                     </td>
@@ -235,6 +267,7 @@ export default function ContractDetail() {
             </table>
             {d.invoices.length === 0 && <p className="text-t3 text-sm px-4 pb-4">Эхний цикл дуусаагүй — нэхэмжлэл автоматаар үүснэ.</p>}
           </div>
+          )}
         </div>
 
         {/* Хөдөлгөөн + төлбөр */}
@@ -275,7 +308,8 @@ export default function ContractDetail() {
                     <div className="mt-1.5 rounded-2xl border border-line-strong p-3 bg-sunken/40">
                       {u?.role === "manager" && (
                         <div className="text-[12px] text-t2 inline-flex items-center gap-1.5 mb-2">Огноо:
-                          <InlineEdit type="date" value={mv.date} display={mv.date} width="w-36"
+                          <InlineEdit type="date" label={`${mvName(mv.type)} — огноо`}
+                            value={mv.date} display={mv.date} width="w-36"
                             confirmText="Огноо солих уу?"
                             onSave={(v) => gatedPatch(`/api/movements/${mv.id}`, { date: v },
                                                       "Хөдөлгөөний огноо шинэчлэгдлээ")} />
@@ -293,7 +327,8 @@ export default function ContractDetail() {
                           </div>
                           <span className="ml-auto text-[12px] text-t2 inline-flex items-center gap-1.5">Тоо:
                             {u?.role === "manager" ? (
-                              <InlineEdit type="number" right width="w-20" value={l.qty} display={fmt(l.qty)}
+                              <InlineEdit type="number" right width="w-20" label={`${l.material} — тоо`}
+                                value={l.qty} display={fmt(l.qty)}
                                 confirmText="Тоо солих уу?"
                                 onSave={(v) => gatedPatch(`/api/movement-lines/${l.id}`,
                                                           { qty: parseMoney(v) },
@@ -303,7 +338,8 @@ export default function ContractDetail() {
                           {mv.type === "ISSUE" && (
                             <span className="text-[12px] text-t2 inline-flex items-center gap-1.5">Тариф:
                               {u?.role === "manager" ? (
-                                <InlineEdit type="number" right width="w-20" value={l.rate ?? ""}
+                                <InlineEdit type="number" right width="w-20" label={`${l.material} — тариф`}
+                                  value={l.rate ?? ""}
                                   display={l.rate != null ? fmt(l.rate) : "—"}
                                   confirmText="Тариф солих уу?"
                                   onSave={(v) => gatedPatch(`/api/movement-lines/${l.id}`,
@@ -323,6 +359,7 @@ export default function ContractDetail() {
             </div>
           </div>
 
+          {seesMoney && (
           <div className="card p-5">
             <h3 className="font-bold text-ink text-[15.5px] mb-3">Төлбөрүүд</h3>
             {d.payments.length === 0 && <p className="text-t3 text-sm">Төлбөр бүртгэгдээгүй.</p>}
@@ -338,8 +375,9 @@ export default function ContractDetail() {
               </div>
             ))}
           </div>
+          )}
 
-          {d.deposit > 0 && (
+          {seesMoney && d.deposit > 0 && (
             <div className="card p-5">
               <h3 className="font-bold text-ink text-[15.5px] mb-3">Барьцаа</h3>
               <div className="flex justify-between items-baseline py-1.5">
@@ -366,10 +404,8 @@ export default function ContractDetail() {
               ) : (
                 <>
                   <div className="mt-1 mb-3"><span className="pill-amber">Тооцоо хийгдээгүй</span></div>
-                  {u?.role !== "factory" && (
-                    <button className="btn-primary w-full justify-center"
-                            onClick={() => setModal("deposit")}>Барьцааны тооцоо хийх</button>
-                  )}
+                  <button className="btn-primary w-full justify-center"
+                          onClick={() => setModal("deposit")}>Барьцааны тооцоо хийх</button>
                 </>
               )}
             </div>
@@ -482,6 +518,26 @@ function Num({ label, val, danger }: { label: string; val: string; danger?: bool
   );
 }
 
+/** PDF товч — дарсан агшнаас нээгдэх хүртэл өөрийгөө түгжиж, ЯВЖ БАЙГААГАА
+ *  хэлнэ. Сервер PDF нийлүүлэхэд секундууд зарцуулагддаг: дохиогүй товч нь
+ *  Отгоог дахин дарахад хүргэж, хоёр таб нээгддэг байв. Алдаа гарвал
+ *  `usePdf` серверийн шалтгааныг мэдэгдэл болгож харуулна. */
+function PdfButton({ pdf, path, children, className = "btn-secondary", busyLabel = "…" }: {
+  pdf: ReturnType<typeof usePdf>;
+  path: string;
+  children: ReactNode;
+  className?: string;
+  busyLabel?: ReactNode;
+}) {
+  const mine = pdf.busyPath === path;
+  return (
+    <button className={className} disabled={pdf.busy} aria-busy={mine || undefined}
+            onClick={() => pdf.open(path)}>
+      {mine ? busyLabel : children}
+    </button>
+  );
+}
+
 /* ---------- Буцаалт ---------- */
 function ReturnModal({ d, grades, onClose, onDone }: any) {
   const toast = useToast();
@@ -516,10 +572,10 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
   }
 
   // Ямар нэг тоо бөглөсөн бол санамсаргүй хаагдаж бүх мөр алдагдахаас хамгаална
-  const dirty = rows.some((r) => r.ret > 0 || r.repair > 0 || r.writeoff > 0);
+  const dirty = date !== today() || rows.some((r) => r.ret > 0 || r.repair > 0 || r.writeoff > 0);
 
   return (
-    <Modal title="Буцаалт бүртгэх" onClose={onClose} wide dirty={dirty}>
+    <FormModal title="Буцаалт бүртгэх" onClose={onClose} wide dirty={dirty}>
       <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
       <input id={`${uid}-date`} type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
 
@@ -631,7 +687,7 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
           {busy ? "…" : "✓ Буцаалт бүртгэх"}
         </button>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
@@ -644,6 +700,10 @@ function AddModal({ d, onClose, onDone }: any) {
     d.items.map((i: any) => ({ ...i, add: 0, rate: rent ? i.daily_rate : i.unit_price })));
   const [busy, setBusy] = useState(false);
   const uid = useId();
+  /* Тоо оруулсан, тарифыг нь өөрчилсөн, эсвэл огноог хөдөлгөсөн бүхэн —
+     санамсаргүй хаалтад алдагдах ёсгүй хөдөлмөр. */
+  const dirty = date !== today()
+    || rows.some((r) => r.add > 0 || r.rate !== (rent ? r.daily_rate : r.unit_price));
 
   async function submit() {
     const lines = rows.filter((r) => r.add > 0).map((r) => ({
@@ -659,7 +719,7 @@ function AddModal({ d, onClose, onDone }: any) {
   }
 
   return (
-    <Modal title="Нэмэлт олголт" onClose={onClose}>
+    <FormModal title="Нэмэлт олголт" onClose={onClose} dirty={dirty}>
       <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
       <input id={`${uid}-date`} type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
       <div className="flex items-center gap-3 pb-1" aria-hidden="true">
@@ -702,7 +762,7 @@ function AddModal({ d, onClose, onDone }: any) {
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <button className="btn-primary" disabled={busy} onClick={submit}>{busy ? "…" : "Илгээх"}</button>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
@@ -765,7 +825,9 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   }
 
   return (
-    <Modal title="Төлбөр бүртгэх" onClose={onClose} dirty={amt > 0 || barter.trim().length > 0}>
+    /* Гараар хуваарилалт эхлүүлсэн бол тэр хөдөлмөр ч дүнтэй адил алдагдана */
+    <FormModal title="Төлбөр бүртгэх" onClose={onClose}
+               dirty={amt > 0 || barter.trim().length > 0 || date !== today() || manual !== null}>
       <div className="grid grid-cols-2 gap-3.5">
         <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
           <input id={`${uid}-date`} type="date" className="inp" value={date} onChange={(e) => setDate(e.target.value)} /></div>
@@ -862,7 +924,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
           {busy ? "…" : "Бүртгэх"}
         </button>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
@@ -871,11 +933,10 @@ function DepositModal({ d, onClose, onDone }: any) {
   const toast = useToast();
   const debt = Math.max(d.balance, 0);
   const suggestApply = Math.min(d.deposit, debt);
-  const [f, setF] = useState({
-    date: today(),
-    apply: String(Math.round(suggestApply)),
-    ret: String(Math.round(d.deposit - suggestApply)),
-  });
+  // Санал болгосон хуваарилалт нь ЭХНИЙ утга — үүнийг хөндөөгүй бол цэвэрхэн
+  const f0 = { date: today(), apply: String(Math.round(suggestApply)),
+               ret: String(Math.round(d.deposit - suggestApply)) };
+  const [f, setF] = useState(f0);
   const [busy, setBusy] = useState(false);
   const uid = useId();
   const apply = parseMoney(f.apply);
@@ -884,7 +945,7 @@ function DepositModal({ d, onClose, onDone }: any) {
   const left = d.deposit - apply - ret;
 
   return (
-    <Modal title="Барьцааны тооцоо" onClose={onClose}>
+    <FormModal title="Барьцааны тооцоо" onClose={onClose} dirty={formDirty(f0, f)}>
       <p className="text-[13.5px] text-t2 mb-4">
         Гэрээ №{d.no} · <b className="text-ink">{d.client}</b>. Барьцаа{" "}
         <b className="text-ink tabular-nums">{money(d.deposit)}</b>
@@ -925,30 +986,32 @@ function DepositModal({ d, onClose, onDone }: any) {
             toast("Барьцааны тооцоо хийгдлээ");
             onDone();
           } catch (e: any) { toast(e.message, "err"); setBusy(false); }
-        }}>Тооцоо хийх</button>
+        }}>{busy ? "…" : "Тооцоо хийх"}</button>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
 /* ---------- Сунгах ---------- */
 function ExtendModal({ d, onClose, onDone }: any) {
   const toast = useToast();
-  const [date, setDate] = useState(d.end_date || today());
+  const date0 = d.end_date || today();
+  const [date, setDate] = useState(date0);
   const uid = useId();
   return (
-    <Modal title="Гэрээ сунгах" onClose={onClose}>
+    <FormModal title="Гэрээ сунгах" onClose={onClose} dirty={date !== date0}>
       <label className="lbl" htmlFor={`${uid}-end`}>Шинэ дуусах огноо</label>
       <input id={`${uid}-end`} type="date" className="inp mb-5" value={date} onChange={(e) => setDate(e.target.value)} />
       <div className="flex justify-end gap-2.5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" onClick={async () => {
+        {/* Сунгалт нь давхар дарахад давхар бүртгэгддэг байв */}
+        <SubmitButton onSubmit={async () => {
           try {
             await api(`/api/contracts/${d.id}/extend`, { method: "POST", body: JSON.stringify({ end_date: date }) });
             toast("Гэрээ сунгагдлаа"); onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Сунгах</button>
+        }}>Сунгах</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }

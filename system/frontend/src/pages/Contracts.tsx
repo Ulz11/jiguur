@@ -90,7 +90,8 @@ export default function Contracts() {
                                       `Гэрээ №${c.no} · ${c.client} — нээх`, "row")}>
                   <td className="td">
                     <span className="font-bold text-ink">{c.client}</span>
-                    <span className="block text-xs text-t3 mt-0.5">№{c.no} · {c.start_date}-с
+                    <span className="block text-xs text-t3 mt-0.5" title={c.deposit > 0 ? `Барьцаа ${money(c.deposit)}` : undefined}>
+                      №{c.no} · {c.start_date}-с
                       {c.deposit > 0 && ` · барьцаа ${sayaFmt(c.deposit)}₮`}</span>
                   </td>
                   <td className="td"><TypePill type={c.type} /></td>
@@ -114,10 +115,14 @@ export default function Contracts() {
                     {c.day_amount ? money(c.day_amount) : "—"}
                   </td>
                   <td className="td text-right tabular-nums">
-                    <span className={`font-bold ${c.state === "overdue" ? "text-danger" : "text-ink"}`}>
+                    {/* Жагсаалт нь харьцуулахад зориулагдсан тул сая хэвээр —
+                        бүтэн дүн нь хулгана хүрэхэд, гэрээн дотроо ил зогсоно. */}
+                    <span className={`font-bold ${c.state === "overdue" ? "text-danger" : "text-ink"}`}
+                          title={money(c.balance)}>
                       {sayaFmt(c.balance)}₮
                     </span>
-                    {c.penalty > 0 && <span className="block text-[12px] text-danger">+ алданги {sayaFmt(c.penalty)}₮</span>}
+                    {c.penalty > 0 && <span className="block text-[12px] text-danger"
+                                            title={money(c.penalty)}>+ алданги {sayaFmt(c.penalty)}₮</span>}
                   </td>
                   <td className="td"><StatePill state={c.state} /></td>
                   {/* Мөр дарагддаг гэдгийг ЗӨВХӨН хулгана дээр нь ирэхэд хэлдэг

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, fmt, sayaFmt, user } from "../api";
+import { api, fmt, money, sayaFmt, user } from "../api";
 import { Spinner, Prog, useToast, ConfirmModal, Refreshing } from "../ui";
 import { useScope } from "../App";
 import { useLive } from "../lib/live";
@@ -236,14 +236,18 @@ export default function Dashboard() {
       <div className="command-metrics">
         <div className="command-hero relative overflow-hidden">
           <div className="text-[12.5px] text-white/80 font-medium mb-2">Авлагын нийт үлдэгдэл</div>
-          <div className="text-[28px] font-extrabold text-white tabular-nums leading-tight">
+          {/* Дугуйлсан тоо нь харцанд, бүтэн төгрөг нь хулгана хүрэхэд */}
+          <div className="text-[28px] font-extrabold text-white tabular-nums leading-tight"
+               title={money(k.receivable)}>
             {sayaFmt(k.receivable)} <span className="text-sm text-white/70 font-semibold">₮</span>
           </div>
-          <div className="mt-2"><span className="pill bg-white/10 text-white/80">алданги +{sayaFmt(k.penalty)}₮</span></div>
+          <div className="mt-2"><span className="pill bg-white/10 text-white/80"
+                                      title={money(k.penalty)}>алданги +{sayaFmt(k.penalty)}₮</span></div>
         </div>
         <div className="command-metric">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Хугацаа хэтэрсэн</div>
-          <div className="text-[28px] font-extrabold text-danger tabular-nums leading-tight">
+          <div className="text-[28px] font-extrabold text-danger tabular-nums leading-tight"
+               title={money(k.overdue)}>
             {sayaFmt(k.overdue)} <span className="text-sm text-t2 font-semibold">₮</span>
           </div>
           <div className="mt-2"><span className="pill-red">{k.overdue_count} нэхэмжлэл</span></div>
@@ -256,7 +260,8 @@ export default function Dashboard() {
         {scope === "sale" ? (
           <div className="card p-5">
             <div className="text-[12.5px] text-t2 font-medium mb-2">Энэ сарын худалдаа</div>
-            <div className="text-[28px] font-extrabold text-ink tabular-nums leading-tight">
+            <div className="text-[28px] font-extrabold text-ink tabular-nums leading-tight"
+                 title={money(k.month_sale)}>
               {sayaFmt(k.month_sale)} <span className="text-sm text-t2 font-semibold">₮</span>
             </div>
           </div>
@@ -287,12 +292,12 @@ export default function Dashboard() {
                   тэр харьцаа хаана ч бичээстэй байгаагүй. */}
               <div className="flex-1"><Prog pct={(a.amount / agingMax) * 100} color={agingColors[i]}
                      label={`${a.label} — ${sayaFmt(a.amount)}₮, хамгийн том хувингийн ${Math.round((a.amount / agingMax) * 100)}%`} /></div>
-              <b className="w-[80px] text-right tabular-nums text-[13px]">{sayaFmt(a.amount)}</b>
+              <b className="w-[80px] text-right tabular-nums text-[13px]" title={money(a.amount)}>{sayaFmt(a.amount)}</b>
             </div>
           ))}
           <div className="mt-4 pt-3.5 border-t border-sunken flex justify-between items-center">
             <span className="text-[12.5px] text-t2">90+ хоног хэтэрсэн</span>
-            <b className="text-danger tabular-nums">{sayaFmt(d.aging[3].amount)}₮</b>
+            <b className="text-danger tabular-nums" title={money(d.aging[3].amount)}>{sayaFmt(d.aging[3].amount)}₮</b>
           </div>
         </div>
       </div>
@@ -315,7 +320,7 @@ export default function Dashboard() {
                 <span className="text-[12px] text-t2">Сарын хүү {l.rate}%</span>
               </div>
               <div className="ml-auto text-right shrink-0">
-                <b className="tabular-nums text-[13.5px]">{sayaFmt(l.amount)}₮</b>
+                <b className="tabular-nums text-[13.5px]" title={money(l.amount)}>{sayaFmt(l.amount)}₮</b>
                 <span className="block text-[12px] text-t3">{l.due}</span>
               </div>
             </div>
@@ -323,7 +328,7 @@ export default function Dashboard() {
           {(d.loans_total || 0) > 0 && (
             <div className="mt-3 pt-3 border-t border-sunken flex justify-between items-center">
               <span className="text-[12.5px] text-t2">Нийт өглөг</span>
-              <b className="tabular-nums text-danger">{sayaFmt(d.loans_total)}₮</b>
+              <b className="tabular-nums text-danger" title={money(d.loans_total)}>{sayaFmt(d.loans_total)}₮</b>
             </div>
           )}
         </div>

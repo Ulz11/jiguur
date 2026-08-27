@@ -1,7 +1,8 @@
 import { useEffect, useId, useState } from "react";
 import { api, fmt, money, sayaFmt, user } from "../api";
-import { Spinner, Modal, useToast, Empty, Receipt } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt } from "../ui";
 import { parseMoney } from "../lib/num";
+import { formDirty } from "../lib/dirty";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const TYPES = ["Машин", "Байр", "Материал", "Бусад"];
@@ -70,7 +71,7 @@ export default function Barter() {
         <div className="card p-4 mb-4 flex gap-6 flex-wrap items-center">
           <b className="text-[13px] text-ink">Хэвтэж буй хугацаагаар:</b>
           {s.aging.map((b: any) => (
-            <span key={b.bucket} className="text-[13px] text-t2">
+            <span key={b.bucket} className="text-[13px] text-t2" title={money(b.value)}>
               <b className={b.bucket.startsWith("181") || b.bucket === "365+" ? "text-danger" : "text-ink"}>
                 {b.bucket} хоног
               </b>{" "}— {b.count}ш · {sayaFmt(b.value)}₮
@@ -157,12 +158,13 @@ export default function Barter() {
 
 function SellModal({ a, onClose, onDone }: any) {
   const toast = useToast();
-  const [f, setF] = useState({ date: today(), amount: "", sold_to: "", note: "" });
+  const f0 = { date: today(), amount: "", sold_to: "", note: "" };
+  const [f, setF] = useState(f0);
   const amt = parseMoney(f.amount);
   const gain = amt ? amt - a.value_in : null;
   const uid = useId();
   return (
-    <Modal title={`Зарах — ${a.name}`} onClose={onClose}>
+    <FormModal title={`Зарах — ${a.name}`} onClose={onClose} dirty={formDirty(f0, f)}>
       <div className="grid grid-cols-2 gap-3.5">
         <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
           <input id={`${uid}-date`} type="date" className="inp" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
@@ -190,29 +192,30 @@ function SellModal({ a, onClose, onDone }: any) {
       </div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary !bg-money" disabled={!amt} onClick={async () => {
+        <SubmitButton className="btn-primary !bg-money" disabled={!amt} onSubmit={async () => {
           try {
             await api(`/api/barter/${a.id}/sell`, { method: "POST",
               body: JSON.stringify({ date: f.date, amount: amt, sold_to: f.sold_to, note: f.note }) });
             toast("Борлуулалт бүртгэгдлээ — ашиг/алдагдал тайланд тусав");
             onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Зарах</button>
+        }}>Зарах</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
 function StockModal({ a, onClose, onDone }: any) {
   const toast = useToast();
   const [mats, setMats] = useState<any[] | null>(null);
-  const [f, setF] = useState({ material_id: 0, grade_id: 0, qty: "" });
+  const f0 = { material_id: 0, grade_id: 0, qty: "" };
+  const [f, setF] = useState(f0);
   const uid = useId();
   useEffect(() => { api("/api/materials").then(setMats); }, []);
   if (!mats) return null;
   const m = mats.find((x) => x.id === f.material_id);
   return (
-    <Modal title={`Нөөцөд оруулах — ${a.name}`} onClose={onClose}>
+    <FormModal title={`Нөөцөд оруулах — ${a.name}`} onClose={onClose} dirty={formDirty(f0, f)}>
       <label className="lbl" htmlFor={`${uid}-mat`}>Материал</label>
       <select id={`${uid}-mat`} className="inp mb-3.5" value={f.material_id}
               onChange={(e) => setF({ ...f, material_id: +e.target.value, grade_id: 0 })}>
@@ -232,29 +235,30 @@ function StockModal({ a, onClose, onDone }: any) {
       <input id={`${uid}-qty`} type="number" className="inp mb-5" value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value })} />
       <div className="flex justify-end gap-2.5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={!f.material_id || !f.grade_id || !+f.qty} onClick={async () => {
+        <SubmitButton disabled={!f.material_id || !f.grade_id || !+f.qty} onSubmit={async () => {
           try {
             await api(`/api/barter/${a.id}/to-stock`, { method: "POST",
               body: JSON.stringify({ material_id: f.material_id, grade_id: f.grade_id, qty: +f.qty }) });
             toast("Агуулахын нөөцөд нэмэгдлээ");
             onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Оруулах</button>
+        }}>Оруулах</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
 function AssetModal({ a, onClose, onDone }: any) {
   const toast = useToast();
-  const [f, setF] = useState({
+  const f0 = {
     type: a?.type || "Машин", name: a?.name || "", detail: a?.detail || "",
     date_in: a?.date_in || today(), value_in: a ? String(a.value_in) : "",
     asking_price: a ? String(a.asking_price) : "", note: a?.note || "",
-  });
+  };
+  const [f, setF] = useState(f0);
   const uid = useId();
   return (
-    <Modal title={a ? "Хөрөнгө засах" : "Хөрөнгө бүртгэх"} onClose={onClose}>
+    <FormModal title={a ? "Хөрөнгө засах" : "Хөрөнгө бүртгэх"} onClose={onClose} dirty={formDirty(f0, f)}>
       <div className="lbl" id={`${uid}-type`}>Төрөл</div>
       <div className="flex gap-2 mb-3.5" role="group" aria-labelledby={`${uid}-type`}>
         {TYPES.map((t) => (
@@ -282,7 +286,7 @@ function AssetModal({ a, onClose, onDone }: any) {
       </div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={!f.name.trim() || !parseMoney(f.value_in)} onClick={async () => {
+        <SubmitButton disabled={!f.name.trim() || !parseMoney(f.value_in)} onSubmit={async () => {
           const body = { ...f, value_in: parseMoney(f.value_in), asking_price: parseMoney(f.asking_price) };
           try {
             if (a) await api(`/api/barter/${a.id}`, { method: "PUT", body: JSON.stringify(body) });
@@ -290,8 +294,8 @@ function AssetModal({ a, onClose, onDone }: any) {
             toast("Хадгалагдлаа");
             onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Хадгалах</button>
+        }}>Хадгалах</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }

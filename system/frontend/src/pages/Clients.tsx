@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, fmt, sayaFmt, token, user } from "../api";
-import { Spinner, Modal, useToast, Empty } from "../ui";
+import { api, money, sayaFmt, user } from "../api";
+import { Spinner, FormModal, SubmitButton, useToast, Empty } from "../ui";
+import { formDirty } from "../lib/dirty";
+import { useDownload } from "../lib/docs";
 
 export default function Clients() {
   const [rows, setRows] = useState<any[] | null>(null);
@@ -10,6 +12,7 @@ export default function Clients() {
   const nav = useNavigate();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  const dl = useDownload();
   const u = user();
 
   const load = () => api("/api/clients").then(setRows);
@@ -29,16 +32,7 @@ export default function Clients() {
     e.target.value = "";
   }
 
-  async function exportXlsx() {
-    const res = await fetch("/api/export/receivables.xlsx",
-      { headers: { Authorization: `Bearer ${token()}` } });
-    const blob = await res.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "avlaga.xlsx";
-    a.click();
-  }
-
+  const EXPORT = "/api/export/receivables.xlsx";
   const shown = rows.filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase()));
 
   return (
@@ -53,7 +47,13 @@ export default function Clients() {
             <input type="file" ref={fileRef} className="hidden" accept=".xlsx" onChange={importFile} />
             {/* Тайлан хуудас «Excel» гэдэг — нэг файлыг хоёр нэрээр дуудахгүй */}
             <button className="btn-secondary" onClick={() => fileRef.current?.click()}>⇧ Excel-ээс импортлох</button>
-            <button className="btn-secondary" onClick={exportXlsx}>⇩ Авлага Excel-ээр</button>
+            {/* Сервер алдаа буцаавал өмнө нь тэр алдааны JSON нь «avlaga.xlsx»
+                нэрээр диск рүү буудаг байв — Excel л «эвдэрсэн файл» гэж хэлнэ. */}
+            <button className="btn-secondary" disabled={dl.busy}
+                    aria-busy={dl.busyPath === EXPORT || undefined}
+                    onClick={() => dl.download(EXPORT, "avlaga.xlsx")}>
+              {dl.busyPath === EXPORT ? "Бэлтгэж байна…" : "⇩ Авлага Excel-ээр"}
+            </button>
             <button className="btn-primary" onClick={() => setShow(true)}>+ Шинэ харилцагч</button>
           </div>
         )}
@@ -76,10 +76,13 @@ export default function Clients() {
                 </td>
                 <td className="td text-right tabular-nums">{c.active_contracts}</td>
                 <td className="td text-right tabular-nums">
-                  <span className={`font-bold ${c.overdue ? "text-danger" : "text-ink"}`}>{sayaFmt(c.receivable)}₮</span>
-                  {c.penalty > 0 && <span className="block text-[12px] text-danger">+ алданги {sayaFmt(c.penalty)}₮</span>}
+                  <span className={`font-bold ${c.overdue ? "text-danger" : "text-ink"}`}
+                        title={money(c.receivable)}>{sayaFmt(c.receivable)}₮</span>
+                  {c.penalty > 0 && <span className="block text-[12px] text-danger"
+                                          title={money(c.penalty)}>+ алданги {sayaFmt(c.penalty)}₮</span>}
                 </td>
-                <td className="td text-right tabular-nums">{c.deposit > 0 ? sayaFmt(c.deposit) + "₮" : "—"}</td>
+                <td className="td text-right tabular-nums" title={c.deposit > 0 ? money(c.deposit) : undefined}>
+                  {c.deposit > 0 ? sayaFmt(c.deposit) + "₮" : "—"}</td>
                 <td className="td">
                   {c.overdue ? <span className="pill-red">Хэтэрсэн өртэй</span> :
                    c.receivable > 0 ? <span className="pill-amber">Үлдэгдэлтэй</span> :
@@ -99,11 +102,11 @@ export default function Clients() {
 
 function NewClientModal({ onClose, onDone }: any) {
   const toast = useToast();
-  const [f, setF] = useState({ name: "", reg: "", person: "", phone: "", note: "" });
-  const [busy, setBusy] = useState(false);
+  const f0 = { name: "", reg: "", person: "", phone: "", note: "" };
+  const [f, setF] = useState(f0);
   const uid = useId();
   return (
-    <Modal title="Шинэ харилцагч" onClose={onClose}>
+    <FormModal title="Шинэ харилцагч" onClose={onClose} dirty={formDirty(f0, f)}>
       <div className="grid grid-cols-2 gap-3.5 max-sm:grid-cols-1">
         <div className="col-span-2 max-sm:col-span-1"><label className="lbl" htmlFor={`${uid}-name`}>Компанийн нэр *</label>
           <input id={`${uid}-name`} className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></div>
@@ -118,12 +121,11 @@ function NewClientModal({ onClose, onDone }: any) {
       </div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={busy || !f.name.trim()} onClick={async () => {
-          setBusy(true);
+        <SubmitButton disabled={!f.name.trim()} onSubmit={async () => {
           try { await api("/api/clients", { method: "POST", body: JSON.stringify(f) }); toast("Харилцагч бүртгэгдлээ"); onDone(); }
-          catch (e: any) { toast(e.message, "err"); setBusy(false); }
-        }}>Бүртгэх</button>
+          catch (e: any) { toast(e.message, "err"); }
+        }}>Бүртгэх</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }

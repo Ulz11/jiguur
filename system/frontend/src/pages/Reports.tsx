@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { api, money, sayaFmt, token } from "../api";
+import { api, money, sayaFmt } from "../api";
 import { Spinner, useToast, Refreshing } from "../ui";
+import { useDownload } from "../lib/docs";
 import { useLive } from "../lib/live";
 
 export default function Reports() {
@@ -8,6 +9,7 @@ export default function Reports() {
   const [d, setD] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+  const dl = useDownload();
 
   /* Сар солиход `setD(null)` хийж БҮТЭН хуудсыг нурааж байв: Отгоо 6 сарын
      тайлангаа хараад 12 руу дарахад дэлгэц хоосорч, юутай харьцуулж байснаа
@@ -24,15 +26,10 @@ export default function Reports() {
   if (!d) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
   const p = d.pnl;
 
-  async function download() {
-    const res = await fetch(`/api/reports/export.xlsx?months=${months}`,
-      { headers: { Authorization: `Bearer ${token()}` } });
-    const blob = await res.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "jiguur-tailan.xlsx";
-    a.click();
-  }
+  /* Тайлан бүрдүүлэхэд сервер хэдэн секунд бодно — товч дуугүй зогсох ёсгүй.
+     Алдаа гарвал өмнө нь алдааны JSON нь «jiguur-tailan.xlsx» болж диск рүү
+     бууж, юу болсныг хаанаас ч мэдэхгүй байв. */
+  const exportPath = `/api/reports/export.xlsx?months=${months}`;
 
   return (
     <Refreshing busy={busy}>
@@ -47,7 +44,11 @@ export default function Reports() {
               <button key={m} onClick={() => setMonths(m)} className={months === m ? "on" : ""}>{m} сар</button>
             ))}
           </div>
-          <button className="btn-secondary" onClick={download}>⇩ Excel татах</button>
+          <button className="btn-secondary" disabled={dl.busy}
+                  aria-busy={dl.busyPath === exportPath || undefined}
+                  onClick={() => dl.download(exportPath, "jiguur-tailan.xlsx")}>
+            {dl.busyPath === exportPath ? "Бэлтгэж байна…" : "⇩ Excel татах"}
+          </button>
         </div>
       </div>
 

@@ -132,8 +132,8 @@ function Materials({ d, busy, months, setMonths }: any) {
                     </span>
                   </div>
                 </td>
-                <td className="td text-right tabular-nums text-t2">{sayaFmt(r.asset_value)}₮</td>
-                <td className="td text-right tabular-nums font-bold text-ink">{sayaFmt(r.revenue)}₮</td>
+                <td className="td text-right tabular-nums text-t2" title={money(r.asset_value)}>{sayaFmt(r.asset_value)}₮</td>
+                <td className="td text-right tabular-nums font-bold text-ink" title={money(r.revenue)}>{sayaFmt(r.revenue)}₮</td>
                 <td className="td text-right tabular-nums">
                   <b className={r.yield_percent < 3 ? "text-danger" : r.yield_percent > 10 ? "text-money" : ""}>
                     {r.yield_percent}%
@@ -209,13 +209,13 @@ function Forecast({ d }: any) {
                 {b.items_in.slice(0, 4).map((i: any, k: number) => (
                   <div key={"i" + k} className="flex justify-between gap-2 py-0.5 text-[12px]">
                     <span className="text-t3 truncate">{i.label}</span>
-                    <b className="tabular-nums text-money shrink-0">+{sayaFmt(i.amount)}</b>
+                    <b className="tabular-nums text-money shrink-0" title={money(i.amount)}>+{sayaFmt(i.amount)}</b>
                   </div>
                 ))}
                 {b.items_out.slice(0, 3).map((i: any, k: number) => (
                   <div key={"o" + k} className="flex justify-between gap-2 py-0.5 text-[12px]">
                     <span className="text-t3 truncate">{i.label}</span>
-                    <b className="tabular-nums text-danger shrink-0">−{sayaFmt(i.amount)}</b>
+                    <b className="tabular-nums text-danger shrink-0" title={money(i.amount)}>−{sayaFmt(i.amount)}</b>
                   </div>
                 ))}
               </div>

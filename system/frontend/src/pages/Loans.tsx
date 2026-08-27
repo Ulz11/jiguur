@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useId, useState } from "react";
 import { api, money, sayaFmt } from "../api";
-import { Spinner, Modal, useToast, Empty, InlineEdit, Receipt, ConfirmModal } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Empty, InlineEdit, Receipt, ConfirmModal } from "../ui";
 import { parseMoney } from "../lib/num";
+import { formDirty } from "../lib/dirty";
 import { rowClickProps } from "../lib/rowClick";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -60,19 +61,23 @@ export default function Loans() {
       <div className="grid grid-cols-3 gap-4 mb-4 max-sm:grid-cols-1">
         <div className="card hero p-5">
           <div className="text-[12.5px] text-white/80 font-medium mb-2">Нийт өглөг</div>
-          <div className="text-[26px] font-extrabold text-white tabular-nums leading-tight">{sayaFmt(s.total_debt)}₮</div>
+          {/* Дугуйлсан тоо нь харцанд, бүтэн тоо нь хулгана хүрэхэд */}
+          <div className="text-[26px] font-extrabold text-white tabular-nums leading-tight"
+               title={money(s.total_debt)}>{sayaFmt(s.total_debt)}₮</div>
           <div className="mt-2"><span className="pill bg-white/10 text-white/80">{s.active_count} идэвхтэй зээл</span></div>
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Сарын хүүгийн дарамт</div>
-          <div className="text-[26px] font-extrabold text-danger tabular-nums leading-tight">{sayaFmt(s.monthly_burden)}₮</div>
+          <div className="text-[26px] font-extrabold text-danger tabular-nums leading-tight"
+               title={money(s.monthly_burden)}>{sayaFmt(s.monthly_burden)}₮</div>
           <div className="mt-2"><span className="pill-red">сар бүр</span></div>
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Хамгийн ойрын төлөлт</div>
           {s.upcoming[0] ? (
             <>
-              <div className="text-[26px] font-extrabold text-ink tabular-nums leading-tight">{sayaFmt(s.upcoming[0].amount)}₮</div>
+              <div className="text-[26px] font-extrabold text-ink tabular-nums leading-tight"
+                   title={money(s.upcoming[0].amount)}>{sayaFmt(s.upcoming[0].amount)}₮</div>
               <div className="mt-2"><span className="pill-amber">{s.upcoming[0].due} · {s.upcoming[0].name}</span></div>
             </>
           ) : <div className="text-t3">—</div>}
@@ -97,38 +102,40 @@ export default function Loans() {
                                       "row")}>
                   <td className="td" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-1.5">
-                      <InlineEdit value={l.name} width="w-44" confirmText="Нэр солих уу?"
+                      <InlineEdit label="Зээлдүүлэгч" value={l.name} width="w-44" confirmText="Нэр солих уу?"
                         onSave={(v) => doPatch(`/api/loans/${l.id}`, { name: v }, "Нэр шинэчлэгдлээ")} />
                       {l.status === "closed" && <span className="pill-grey">хаагдсан</span>}
                     </div>
                     <span className="flex items-center gap-1 text-xs text-t3 mt-0.5">
-                      <InlineEdit value={l.kind} display={kindLabel(l.kind)} width="w-24"
+                      <InlineEdit label="Төрөл" value={l.kind} display={kindLabel(l.kind)} width="w-24"
                         options={[["bank", "Банк"], ["private", "Хувь"], ["credit", "Кредит"]]}
                         confirmText="Төрөл солих уу?"
                         onSave={(v) => doPatch(`/api/loans/${l.id}`, { kind: v }, "Төрөл шинэчлэгдлээ")} />
                       <span>·</span>
-                      <InlineEdit type="date" value={l.start_date} display={`${l.start_date}-с`} width="w-36"
+                      <InlineEdit type="date" label="Эхэлсэн огноо" value={l.start_date}
+                        display={`${l.start_date}-с`} width="w-36"
                         confirmText="Огноо солих уу?"
                         onSave={(v) => doPatch(`/api/loans/${l.id}`, { start_date: v }, "Эхэлсэн огноо шинэчлэгдлээ")} />
                     </span>
                   </td>
-                  <td className="td text-right tabular-nums" onClick={(e) => e.stopPropagation()}>
-                    <InlineEdit type="number" value={l.principal} display={sayaFmt(l.principal) + "₮"}
+                  <td className="td text-right tabular-nums" title={money(l.principal)}
+                      onClick={(e) => e.stopPropagation()}>
+                    <InlineEdit type="number" label="Үндсэн дүн" value={l.principal} display={sayaFmt(l.principal) + "₮"}
                       width="w-28" right confirmText="Үндсэн дүн солих уу?"
                       onSave={(v) => doPatch(`/api/loans/${l.id}`,
                         { principal: parseMoney(v) },
                         "Үндсэн дүн шинэчлэгдлээ — үлдэгдэл, сарын төлбөр дагаж өөрчлөгдөнө")} />
                   </td>
-                  <td className="td text-right tabular-nums font-bold text-ink">{sayaFmt(l.balance)}₮</td>
+                  <td className="td text-right tabular-nums font-bold text-ink" title={money(l.balance)}>{sayaFmt(l.balance)}₮</td>
                   <td className="td text-right tabular-nums" onClick={(e) => e.stopPropagation()}>
-                    <InlineEdit type="number" value={l.monthly_rate} suffix="%" width="w-16" right
+                    <InlineEdit type="number" label="Сарын хүү" value={l.monthly_rate} suffix="%" width="w-16" right
                       confirmText="Хүү солих уу?"
                       onSave={(v) => doPatch(`/api/loans/${l.id}`, { monthly_rate: parseMoney(v) },
                         "Хүү шинэчлэгдлээ — сарын төлбөр дагаж өөрчлөгдөнө")} />
                   </td>
-                  <td className="td text-right tabular-nums font-bold text-danger">{sayaFmt(l.monthly_due)}₮</td>
+                  <td className="td text-right tabular-nums font-bold text-danger" title={money(l.monthly_due)}>{sayaFmt(l.monthly_due)}₮</td>
                   <td className="td">{l.status === "active" ? <span className="pill-amber">{l.next_due}</span> : <span className="pill-grey">—</span>}</td>
-                  <td className="td text-right tabular-nums text-t2">{sayaFmt(l.interest_paid)}₮</td>
+                  <td className="td text-right tabular-nums text-t2" title={money(l.interest_paid)}>{sayaFmt(l.interest_paid)}₮</td>
                   <td className="td">
                     {l.status === "active" && (
                       <button className="btn-ghost btn-row text-money"
@@ -143,7 +150,7 @@ export default function Loans() {
                            onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-2 text-[13px]">
                           <span className="text-t3">Тэмдэглэл:</span>
-                          <InlineEdit value={l.note} display={l.note || "нэмэх…"} width="w-72"
+                          <InlineEdit label="Тэмдэглэл" value={l.note} display={l.note || "нэмэх…"} width="w-72"
                             confirmText="Хадгалах уу?"
                             onSave={(v) => doPatch(`/api/loans/${l.id}`, { note: v }, "Тэмдэглэл шинэчлэгдлээ")} />
                         </div>
@@ -157,17 +164,23 @@ export default function Loans() {
                           {l.payments.map((p: any) => (
                             <div key={p.id} className="flex items-center gap-3 text-[13px]"
                                  onClick={(e) => e.stopPropagation()}>
-                              <InlineEdit type="date" value={p.date} display={p.date} width="w-32"
+                              {/* Дөрвөн зогсоол дараалан «2026-03-01 · засах»,
+                                  «450,000₮ · засах» гэж дуудагдвал уншигчаар
+                                  ажилладаг хүн ЮУГ засаж байгаагаа мэдэхгүй. */}
+                              <InlineEdit type="date" label="Төлөлтийн огноо" value={p.date} display={p.date} width="w-32"
                                 confirmText="Огноо солих уу?"
                                 onSave={(v) => savePay(l, p, { date: v })} />
-                              <InlineEdit type="number" right value={p.amount} display={money(p.amount)} width="w-28"
+                              <InlineEdit type="number" right label="Төлөлтийн дүн" value={p.amount}
+                                display={money(p.amount)} width="w-28"
                                 confirmText="Дүн солих уу?"
                                 onSave={(v) => savePay(l, p, { amount: parseMoney(v) })} />
-                              <InlineEdit value={p.part} display={p.part === "interest" ? "Хүү" : "Үндсэн"}
+                              <InlineEdit label="Төлөлтийн төрөл" value={p.part}
+                                display={p.part === "interest" ? "Хүү" : "Үндсэн"}
                                 options={[["interest", "Хүү"], ["principal", "Үндсэн"]]} width="w-24"
                                 confirmText="Төрөл солих уу?"
                                 onSave={(v) => savePay(l, p, { part: v })} />
-                              <InlineEdit value={p.note} display={p.note || "тэмдэглэл…"} width="w-40"
+                              <InlineEdit label="Төлөлтийн тэмдэглэл" value={p.note}
+                                display={p.note || "тэмдэглэл…"} width="w-40"
                                 confirmText="Хадгалах уу?"
                                 onSave={(v) => savePay(l, p, { note: v })} />
                               <button className="w-7 h-7 rounded-lg bg-danger-50 text-danger shrink-0 ml-auto"
@@ -234,11 +247,13 @@ export default function Loans() {
 
 function PayLoanModal({ l, onClose, onDone }: any) {
   const toast = useToast();
-  const [f, setF] = useState({ date: today(), amount: String(l.monthly_due), part: "interest", note: "" });
+  // Санал болгосон сарын хүү = ЭХНИЙ утга. Түүнийг хөндөөгүй бол алдах юм алга.
+  const f0 = { date: today(), amount: String(l.monthly_due), part: "interest", note: "" };
+  const [f, setF] = useState(f0);
   const amt = parseMoney(f.amount);
   const uid = useId();
   return (
-    <Modal title={`Төлөлт — ${l.name}`} onClose={onClose}>
+    <FormModal title={`Төлөлт — ${l.name}`} onClose={onClose} dirty={formDirty(f0, f)}>
       {/* Хүү/Үндсэн дүн нь ЮУГ төлж байгааг сонгодог — бүлгээ нэрлэнэ */}
       <div className="lbl" id={`${uid}-part`}>Юуг төлөх вэ</div>
       <div className="flex gap-2 mb-4" role="group" aria-labelledby={`${uid}-part`}>
@@ -279,25 +294,26 @@ function PayLoanModal({ l, onClose, onDone }: any) {
       )}
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary !bg-money" disabled={!amt} onClick={async () => {
+        <SubmitButton className="btn-primary !bg-money" disabled={!amt} onSubmit={async () => {
           try {
             await api(`/api/loans/${l.id}/payments`, { method: "POST",
               body: JSON.stringify({ date: f.date, amount: amt, part: f.part, note: f.note }) });
             toast("Төлөлт бүртгэгдлээ");
             onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Бүртгэх</button>
+        }}>Бүртгэх</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
 function AddLoanModal({ onClose, onDone }: any) {
   const toast = useToast();
-  const [f, setF] = useState({ name: "", kind: "bank", principal: "", monthly_rate: "", start_date: today(), note: "" });
+  const f0 = { name: "", kind: "bank", principal: "", monthly_rate: "", start_date: today(), note: "" };
+  const [f, setF] = useState(f0);
   const uid = useId();
   return (
-    <Modal title="Шинэ зээл бүртгэх" onClose={onClose}>
+    <FormModal title="Шинэ зээл бүртгэх" onClose={onClose} dirty={formDirty(f0, f)}>
       <label className="lbl" htmlFor={`${uid}-name`}>Зээлдүүлэгч *</label>
       <input id={`${uid}-name`} className="inp mb-3.5" value={f.name} placeholder="ж: Хаан банк — шугам №3" autoFocus
              onChange={(e) => setF({ ...f, name: e.target.value })} />
@@ -321,15 +337,15 @@ function AddLoanModal({ onClose, onDone }: any) {
         <input id={`${uid}-note`} className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={!f.name.trim() || !parseMoney(f.principal)} onClick={async () => {
+        <SubmitButton disabled={!f.name.trim() || !parseMoney(f.principal)} onSubmit={async () => {
           try {
             await api("/api/loans", { method: "POST", body: JSON.stringify({
               ...f, principal: parseMoney(f.principal), monthly_rate: parseMoney(f.monthly_rate) }) });
             toast("Зээл бүртгэгдлээ");
             onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Бүртгэх</button>
+        }}>Бүртгэх</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }

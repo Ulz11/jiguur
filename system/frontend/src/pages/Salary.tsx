@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useId, useState } from "react";
 import { api, money, sayaFmt } from "../api";
-import { Spinner, Modal, useToast, Empty, Receipt, ConfirmModal } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt, ConfirmModal } from "../ui";
 import { parseMoney } from "../lib/num";
+import { formDirty } from "../lib/dirty";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const TYPE_LABEL: Record<string, string> = { main: "Үндсэн", contract: "Гэрээт", daily: "Өдрийн" };
@@ -43,14 +44,14 @@ export default function Salary() {
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Сарын цалингийн сан (ойролцоо)</div>
-          <div className="text-[26px] font-extrabold text-ink tabular-nums">{sayaFmt(monthlyFund)}₮</div>
+          <div className="text-[26px] font-extrabold text-ink tabular-nums" title={money(monthlyFund)}>{sayaFmt(monthlyFund)}₮</div>
           <span className="block text-[12px] text-t3 mt-1">өдрийнхийг 22 хоногоор тооцов</span>
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Сүүлийн бодолт</div>
           {runs[0] ? (
             <>
-              <div className="text-[26px] font-extrabold text-ink tabular-nums">{sayaFmt(runs[0].total_net)}₮</div>
+              <div className="text-[26px] font-extrabold text-ink tabular-nums" title={money(runs[0].total_net)}>{sayaFmt(runs[0].total_net)}₮</div>
               <span className={`mt-1 ${runs[0].paid ? "pill-green" : "pill-amber"}`}>
                 {runs[0].period} · {runs[0].half}-р хагас · {runs[0].paid ? "олгосон" : "олгоогүй"}
               </span>
@@ -160,14 +161,15 @@ export default function Salary() {
 
 function EmpModal({ e, onClose, onDone }: any) {
   const toast = useToast();
-  const [f, setF] = useState({
+  const f0 = {
     name: e?.name || "", role_title: e?.role_title || "", type: e?.type || "main",
     monthly_salary: e ? String(e.monthly_salary) : "", daily_rate: e ? String(e.daily_rate) : "",
     ndsh: e?.ndsh || false,
-  });
+  };
+  const [f, setF] = useState(f0);
   const uid = useId();
   return (
-    <Modal title={e ? "Ажилтан засах" : "Шинэ ажилтан"} onClose={onClose}>
+    <FormModal title={e ? "Ажилтан засах" : "Шинэ ажилтан"} onClose={onClose} dirty={formDirty(f0, f)}>
       <div className="grid grid-cols-2 gap-3.5">
         <div><label className="lbl" htmlFor={`${uid}-name`}>Нэр *</label>
           <input id={`${uid}-name`} className="inp" value={f.name} onChange={(ev) => setF({ ...f, name: ev.target.value })} autoFocus /></div>
@@ -198,7 +200,7 @@ function EmpModal({ e, onClose, onDone }: any) {
       </label>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={!f.name.trim()} onClick={async () => {
+        <SubmitButton disabled={!f.name.trim()} onSubmit={async () => {
           const body = { ...f, monthly_salary: parseMoney(f.monthly_salary),
                          daily_rate: parseMoney(f.daily_rate) };
           try {
@@ -207,9 +209,9 @@ function EmpModal({ e, onClose, onDone }: any) {
             toast("Хадгалагдлаа");
             onDone();
           } catch (er: any) { toast(er.message, "err"); }
-        }}>Хадгалах</button>
+        }}>Хадгалах</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
@@ -221,9 +223,13 @@ function RunModal({ emps, onClose, onDone }: any) {
   const [pct, setPct] = useState(11.5);
   useEffect(() => { api("/api/settings").then((s) => setPct(parseMoney(s.ndsh_percent) || 11.5)); }, []);
   const dailies = emps.filter((e: any) => e.type === "daily");
-  const [days, setDays] = useState<Record<string, string>>(
-    Object.fromEntries(dailies.map((e: any) => [String(e.id), ""])));
+  const days0 = Object.fromEntries(dailies.map((e: any) => [String(e.id), ""])) as Record<string, string>;
+  const [days, setDays] = useState<Record<string, string>>(days0);
   const uid = useId();
+  /* Өдрийн ажилчдын ажилласан хоногийг гараар бөглөдөг — цонх санамсаргүй
+     хаагдвал тэр бүхнийг дахин цуглуулна. Сар/хагасыг хөдөлгөсөн ч мөн адил. */
+  const now0 = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const dirty = period !== now0 || half !== (now.getDate() <= 15 ? 1 : 2) || formDirty(days0, days);
 
   const fixed = emps.filter((e: any) => e.type !== "daily");
   const fixedBase = fixed.reduce((s: number, e: any) => s + e.monthly_salary / 2, 0);
@@ -231,7 +237,7 @@ function RunModal({ emps, onClose, onDone }: any) {
   const ndshAmt = fixed.reduce((s: number, e: any) => s + (e.ndsh ? (e.monthly_salary / 2) * pct / 100 : 0), 0)
     + dailies.reduce((s: number, e: any) => s + (e.ndsh ? (+days[String(e.id)] || 0) * e.daily_rate * pct / 100 : 0), 0);
   return (
-    <Modal title="Цалин бодох" onClose={onClose}>
+    <FormModal title="Цалин бодох" onClose={onClose} dirty={dirty}>
       <div className="grid grid-cols-2 gap-3.5 mb-3.5">
         <div><label className="lbl" htmlFor={`${uid}-period`}>Сар</label>
           <input id={`${uid}-period`} type="month" className="inp" value={period} onChange={(e) => setPeriod(e.target.value)} /></div>
@@ -269,7 +275,8 @@ function RunModal({ emps, onClose, onDone }: any) {
         total={{ label: "Гарт олгох нийт (урьдчилсан)", value: money(fixedBase + dailyBase - ndshAmt) }} />
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" onClick={async () => {
+        {/* Хоёр удаа дарвал нэг үеийн цалин ХОЁР бодолт болж үүсдэг байв */}
+        <SubmitButton onSubmit={async () => {
           try {
             const dd = Object.fromEntries(Object.entries(days).filter(([, v]) => +v > 0).map(([k, v]) => [k, +v]));
             const r = await api("/api/salary/runs", { method: "POST",
@@ -277,8 +284,8 @@ function RunModal({ emps, onClose, onDone }: any) {
             toast(`Бодолт үүслээ — гарт олгох нийт ${money(r.total_net)}`);
             onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Бодох</button>
+        }}>Бодох</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }

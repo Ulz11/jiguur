@@ -1,8 +1,9 @@
-import { useEffect, useId, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Link, useBlocker, useNavigate } from "react-router-dom";
 import { api, fmt, money } from "../api";
-import { Spinner, useToast, Receipt } from "../ui";
+import { Spinner, useToast, Receipt, ConfirmModal, SubmitButton } from "../ui";
 import { parseMoney, formatMoneyInput } from "../lib/num";
+import { contractDraftDirty } from "../lib/dirty";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -19,15 +20,35 @@ export default function ContractNew() {
   const [newClient, setNewClient] = useState({ name: "", person: "", phone: "", reg: "" });
   const [showNew, setShowNew] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
-  const [cond, setCond] = useState({ start_date: today(), end_date: "", penalty_percent: "0.5",
-                                     deposit: "", vat_percent: "0", note: "", no: "" });
-  const [busy, setBusy] = useState(false);
+  const cond0 = useMemo(() => ({ start_date: today(), end_date: "", penalty_percent: "0.5",
+                                 deposit: "", vat_percent: "0", note: "", no: "" }), []);
+  const [cond, setCond] = useState(cond0);
   const uid = useId();
+  /* Хадгалж дуусаад БИД ӨӨРСДӨӨ гэрээ рүү шилжинэ — тэр шилжилтийг өөрсдийнхөө
+     хамгаалалт таслах ёсгүй. Төлөв биш ref: navigate нь дараагийн render-ийг
+     хүлээхгүй, тэр хормын утга шаардлагатай. */
+  const savedRef = useRef(false);
 
   useEffect(() => {
     api("/api/clients").then(setClients);
     api("/api/materials").then(setMaterials);
   }, []);
+
+  /* ---- Дундуур гарахаас хамгаалах ----
+     Гурван алхам бөглөчихөөд зүүн доод буланд «Тохиргоо» дарахад бүх зүйл
+     чимээгүй алга болдог байв. Хуудсан доторх шилжилтийг router барина... */
+  const dirty = contractDraftDirty({ step, clientId, itemCount: items.length,
+                                     cond, condInitial: cond0, newClient });
+  const blocker = useBlocker(({ currentLocation, nextLocation }) =>
+    dirty && !savedRef.current && currentLocation.pathname !== nextLocation.pathname);
+  /* …таб хаах/сэргээхийг зөвхөн хөтөч өөрөө барьж чадна. */
+  useEffect(() => {
+    if (!dirty) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", h);
+    return () => window.removeEventListener("beforeunload", h);
+  }, [dirty]);
+
   if (!clients || !materials) return <Spinner />;
 
   const client = clients.find((c) => c.id === clientId);
@@ -42,14 +63,13 @@ export default function ContractNew() {
   }
 
   async function submit() {
-    setBusy(true);
     try {
       let cid = clientId;
       if (!cid && newClient.name.trim()) {
         const c = await api("/api/clients", { method: "POST", body: JSON.stringify(newClient) });
         cid = c.id;
       }
-      if (!cid) { toast("Харилцагч сонгоно уу", "err"); setBusy(false); return; }
+      if (!cid) { toast("Харилцагч сонгоно уу", "err"); return; }
       const body = {
         client_id: cid, type, no: cond.no, start_date: cond.start_date,
         end_date: cond.end_date || null,
@@ -62,8 +82,9 @@ export default function ContractNew() {
       };
       const r = await api("/api/contracts", { method: "POST", body: JSON.stringify(body) });
       toast(`Гэрээ №${r.no} үүслээ — ачилтын хүсэлт дарга руу илгээгдэв`);
+      savedRef.current = true;          // хадгалагдсан тул хамгаалалт саад болохгүй
       nav(`/contracts/${r.id}`);
-    } catch (e: any) { toast(e.message, "err"); setBusy(false); }
+    } catch (e: any) { toast(e.message, "err"); }
   }
 
   const steps = ["Харилцагч", "Материал", "Нөхцөл", "Баталгаажуулах"];
@@ -298,13 +319,34 @@ export default function ContractNew() {
             </div>
             <div className="flex justify-between mt-5">
               <button className="btn-secondary" onClick={() => setStep(3)}>← Буцах</button>
-              <button className="btn-primary !bg-money" disabled={busy} onClick={submit}>
-                {busy ? "Үүсгэж байна…" : "✓ Гэрээ баталгаажуулах"}
-              </button>
+              <SubmitButton className="btn-primary !bg-money" onSubmit={submit}
+                            busyLabel="Үүсгэж байна…">✓ Гэрээ баталгаажуулах</SubmitButton>
             </div>
           </>
         )}
       </div>
+
+      {/* Дундуур гарах гэж байна — юу алдагдахыг НЭРЛЭЭД асууна. Системийн бусад
+          «буцаагдахгүй» асуултуудтай ижил navy хайрцаг. */}
+      {blocker.state === "blocked" && (
+        <ConfirmModal
+          title="Гэрээ бөглөхөө орхих уу?"
+          intro={<>Бөглөсөн зүйл хадгалагдаагүй байна — энэ хуудаснаас гармагц сэргэхгүй.</>}
+          rows={[
+            { label: "Алхам", value: `${step} / 4 — ${steps[step - 1]}` },
+            { label: "Харилцагч",
+              value: client?.name || newClient.name.trim() || "сонгоогүй",
+              accent: client || newClient.name.trim() ? undefined : "dim" },
+            { label: "Материал",
+              value: items.length
+                ? `${items.length} мөр · ${fmt(items.reduce((s, i) => s + i.qty, 0))}ш`
+                : "сонгоогүй",
+              accent: items.length ? undefined : "dim" },
+          ]}
+          confirmLabel="Орхиод гарах" cancelLabel="Үргэлжлүүлэн бөглөх" danger
+          onClose={() => blocker.reset?.()}
+          onConfirm={() => blocker.proceed?.()} />
+      )}
     </div>
   );
 }

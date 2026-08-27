@@ -1,8 +1,9 @@
 import { useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, money, sayaFmt } from "../api";
-import { Spinner, Modal, useToast, Empty } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Empty } from "../ui";
 import { parseMoney } from "../lib/num";
+import { formDirty } from "../lib/dirty";
 import { useLive } from "../lib/live";
 import { nextSort, ariaSort, sortByNumber, type SortState } from "../lib/sort";
 
@@ -133,8 +134,10 @@ export default function Collections() {
                     )}
                   </span>
                 </td>
-                <td className="td text-right tabular-nums font-bold text-danger">{sayaFmt(r.overdue)}₮</td>
-                <td className="td text-right tabular-nums text-t2">
+                {/* Жагсаалт нь «хэнд эхэлж залгах вэ» гэдгийг хэлдэг тул сая нь
+                    зөв — харин залгахын өмнө нэхэх дүнгээ бүтнээр нь хардаг. */}
+                <td className="td text-right tabular-nums font-bold text-danger" title={money(r.overdue)}>{sayaFmt(r.overdue)}₮</td>
+                <td className="td text-right tabular-nums text-t2" title={r.penalty > 0 ? money(r.penalty) : undefined}>
                   {r.penalty > 0 ? sayaFmt(r.penalty) + "₮" : "—"}
                 </td>
                 <td className="td">
@@ -152,7 +155,8 @@ export default function Collections() {
                 </td>
                 <td className="td">
                   {r.promise_date ? (
-                    <span className={r.promise_late ? "pill-red" : "pill-green"}>
+                    <span className={r.promise_late ? "pill-red" : "pill-green"}
+                          title={money(r.promise_amount)}>
                       {r.promise_date} · {sayaFmt(r.promise_amount)}₮
                     </span>
                   ) : <span className="text-t3 text-[12.5px]">—</span>}
@@ -181,12 +185,13 @@ export default function Collections() {
 
 function NoteModal({ r, onClose, onDone }: any) {
   const toast = useToast();
-  const [f, setF] = useState({ date: today(), kind: "call", note: "",
-                               promise_date: "", promise_amount: "" });
-  const [busy, setBusy] = useState(false);
+  const f0 = { date: today(), kind: "call", note: "", promise_date: "", promise_amount: "" };
+  const [f, setF] = useState(f0);
   const uid = useId();
   return (
-    <Modal title={`Тэмдэглэл — ${r.client}`} onClose={onClose}>
+    /* Ярианы тэмдэглэл нь дахин сэргээгдэхгүй мэдээлэл — залгасны дараа
+       санамсаргүй товшилтод алдагдвал дахин залгах шаардлагатай болно. */
+    <FormModal title={`Тэмдэглэл — ${r.client}`} onClose={onClose} dirty={formDirty(f0, f)}>
       <div className="bg-sunken rounded-lg px-3.5 py-2.5 mb-4 text-[13px] text-t2">
         Хэтэрсэн <b className="text-danger tabular-nums">{money(r.overdue)}</b>
         {r.penalty > 0 && <> · алданги <b className="tabular-nums">{money(r.penalty)}</b></>}
@@ -221,8 +226,7 @@ function NoteModal({ r, onClose, onDone }: any) {
 
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={busy || !f.note.trim()} onClick={async () => {
-          setBusy(true);
+        <SubmitButton disabled={!f.note.trim()} onSubmit={async () => {
           try {
             await api(`/api/clients/${r.client_id}/notes`, { method: "POST", body: JSON.stringify({
               date: f.date, kind: f.kind, note: f.note,
@@ -230,9 +234,9 @@ function NoteModal({ r, onClose, onDone }: any) {
               promise_amount: parseMoney(f.promise_amount) }) });
             toast("Тэмдэглэл хадгалагдлаа");
             onDone();
-          } catch (e: any) { toast(e.message, "err"); setBusy(false); }
-        }}>Хадгалах</button>
+          } catch (e: any) { toast(e.message, "err"); }
+        }}>Хадгалах</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }

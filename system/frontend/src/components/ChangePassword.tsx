@@ -1,10 +1,12 @@
 import { useId, useState } from "react";
 import { api } from "../api";
-import { Modal, useToast } from "../ui";
+import { FormModal, useToast } from "../ui";
+import { formDirty } from "../lib/dirty";
 
 export default function ChangePassword({ onClose }: { onClose: () => void }) {
   const toast = useToast();
-  const [f, setF] = useState({ old_password: "", new_password: "", repeat: "" });
+  const f0 = { old_password: "", new_password: "", repeat: "" };
+  const [f, setF] = useState(f0);
   const [busy, setBusy] = useState(false);
   const mismatch = f.repeat.length > 0 && f.new_password !== f.repeat;
   const uid = useId();
@@ -22,7 +24,7 @@ export default function ChangePassword({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal title="Нууц үг солих" onClose={onClose}>
+    <FormModal title="Нууц үг солих" onClose={onClose} dirty={formDirty(f0, f)}>
       <label className="lbl" htmlFor={`${uid}-old`}>Одоогийн нууц үг</label>
       <input id={`${uid}-old`} className="inp mb-3.5" type="password" autoFocus value={f.old_password}
              autoComplete="current-password"
@@ -44,6 +46,6 @@ export default function ChangePassword({ onClose }: { onClose: () => void }) {
           {busy ? "…" : "Солих"}
         </button>
       </div>
-    </Modal>
+    </FormModal>
   );
 }

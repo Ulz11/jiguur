@@ -209,8 +209,11 @@ body::before {
      байнга харагдаж, хүрэх/фокуслахад брэнд өнгөөр бүрэн асна. */
   .inline-val {
     @apply inline-flex items-center gap-1.5 cursor-pointer rounded-lg px-2 -mx-2 py-1 transition;
-    /* Хүснэгтэд дарагдах талбар — target-sm-ийн доод хязгаарт ойртуулав */
-    min-height: 32px;
+    /* Хүснэгтэд дарагдах талбар. 32px нь шатныхаа доод шатнаас (--target-sm)
+       дөрвөн пиксэлээр доогуур байсан — «ойртуулав» гэдэг нь хүрсэн гэсэн үг
+       биш. Дарагддаг юм 36px-ээс намхан байхгүй гэсэн дүрэм өөрөө үл хамаарах
+       зүйлгүй. */
+    min-height: var(--target-sm);
     border-bottom: 1px dashed var(--color-t3);
   }
   .inline-val:hover { background: var(--color-brand-50); border-bottom-color: var(--color-brand); }
@@ -291,7 +294,8 @@ body::before {
 
 /* Сегмент — хажуу хажуугаа зогссон шүүлтүүрүүд (Apple-style биш, 5-7px ирмэг) */
 .segment { @apply inline-flex rounded-[7px] gap-0.5 border border-line; padding: 3px; background: #eff1f5; }
-.segment > button { @apply rounded-[5px] font-semibold transition text-t1; min-height: 34px; padding: 5px 14px; font-size: 12.5px; }
+/* Шүүлтүүрийн товч ч дарагддаг зүйл — 34px биш, шатныхаа доод шат (36px) */
+.segment > button { @apply rounded-[5px] font-semibold transition text-t1; min-height: var(--target-sm); padding: 5px 14px; font-size: 12.5px; }
 .segment > button.on { background: var(--color-cardbg); color: var(--jz-blue); box-shadow: 0 2px 6px rgba(25,41,107,.1); }
 
 
@@ -311,6 +315,27 @@ body::before {
 /* Хүснэгтийн мөрөн дэх үйлдэл (PDF · Хавсралт · Төлөлт · Засах) */
 .btn-row { min-height: var(--target-sm); padding: 6px 11px; font-size: 12.5px; }
 .jz-app-shell { display: flex; min-height: 100vh; }
+/* ---- «Агуулга руу алгасах» ----
+   Tab-аар ажилладаг хүн хуудас бүр дээр 13 цэсний мөрийг дамжиж байж агуулгад
+   хүрдэг байв — нэг хуудсанд 13 нэмэлт даралт, өдөрт зуу гаруй. Эхний зогсоол
+   нь одоо энэ холбоос: хулганатай хүнд огт харагдахгүй, фокуслахад л буун ирнэ. */
+.jz-skip {
+  position: fixed; top: 10px; left: 10px; z-index: 60;
+  display: inline-flex; align-items: center;
+  min-height: var(--target); padding: 0 16px;
+  border-radius: 7px; font: 600 13.5px var(--font-sans);
+  color: #fff; background: var(--jz-blue-deep); text-decoration: none;
+  box-shadow: 0 12px 28px rgba(25, 41, 107, .28);
+  transform: translateY(calc(-100% - 16px));
+  transition: transform .16s cubic-bezier(.22, 1, .36, 1);
+}
+.jz-skip:focus { transform: none; }
+.jz-skip:focus-visible { outline: 2px solid var(--jz-orange); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .jz-skip { transition: none; } }
+/* Алгассаны дараа фокус нь агуулгын мужид зогсоно — бөгжийг нь ДОТОГШ татна,
+   эс бөгөөс дэлгэцийн бүх ирмэгийг тойрсон хүрээ гарна. */
+.jz-main:focus { outline: none; }
+.jz-main:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; }
 .jz-sidebar { width: 262px; flex: 0 0 262px; display: flex; flex-direction: column; padding: 18px 13px 15px; color: #f9fbff; background: var(--jz-blue-deep); position: sticky; top: 0; height: 100vh; overflow: hidden; border-right: 1px solid rgba(255,255,255,.08); transition: width .22s cubic-bezier(.22,1,.36,1), flex-basis .22s cubic-bezier(.22,1,.36,1); }
 .jz-sidebar::before { content: ""; position: absolute; inset: auto -64px -86px auto; width: 275px; height: 275px; opacity: .15; background-image: url("./assets/jiguur-pattern-navy.jpg"); background-size: 170px auto; transform: rotate(-14deg); mix-blend-mode: screen; }
 .jz-sidebar::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(255,255,255,.04), transparent 28%); }
@@ -486,6 +511,28 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2p
 .jz-burger:hover { background: var(--color-sunken); }
 .jz-drawer-close { display: none; position: absolute; top: 3px; right: 3px; width: var(--target-sm); height: var(--target-sm); color: var(--jz-blue); font-size: 20px; line-height: 1; }
 .jz-scrim { position: fixed; inset: 0; z-index: 39; background: rgba(25, 41, 107, .45); backdrop-filter: blur(2px); }
+
+/* ---- Намхан дэлгэц: цэс бүтнээрээ багтана ----
+   Менежерийн цэс 13 мөртэй. 46px-ийн нягтралаар 1366×768 лаптоп дээр сүүлийн
+   дөрөв нь нугалаанаас доош унаж, Тохиргоо, Үйлдлийн бүртгэл рүү орох бүрд
+   гүйлгэж хайдаг байв («доор нь бас байгаа» гэдгийг мэдэхгүй бол огт олдохгүй).
+   ЗӨВХӨН босоо зайг хасна: бичгийн хэмжээ 14px-ээс, хүрэх талбай 40px-ээс
+   доош ороогүй — хоёулаа шатныхаа доод хязгаараас (--target-sm 36px) дээгүүр. */
+@media (max-height: 800px) {
+  .jz-sidebar { padding-top: 12px; padding-bottom: 11px; }
+  .brand-plate { min-height: 54px; margin-bottom: 9px; padding: 8px 12px; }
+  .brand-plate img { max-height: 38px; }
+  .nav-btn { min-height: 40px; padding: 7px 12px; margin-bottom: 0; font-size: 14px; }
+  .nav-icon { font-size: 18px; }
+  .jz-nav { gap: 2px; }
+  .nav-caption { margin-bottom: 4px; line-height: 1.2; }
+  .jz-nav + .nav-caption { margin-top: 11px; }
+  /* Хэрэглэгчийн хайрцаг: нэр ба хоёр товч нь ХОЁР давхар (40+40) зогсдог —
+     намхан дэлгэцэнд нэг мөрөнд орно. Товчнууд 40px хэвээр. */
+  .jz-sidebar:not(.collapsed) .side-foot-card { display: flex; align-items: center; gap: 8px; padding: 8px; margin-top: 9px; }
+  .jz-sidebar:not(.collapsed) .side-foot-card > div:first-child { flex: 1 1 auto; min-width: 0; }
+  .jz-sidebar:not(.collapsed) .side-foot-actions { margin-top: 0; flex: none; }
+}
 
 @media (max-width: 1180px) {
   /* Цэсийг хэрэглэгч өөрөө хураана (« товч) — автоматаар хураахгүй */

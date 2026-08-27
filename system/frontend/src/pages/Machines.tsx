@@ -1,7 +1,8 @@
 import { useEffect, useId, useState } from "react";
 import { api, money, sayaFmt, user } from "../api";
-import { Spinner, Modal, useToast, Empty } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Empty } from "../ui";
 import { parseMoney } from "../lib/num";
+import { formDirty } from "../lib/dirty";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const JOB_LABELS = ["Бүтэн өдөр", "Хагас өдөр", "Дотоод ажил"];
@@ -48,11 +49,12 @@ export default function Machines() {
             </div>
             <div className="flex gap-5">
               <div><div className="text-[12px] text-t3 font-bold uppercase">Орлого</div>
-                <div className="font-extrabold tabular-nums text-money">{sayaFmt(m.income)}₮</div></div>
+                <div className="font-extrabold tabular-nums text-money" title={money(m.income)}>{sayaFmt(m.income)}₮</div></div>
               <div><div className="text-[12px] text-t3 font-bold uppercase">Зарлага</div>
-                <div className="font-extrabold tabular-nums text-danger">{sayaFmt(m.expense)}₮</div></div>
+                <div className="font-extrabold tabular-nums text-danger" title={money(m.expense)}>{sayaFmt(m.expense)}₮</div></div>
               <div><div className="text-[12px] text-t3 font-bold uppercase">Цэвэр</div>
-                <div className={`font-extrabold tabular-nums ${m.net >= 0 ? "text-ink" : "text-danger"}`}>{sayaFmt(m.net)}₮</div></div>
+                <div className={`font-extrabold tabular-nums ${m.net >= 0 ? "text-ink" : "text-danger"}`}
+                     title={money(m.net)}>{sayaFmt(m.net)}₮</div></div>
             </div>
           </button>
         ))}
@@ -113,11 +115,13 @@ export default function Machines() {
 function LogModal({ kind, m, onClose, onDone }: any) {
   const toast = useToast();
   const labels = kind === "job" ? JOB_LABELS : EXP_LABELS;
-  const [f, setF] = useState({ date: today(), label: labels[0], client: "", amount: "", method: "BANK", note: "" });
+  const f0 = { date: today(), label: labels[0], client: "", amount: "", method: "BANK", note: "" };
+  const [f, setF] = useState(f0);
   const amt = parseMoney(f.amount);
   const uid = useId();
   return (
-    <Modal title={kind === "job" ? `Ажил бүртгэх — ${m.name}` : `Зарлага — ${m.name}`} onClose={onClose}>
+    <FormModal dirty={formDirty(f0, f)} onClose={onClose}
+               title={kind === "job" ? `Ажил бүртгэх — ${m.name}` : `Зарлага — ${m.name}`}>
       <div className="lbl" id={`${uid}-label`}>{kind === "job" ? "Ажлын төрөл" : "Зарлагын ангилал"}</div>
       <div className="flex gap-2 mb-3.5 flex-wrap" role="group" aria-labelledby={`${uid}-label`}>
         {labels.map((lb) => (
@@ -152,7 +156,7 @@ function LogModal({ kind, m, onClose, onDone }: any) {
       )}
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={!amt} onClick={async () => {
+        <SubmitButton disabled={!amt} onSubmit={async () => {
           try {
             await api(`/api/machines/${m.id}/logs`, { method: "POST", body: JSON.stringify({
               date: f.date, entry: kind, label: f.label, client: f.client,
@@ -160,9 +164,9 @@ function LogModal({ kind, m, onClose, onDone }: any) {
             toast("Бүртгэгдлээ");
             onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Бүртгэх</button>
+        }}>Бүртгэх</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
@@ -171,20 +175,20 @@ function AddMachineModal({ onClose, onDone }: any) {
   const [name, setName] = useState("");
   const uid = useId();
   return (
-    <Modal title="Машин нэмэх" onClose={onClose}>
+    <FormModal title="Машин нэмэх" onClose={onClose} dirty={name.trim() !== ""}>
       <label className="lbl" htmlFor={`${uid}-name`}>Нэр *</label>
       <input id={`${uid}-name`} className="inp mb-5" placeholder="ж: Ачааны машин 6800УКС" value={name}
              onChange={(e) => setName(e.target.value)} autoFocus />
       <div className="flex justify-end gap-2.5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={!name.trim()} onClick={async () => {
+        <SubmitButton disabled={!name.trim()} onSubmit={async () => {
           try {
             await api("/api/machines", { method: "POST", body: JSON.stringify({ name }) });
             toast("Машин нэмэгдлээ");
             onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Нэмэх</button>
+        }}>Нэмэх</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }

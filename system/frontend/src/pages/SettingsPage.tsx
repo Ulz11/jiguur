@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { api, fmt } from "../api";
-import { Spinner, Modal, useToast } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast } from "../ui";
+import { formDirty } from "../lib/dirty";
 
 export default function SettingsPage() {
   const toast = useToast();
@@ -60,13 +61,15 @@ export default function SettingsPage() {
                    aria-describedby={`${uid}-ndsh-hint`}
                    onChange={(e) => setSettings({ ...settings, ndsh_percent: e.target.value })} />
             <p id={`${uid}-ndsh-hint`} className="text-[12px] text-t3 mb-4">Дараагийн цалингийн бодолтоос шинэ хувиар суутгана.</p>
-            {/* Барихгүй бол алдаа чимээгүй залгигдаж, хадгалагдсан мэт харагдана */}
-            <button className="btn-primary w-full justify-center" onClick={async () => {
+            {/* Барихгүй бол алдаа чимээгүй залгигдаж, хадгалагдсан мэт харагдана.
+                Хадгалалт дуустал товч өөрийгөө түгжинэ — эс бөгөөс хоёр дарахад
+                хоёр PUT нисч, аль нь сүүлд буусан нь тодорхойгүй болно. */}
+            <SubmitButton className="btn-primary w-full justify-center" onSubmit={async () => {
               try {
                 await api("/api/settings", { method: "PUT", body: JSON.stringify({ values: settings }) });
                 toast("Тохиргоо хадгалагдлаа");
               } catch (e: any) { toast(e.message, "err"); }
-            }}>Хадгалах</button>
+            }}>Хадгалах</SubmitButton>
           </div>
         </div>
 
@@ -120,10 +123,11 @@ export default function SettingsPage() {
 
 function GradeModal({ g, onClose, onDone }: any) {
   const toast = useToast();
-  const [f, setF] = useState({ code: g.code || "", name: g.name || "", sort: g.sort ?? 0 });
+  const f0 = { code: g.code || "", name: g.name || "", sort: g.sort ?? 0 };
+  const [f, setF] = useState(f0);
   const uid = useId();
   return (
-    <Modal title={g.id ? "Зэрэглэл засах" : "Шинэ зэрэглэл"} onClose={onClose}>
+    <FormModal title={g.id ? "Зэрэглэл засах" : "Шинэ зэрэглэл"} onClose={onClose} dirty={formDirty(f0, f)}>
       <label className="lbl" htmlFor={`${uid}-code`}>Код (богино)</label>
       <input id={`${uid}-code`} className="inp mb-3.5" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="ж: С" autoFocus />
       <label className="lbl" htmlFor={`${uid}-name`}>Нэр</label>
@@ -132,31 +136,36 @@ function GradeModal({ g, onClose, onDone }: any) {
       <input id={`${uid}-sort`} type="number" className="inp mb-5" value={f.sort} onChange={(e) => setF({ ...f, sort: +e.target.value })} />
       <div className="flex justify-end gap-2.5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={!f.code.trim()} onClick={async () => {
+        <SubmitButton disabled={!f.code.trim()} onSubmit={async () => {
           try {
             if (g.id) await api(`/api/grades/${g.id}`, { method: "PUT", body: JSON.stringify(f) });
             else await api("/api/grades", { method: "POST", body: JSON.stringify(f) });
             toast("Хадгалагдлаа"); onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Хадгалах</button>
+        }}>Хадгалах</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }
 
 function MaterialModal({ m, grades, onClose, onDone }: any) {
   const toast = useToast();
-  const [f, setF] = useState({
-    name: m.name || "", category: m.category || "Хэв", base_rate: m.base_rate ?? 0,
-    repair_fee: m.repair_fee ?? 0,
-    prices: grades.map((g: any) => {
-      const ex = (m.prices || []).find((p: any) => p.grade_id === g.id);
-      return { grade_id: g.id, grade: g.code, nb_price: ex?.nb_price ?? 0, sale_price: ex?.sale_price ?? 0 };
-    }),
+  const base0 = { name: m.name || "", category: m.category || "Хэв",
+                  base_rate: m.base_rate ?? 0, repair_fee: m.repair_fee ?? 0 };
+  const prices0 = grades.map((g: any) => {
+    const ex = (m.prices || []).find((p: any) => p.grade_id === g.id);
+    return { grade_id: g.id, grade: g.code, nb_price: ex?.nb_price ?? 0, sale_price: ex?.sale_price ?? 0 };
   });
+  const [f, setF] = useState({ ...base0, prices: prices0 });
   const uid = useId();
+  // Зэрэглэл бүрийн үнэ нь МӨР бүхий хэсэг тул өөрийн харьцуулалттай:
+  // 6 зэрэглэлийн НБҮнэ бөглөчихөөд санамсаргүй хаах нь бүгдийг устгана.
+  const dirty = formDirty(base0, { name: f.name, category: f.category,
+                                   base_rate: f.base_rate, repair_fee: f.repair_fee })
+    || f.prices.some((p: any, i: number) =>
+         p.nb_price !== prices0[i]?.nb_price || p.sale_price !== prices0[i]?.sale_price);
   return (
-    <Modal title={m.id ? "Материал засах" : "Шинэ материал"} onClose={onClose} wide>
+    <FormModal title={m.id ? "Материал засах" : "Шинэ материал"} onClose={onClose} wide dirty={dirty}>
       <div className="grid grid-cols-2 gap-3.5 max-sm:grid-cols-1">
         <div><label className="lbl" htmlFor={`${uid}-name`}>Нэр *</label>
           <input id={`${uid}-name`} className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="ж: Хэв хашмал 2020" autoFocus /></div>
@@ -191,15 +200,15 @@ function MaterialModal({ m, grades, onClose, onDone }: any) {
       </div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={!f.name.trim()} onClick={async () => {
+        <SubmitButton disabled={!f.name.trim()} onSubmit={async () => {
           try {
             const body = { ...f, prices: f.prices.filter((p: any) => p.nb_price || p.sale_price) };
             if (m.id) await api(`/api/materials/${m.id}`, { method: "PUT", body: JSON.stringify(body) });
             else await api("/api/materials", { method: "POST", body: JSON.stringify(body) });
             toast("Хадгалагдлаа"); onDone();
           } catch (e: any) { toast(e.message, "err"); }
-        }}>Хадгалах</button>
+        }}>Хадгалах</SubmitButton>
       </div>
-    </Modal>
+    </FormModal>
   );
 }

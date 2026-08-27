@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, fmt, money, sayaFmt, token, user } from "../api";
+import { api, fmt, money, sayaFmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit } from "../ui";
 import { PayModal } from "./ContractDetail";
 import { invoiceLabel } from "../lib/invoice";
+import { useDownload } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import {
   buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth, dayCellLabel,
@@ -18,6 +19,7 @@ export default function ClientProfile() {
   const nav = useNavigate();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  const dl = useDownload();
   const u = user();
 
   const load = () => api(`/api/clients/${id}`).then(setD).catch((e) => toast(e.message, "err"));
@@ -70,25 +72,31 @@ export default function ClientProfile() {
             </h2>
             <div className="text-[13px] text-t2 mt-1.5 flex gap-x-4 gap-y-1.5 flex-wrap items-center">
               <span className="inline-flex items-center gap-1.5">Регистр:
-                <InlineEdit value={d.reg} width="w-28" confirmText="Хадгалах уу?"
+                <InlineEdit label="Регистр" value={d.reg} width="w-28" confirmText="Хадгалах уу?"
                   onSave={(v) => saveClient({ reg: v })} /></span>
               <span className="inline-flex items-center gap-1.5">Хариуцагч:
-                <InlineEdit value={d.person} width="w-36" confirmText="Хадгалах уу?"
+                <InlineEdit label="Хариуцагч" value={d.person} width="w-36" confirmText="Хадгалах уу?"
                   onSave={(v) => saveClient({ person: v })} /></span>
               <span className="inline-flex items-center gap-1.5">Утас:
-                <InlineEdit value={d.phone} width="w-32" confirmText="Хадгалах уу?"
+                <InlineEdit label="Утас" value={d.phone} width="w-32" confirmText="Хадгалах уу?"
                   onSave={(v) => saveClient({ phone: v })} /></span>
               <span>Хамтран ажилласан: <b className="text-t1">{d.since}-с</b></span>
             </div>
             <div className="mt-2.5 text-[12.5px] text-t2 inline-flex items-center gap-2">💬
-              <InlineEdit value={d.note} display={d.note || "тэмдэглэл нэмэх…"} width="w-80" confirmText="Хадгалах уу?"
+              <InlineEdit label="Тэмдэглэл" value={d.note} display={d.note || "тэмдэглэл нэмэх…"} width="w-80"
+                confirmText="Хадгалах уу?"
                 onSave={(v) => saveClient({ note: v })} />
             </div>
           </div>
+          {/* Дөрвөн үзүүлэлт нэг мөрөнд багтах ёстой тул гол тоо нь «сая»-гаараа
+              үлдэнэ — гэхдээ АВЛАГА ярихад «12.3 сая» гэдэг хангалтгүй: залгаж
+              нэхэх, тулгах дүн нь доор нь бүтнээрээ зогсоно. */}
           <div className="grid grid-cols-4 gap-6 max-sm:grid-cols-2">
-            <Stat label="Авлага" val={sayaFmt(d.receivable) + "₮"} danger={d.overdue} />
-            <Stat label="Алданги" val={d.penalty > 0 ? sayaFmt(d.penalty) + "₮" : "—"} danger={d.penalty > 0} />
-            <Stat label="Барьцаа" val={d.deposit > 0 ? sayaFmt(d.deposit) + "₮" : "—"} />
+            <Stat label="Авлага" val={sayaFmt(d.receivable) + "₮"} exact={money(d.receivable)} danger={d.overdue} />
+            <Stat label="Алданги" val={d.penalty > 0 ? sayaFmt(d.penalty) + "₮" : "—"}
+                  exact={d.penalty > 0 ? money(d.penalty) : undefined} danger={d.penalty > 0} />
+            <Stat label="Барьцаа" val={d.deposit > 0 ? sayaFmt(d.deposit) + "₮" : "—"}
+                  exact={d.deposit > 0 ? money(d.deposit) : undefined} />
             <Stat label="Гэрээ" val={String(d.contracts.length)} />
           </div>
         </div>
@@ -151,7 +159,7 @@ export default function ClientProfile() {
                       {c.cycle ? <><div className="text-xs text-t2 mb-1">{c.cycle.days_done}/{c.cycle.days_total} хоног</div>
                         <Prog pct={(c.cycle.days_done / c.cycle.days_total) * 100} /></> : <span className="text-xs text-t3">—</span>}
                     </td>
-                    <td className="td text-right tabular-nums font-bold">{sayaFmt(c.balance)}₮</td>
+                    <td className="td text-right tabular-nums font-bold" title={money(c.balance)}>{sayaFmt(c.balance)}₮</td>
                     <td className="td"><StatePill state={c.state} /></td>
                   </tr>
                 ))}
@@ -162,9 +170,10 @@ export default function ClientProfile() {
 
         {tab === "invoices" && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[620px]">
+            <table className="w-full min-w-[720px]">
               <thead><tr><th className="th">Нэхэмжлэл</th><th className="th text-right">Дүн</th>
-                <th className="th text-right">Төлсөн</th><th className="th text-right">Алданги</th><th className="th">Төлөв</th></tr></thead>
+                <th className="th text-right">Төлсөн</th><th className="th text-right">Үлдэгдэл</th>
+                <th className="th text-right">Алданги</th><th className="th">Төлөв</th></tr></thead>
               <tbody>
                 {d.invoices.map((inv: any) => (
                   <tr key={inv.id}>
@@ -175,6 +184,13 @@ export default function ClientProfile() {
                       )}</td>
                     <td className="td text-right tabular-nums">{money(inv.total)}</td>
                     <td className="td text-right tabular-nums">{money(inv.paid)}</td>
+                    {/* Гэрээний дэлгэрэнгүйтэй ИЖИЛ багана — хоёр дэлгэц дээр
+                        нэг нэхэмжлэлийн үлдэгдэл өөр өөрөөр гарахгүй. */}
+                    <td className={`td text-right tabular-nums font-bold ${
+                          inv.outstanding > 0 && inv.status === "overdue" ? "text-danger"
+                          : inv.outstanding > 0 ? "text-ink" : "text-t3"}`}>
+                      {inv.outstanding > 0 ? money(inv.outstanding) : "—"}
+                    </td>
                     <td className="td text-right tabular-nums text-danger">{inv.penalty > 0 ? money(inv.penalty) : "—"}</td>
                     <td className="td"><StatePill state={inv.status} /></td>
                   </tr>
@@ -251,14 +267,13 @@ export default function ClientProfile() {
                   <b className="text-[13.5px] text-ink block truncate">{f.filename}</b>
                   <span className="text-[12px] text-t3">{(f.size / 1024).toFixed(0)} KB · {f.uploaded_at}</span>
                 </div>
+                {/* Татахад сервер алдаа буцаавал өмнө нь алдааны JSON нь
+                    файлын нэрээр диск рүү бууж, юу болсон нь мэдэгдэхгүй байв. */}
                 <a className="btn-ghost ml-auto !min-h-9" href={`/api/files/dl/${f.id}`}
-                   onClick={async (e) => {
-                     e.preventDefault();
-                     const res = await fetch(`/api/files/dl/${f.id}`, { headers: { Authorization: `Bearer ${token()}` } });
-                     const blob = await res.blob();
-                     const a = document.createElement("a");
-                     a.href = URL.createObjectURL(blob); a.download = f.filename; a.click();
-                   }}>Татах</a>
+                   aria-busy={dl.busyPath === `/api/files/dl/${f.id}` || undefined}
+                   onClick={(e) => { e.preventDefault(); dl.download(`/api/files/dl/${f.id}`, f.filename); }}>
+                  {dl.busyPath === `/api/files/dl/${f.id}` ? "Татаж байна…" : "Татах"}
+                </a>
               </div>
             ))}
             {d.files.length === 0 && <Empty title="Хавсралт алга" sub="Гэрээний скан, падангийн зураг зэргийг энд хадгална." />}
@@ -273,11 +288,16 @@ export default function ClientProfile() {
   );
 }
 
-function Stat({ label, val, danger }: any) {
+/** `exact` — бүтэн төгрөгийн дүн. Дугуйлсан тоо нь ХАРАХАД, бүтэн тоо нь
+ *  АЖИЛЛАХАД хэрэгтэй (нэхэх, тулгах, шилжүүлэг бичих). Хоёуланг нь нэг
+ *  багана дээр шатлан харуулна. */
+function Stat({ label, val, exact, danger }: any) {
   return (
     <div>
       <div className="text-[12px] text-t3 font-bold uppercase tracking-wider mb-1">{label}</div>
-      <div className={`text-lg font-extrabold tabular-nums ${danger ? "text-danger" : "text-ink"}`}>{val}</div>
+      <div className={`text-lg font-extrabold tabular-nums ${danger ? "text-danger" : "text-ink"}`}
+           title={exact}>{val}</div>
+      {exact && <div className="text-[12px] text-t2 tabular-nums mt-0.5">{exact}</div>}
     </div>
   );
 }

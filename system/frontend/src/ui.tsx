@@ -137,6 +137,55 @@ export function Modal({ title, onClose, children, wide, dirty }: {
   );
 }
 
+/* ---------- Маягттай модал ----------
+   `Modal`-ийн `dirty` нь СОНГОЛТ байсан тул 23 модалын ердөө 3-д нь өгөгдсөн
+   байв — үлдсэн 20-д нь санамсаргүй гадна талын товшилт бөглөсөн бүхнийг
+   чимээгүй устгана. `FormModal` нь ЯГ ижил Modal, ганц ялгаа нь: `dirty` нь
+   ЗААВАЛ. Талбартай шинэ модал бичихэд TypeScript өөрөө «энэ юу бөглөгдсөн
+   бол бохирдох вэ?» гэж асууна — мартах боломж хаагдана.
+   (Асуулт-хариултын модал — ConfirmModal, RebuildModal — Modal хэвээр:
+   тэдгээрт бөглөх юм байхгүй тул хаах нь юу ч алдагдуулахгүй.) */
+export function FormModal(p: {
+  title: string; onClose: () => void; children: ReactNode; wide?: boolean; dirty: boolean;
+}) {
+  return <Modal {...p} />;
+}
+
+/* ---------- Илгээх товч ----------
+   Сервер хариу нэхэж байх хоромд товч юу ч болоогүй мэт зогсдог байв: Отгоо
+   дахин дарж, нэг төлбөр хоёр удаа бүртгэгддэг. Товч өөрөө «явж байна» гэдгээ
+   мэдэж, дуустал өөрийгөө түгжинэ. Амжилттай бол модал хаагдаж энэ товч
+   салдаг тул төлөв сэргээхгүй (салсан бүрэлдэхүүн дээр setState хийхгүй). */
+export function SubmitButton({ children, onSubmit, disabled, className = "btn-primary", title,
+                               busyLabel = "…" }: {
+  children: ReactNode;
+  onSubmit: () => Promise<unknown> | unknown;
+  disabled?: boolean;
+  className?: string;
+  title?: string;
+  /** Урт үйлдэлд юу болж байгааг НЭРЛЭ («Үүсгэж байна…»); богинод «…» хангалттай */
+  busyLabel?: ReactNode;
+}) {
+  const [busy, setBusy] = useState(false);
+  const alive = useRef(true);
+  // StrictMode нь effect-ийг mount → cleanup → mount гэж давхар дуудна —
+  // биед нь дахин асаахгүй бол товч «…» дээрээ үүрд хөлдөнө.
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+  return (
+    <button className={className} disabled={busy || disabled} title={title}
+            aria-busy={busy || undefined}
+            onClick={async () => {
+              setBusy(true);
+              try { await onSubmit(); } finally { if (alive.current) setBusy(false); }
+            }}>
+      {busy ? busyLabel : children}
+    </button>
+  );
+}
+
 /* ---------- Мөнгө хөдөлгөх үйлдлийн баталгаажуулалт ----------
    RebuildModal-ийн "үр дагаврыг эхлээд харуул" загварыг дахин ашиглах хэлбэр:
    болох гэж буй зүйлээ navy Receipt дээр харуулаад л асууна. */
@@ -155,7 +204,11 @@ export function ConfirmModal({ title, intro, rows, total, note, confirmLabel, ca
 }) {
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // SubmitButton-тай ижил: StrictMode-ийн давхар mount дээр «…» хөлдөхгүй
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
   return (
     <Modal title={title} onClose={onClose}>
       {intro && <p className="text-[13.5px] text-t2 mb-4">{intro}</p>}
@@ -286,7 +339,7 @@ export function Refreshing({ busy, children }: { busy: boolean; children: ReactN
 }
 
 /* ---------- Inline editor (2 алхамт баталгаажуулалттай) ---------- */
-export function InlineEdit({ value, display, onSave, type = "text", suffix = "", confirmText = "Хадгалах уу?", width = "w-24", right, options }: {
+export function InlineEdit({ value, display, onSave, type = "text", suffix = "", confirmText = "Хадгалах уу?", width = "w-24", right, options, label }: {
   value: string | number | null | undefined;
   display?: string;
   onSave: (v: string) => Promise<void> | void;
@@ -296,6 +349,11 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   width?: string;
   right?: boolean;
   options?: [string, string][];   // [value, label] — өгвөл <select> болно
+  /** Талбарын БОГИНО нэр («Тариф», «Хүү»). Дэлгэц дээр гарахгүй — зөвхөн
+   *  дуудагдах нэрэнд ордог: «Тариф: 330 · засах». Хүснэгтийн мөрөнд дөрвөн
+   *  дараалсан зогсоол «330 · засах», «5 · засах» гэж дуудагдвал уншигчаар
+   *  ажилладаг хүн ЮУГ засаж байгаагаа мэдэхгүй. */
+  label?: string;
 }) {
   const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
   const [val, setVal] = useState("");
@@ -312,6 +370,7 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   if (mode === "view") {
     return (
       <button className="inline-val" onClick={start} title="Дарж засна">
+        {label && <span className="sr-only">{label}: </span>}
         <span>{display ?? (value === null || value === undefined || value === "" ? "—" : String(value))}{suffix}</span>
         <span className="pen" aria-hidden="true">✎</span>
         <span className="sr-only"> · засах</span>
@@ -321,14 +380,14 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   return (
     <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
       {options ? (
-        <select autoFocus aria-label="Шинэ утга"
+        <select autoFocus aria-label={label ? `${label} — шинэ утга` : "Шинэ утга"}
           className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width}`}
           value={val} onChange={(e) => setVal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }}>
           {options.map(([v, lb]) => <option key={v} value={v}>{lb}</option>)}
         </select>
       ) : (
-        <input autoFocus type={type} aria-label="Шинэ утга"
+        <input autoFocus type={type} aria-label={label ? `${label} — шинэ утга` : "Шинэ утга"}
           className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width} ${right ? "text-right" : ""}`}
           value={val} onChange={(e) => setVal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }} />

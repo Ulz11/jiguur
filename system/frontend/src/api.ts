@@ -45,11 +45,33 @@ export async function api(path: string, opts: RequestInit = {}): Promise<any> {
   return res.json();
 }
 
+/** Серверийн алдааны хариу нь JSON — «PDF үүсгэж чадсангүй» гэсэн ерөнхий
+ *  мөрөөр дарвал Отгоо ЯАГААД гараагүйг мэдэхгүй (ж: «Энэ циклд хавсралт
+ *  гаргах хөдөлгөөн алга»). Байвал серверийн үгийг нь дамжуулна. */
+async function fileError(res: Response, fallback: string): Promise<Error> {
+  try { return new Error(errorMessage(await res.json())); } catch { return new Error(fallback); }
+}
+
 export async function openPdf(path: string) {
   const res = await fetch(path, { headers: { Authorization: `Bearer ${token()}` } });
-  if (!res.ok) throw new Error("PDF үүсгэж чадсангүй");
+  if (!res.ok) throw await fileError(res, "PDF үүсгэж чадсангүй");
   const blob = await res.blob();
   window.open(URL.createObjectURL(blob), "_blank");
+}
+
+/** Файл татах (Excel, хавсралт). `res.ok`-ыг шалгахгүй байхад алдааны JSON нь
+ *  `avlaga.xlsx` нэртэйгээр диск рүү бууж, Excel «эвдэрсэн файл» гэж хэлдэг —
+ *  хаанаас гарсан алдаа нь мэдэгдэхгүй. */
+export async function downloadFile(path: string, filename: string) {
+  const res = await fetch(path, { headers: { Authorization: `Bearer ${token()}` } });
+  if (!res.ok) throw await fileError(res, "Файл татаж чадсангүй");
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  // Татаж эхлэхээс өмнө URL-ыг чөлөөлвөл зарим хөтөч татахаа болино
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 export const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
