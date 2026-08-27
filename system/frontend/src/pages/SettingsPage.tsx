@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { api, fmt } from "../api";
 import { Spinner, Modal, useToast } from "../ui";
 
@@ -9,6 +9,7 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<any>(null);
   const [gradeModal, setGradeModal] = useState<any>(null);      // {} = шинэ, {id..} = засах
   const [matModal, setMatModal] = useState<any>(null);
+  const uid = useId();
 
   const load = () => {
     api("/api/grades").then(setGrades);
@@ -36,7 +37,8 @@ export default function SettingsPage() {
               <div key={g.id} className="flex items-center gap-3 py-2 border-b border-sunken last:border-0">
                 <span className="pill-blue">{g.code}</span>
                 <span className="text-[13.5px]">{g.name}</span>
-                <button className="btn-ghost btn-row ml-auto" onClick={() => setGradeModal(g)}>Засах</button>
+                <button className="btn-ghost btn-row ml-auto" aria-label={`${g.code} · ${g.name} зэрэглэлийг засах`}
+                        onClick={() => setGradeModal(g)}>Засах</button>
               </div>
             ))}
           </div>
@@ -44,19 +46,20 @@ export default function SettingsPage() {
           {/* Суурь тохиргоо */}
           <div className="card p-5">
             <h3 className="font-bold text-ink text-[15.5px] mb-3.5">Суурь утгууд</h3>
-            <label className="lbl">Компанийн нэр</label>
-            <input className="inp mb-3.5" value={settings.company_name || ""}
+            <label className="lbl" htmlFor={`${uid}-company`}>Компанийн нэр</label>
+            <input id={`${uid}-company`} className="inp mb-3.5" value={settings.company_name || ""}
                    onChange={(e) => setSettings({ ...settings, company_name: e.target.value })} />
-            <label className="lbl">Алдангийн суурь %/хоног</label>
-            <input className="inp mb-3.5" value={settings.penalty_default || "0.5"}
+            <label className="lbl" htmlFor={`${uid}-penalty`}>Алдангийн суурь %/хоног</label>
+            <input id={`${uid}-penalty`} className="inp mb-3.5" value={settings.penalty_default || "0.5"}
                    onChange={(e) => setSettings({ ...settings, penalty_default: e.target.value })} />
-            <label className="lbl">Циклийн урт (хоног)</label>
-            <input className="inp mb-3.5" value={settings.cycle_days_default || "30"}
+            <label className="lbl" htmlFor={`${uid}-cycle`}>Циклийн урт (хоног)</label>
+            <input id={`${uid}-cycle`} className="inp mb-3.5" value={settings.cycle_days_default || "30"}
                    onChange={(e) => setSettings({ ...settings, cycle_days_default: e.target.value })} />
-            <label className="lbl">НДШ суутгалын хувь (%)</label>
-            <input className="inp mb-1" inputMode="decimal" value={settings.ndsh_percent || "11.5"}
+            <label className="lbl" htmlFor={`${uid}-ndsh`}>НДШ суутгалын хувь (%)</label>
+            <input id={`${uid}-ndsh`} className="inp mb-1" inputMode="decimal" value={settings.ndsh_percent || "11.5"}
+                   aria-describedby={`${uid}-ndsh-hint`}
                    onChange={(e) => setSettings({ ...settings, ndsh_percent: e.target.value })} />
-            <p className="text-[11.5px] text-t3 mb-4">Дараагийн цалингийн бодолтоос шинэ хувиар суутгана.</p>
+            <p id={`${uid}-ndsh-hint`} className="text-[11.5px] text-t3 mb-4">Дараагийн цалингийн бодолтоос шинэ хувиар суутгана.</p>
             {/* Барихгүй бол алдаа чимээгүй залгигдаж, хадгалагдсан мэт харагдана */}
             <button className="btn-primary w-full justify-center" onClick={async () => {
               try {
@@ -94,7 +97,8 @@ export default function SettingsPage() {
                       ))}
                     </div>
                   </td>
-                  <td className="td"><button className="btn-ghost btn-row" onClick={() => setMatModal(m)}>Засах</button></td>
+                  <td className="td"><button className="btn-ghost btn-row" aria-label={`${m.name} материалыг засах`}
+                                             onClick={() => setMatModal(m)}>Засах</button></td>
                 </tr>
               ))}
             </tbody>
@@ -117,14 +121,15 @@ export default function SettingsPage() {
 function GradeModal({ g, onClose, onDone }: any) {
   const toast = useToast();
   const [f, setF] = useState({ code: g.code || "", name: g.name || "", sort: g.sort ?? 0 });
+  const uid = useId();
   return (
     <Modal title={g.id ? "Зэрэглэл засах" : "Шинэ зэрэглэл"} onClose={onClose}>
-      <label className="lbl">Код (богино)</label>
-      <input className="inp mb-3.5" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="ж: С" autoFocus />
-      <label className="lbl">Нэр</label>
-      <input className="inp mb-3.5" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="ж: С зэрэглэл" />
-      <label className="lbl">Эрэмбэ</label>
-      <input type="number" className="inp mb-5" value={f.sort} onChange={(e) => setF({ ...f, sort: +e.target.value })} />
+      <label className="lbl" htmlFor={`${uid}-code`}>Код (богино)</label>
+      <input id={`${uid}-code`} className="inp mb-3.5" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="ж: С" autoFocus />
+      <label className="lbl" htmlFor={`${uid}-name`}>Нэр</label>
+      <input id={`${uid}-name`} className="inp mb-3.5" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="ж: С зэрэглэл" />
+      <label className="lbl" htmlFor={`${uid}-sort`}>Эрэмбэ</label>
+      <input id={`${uid}-sort`} type="number" className="inp mb-5" value={f.sort} onChange={(e) => setF({ ...f, sort: +e.target.value })} />
       <div className="flex justify-end gap-2.5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <button className="btn-primary" disabled={!f.code.trim()} onClick={async () => {
@@ -149,19 +154,20 @@ function MaterialModal({ m, grades, onClose, onDone }: any) {
       return { grade_id: g.id, grade: g.code, nb_price: ex?.nb_price ?? 0, sale_price: ex?.sale_price ?? 0 };
     }),
   });
+  const uid = useId();
   return (
     <Modal title={m.id ? "Материал засах" : "Шинэ материал"} onClose={onClose} wide>
       <div className="grid grid-cols-2 gap-3.5 max-sm:grid-cols-1">
-        <div><label className="lbl">Нэр *</label>
-          <input className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="ж: Хэв хашмал 2020" autoFocus /></div>
-        <div><label className="lbl">Категори</label>
-          <select className="inp" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>
+        <div><label className="lbl" htmlFor={`${uid}-name`}>Нэр *</label>
+          <input id={`${uid}-name`} className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="ж: Хэв хашмал 2020" autoFocus /></div>
+        <div><label className="lbl" htmlFor={`${uid}-cat`}>Категори</label>
+          <select id={`${uid}-cat`} className="inp" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>
             {["Хэв", "Тулаас", "Труба", "Механизм", "Бусад"].map((c) => <option key={c}>{c}</option>)}
           </select></div>
-        <div><label className="lbl">Суурь тариф ₮/ш/хоног</label>
-          <input type="number" className="inp" value={f.base_rate} onChange={(e) => setF({ ...f, base_rate: +e.target.value })} /></div>
-        <div><label className="lbl">Засварын фикс үнэ ₮/ш</label>
-          <input type="number" className="inp" value={f.repair_fee} onChange={(e) => setF({ ...f, repair_fee: +e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-rate`}>Суурь тариф ₮/ш/хоног</label>
+          <input id={`${uid}-rate`} type="number" className="inp" value={f.base_rate} onChange={(e) => setF({ ...f, base_rate: +e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-fee`}>Засварын фикс үнэ ₮/ш</label>
+          <input id={`${uid}-fee`} type="number" className="inp" value={f.repair_fee} onChange={(e) => setF({ ...f, repair_fee: +e.target.value })} /></div>
       </div>
       <h4 className="font-bold text-[13.5px] mt-5 mb-2">Зэрэглэл бүрийн үнэ</h4>
       <div className="overflow-x-auto">
@@ -173,8 +179,10 @@ function MaterialModal({ m, grades, onClose, onDone }: any) {
               <tr key={p.grade_id}>
                 <td className="td"><span className="pill-blue">{p.grade}</span></td>
                 <td className="td text-right"><input type="number" className="inp !min-h-9 !py-1.5 w-32 text-right"
+                  aria-label={`${p.grade} зэрэглэл — НБҮнэ (актын үнэ) ₮`}
                   value={p.nb_price} onChange={(e) => setF({ ...f, prices: f.prices.map((x: any, j: number) => j === i ? { ...x, nb_price: +e.target.value } : x) })} /></td>
                 <td className="td text-right"><input type="number" className="inp !min-h-9 !py-1.5 w-32 text-right"
+                  aria-label={`${p.grade} зэрэглэл — худалдах үнэ ₮`}
                   value={p.sale_price} onChange={(e) => setF({ ...f, prices: f.prices.map((x: any, j: number) => j === i ? { ...x, sale_price: +e.target.value } : x) })} /></td>
               </tr>
             ))}

@@ -5,7 +5,7 @@ import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit } from 
 import { PayModal } from "./ContractDetail";
 import { invoiceLabel } from "../lib/invoice";
 import {
-  buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth,
+  buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth, dayCellLabel,
   parseIso, isoOf, WEEKDAYS_MN, monthLabelMN, type TLEvent, type YearMonth,
 } from "../lib/calendar";
 
@@ -99,8 +99,8 @@ export default function ClientProfile() {
 
         <div className="flex gap-0.5 border-b border-line mt-5 mb-4 overflow-x-auto">
           {TABS.map(([v, l, n]: any) => (
-            <button key={v} onClick={() => setTab(v)}
-              className={`px-4 py-2.5 font-semibold text-[13.5px] border-b-[2.5px] -mb-px whitespace-nowrap min-h-11 transition ${
+            <button key={v} onClick={() => setTab(v)} aria-current={tab === v ? true : undefined}
+              className={`tab-btn px-4 py-2.5 font-semibold text-[13.5px] border-b-[2.5px] -mb-px whitespace-nowrap min-h-11 transition ${
                 tab === v ? "text-brand border-brand" : "text-t2 border-transparent hover:text-ink"}`}>
               {l}{n !== undefined && <span className={`text-[11px] rounded-full px-1.5 py-0.5 ml-1.5 font-bold ${
                 tab === v ? "bg-brand-50 text-brand" : "bg-sunken text-t2"}`}>{n}</span>}
@@ -280,9 +280,18 @@ function Stat({ label, val, danger }: any) {
 /* ---------- Тойм: сарын хуанли (босоо timeline-ийн оронд) ---------- */
 // Төрөл бүрийн өнгө: төлбөр→ногоон, буцаалт→улбар, акт→улаан, ачилт/гэрээ→brand
 const KIND_DOT: Record<string, string> = {
-  payment: "bg-money", return: "bg-warn", writeoff: "bg-danger", issue: "bg-brand", contract: "bg-brand",
+  // «Гэрээ» нь өмнө нь «Ачилт»-тай ЯГ ижил улбар цэгтэй байсан — тайлбар
+  // гаргамагц хоёр ижил цэг хоёр өөр нэртэй зогсох тул ялгав.
+  payment: "bg-money", return: "bg-warn", writeoff: "bg-danger", issue: "bg-brand", contract: "bg-violet",
+};
+/* Цэг бүр ЮУ гэсэн үг болохыг хаана ч бичээгүй байсан — өнгө нь дангаараа
+   утга зөөж чадахгүй. Тайлбарыг торны доор ил гаргаж, нүд бүрийн дуудагдах
+   нэрэнд ч мөн энэ нэрсийг ашиглана (нэг эх сурвалж). */
+const KIND_LABEL: Record<string, string> = {
+  payment: "Төлбөр", issue: "Ачилт", return: "Буцаалт", writeoff: "Акт", contract: "Гэрээ",
 };
 const KIND_ORDER = ["contract", "issue", "return", "writeoff", "payment"];
+const LEGEND = ["payment", "issue", "return", "writeoff", "contract"];
 const dotCls = (k: string) => KIND_DOT[k] || "bg-brand";
 
 function TimelineCalendar({ events }: { events: TLEvent[] }) {
@@ -295,6 +304,8 @@ function TimelineCalendar({ events }: { events: TLEvent[] }) {
 
   const grid = useMemo(() => buildMonthGrid(events, view.year, view.month), [events, view]);
   const dayEvents = selected ? eventsOn(events, selected) : [];
+  const prev = addMonth(view, -1);
+  const next = addMonth(view, 1);
 
   function go(delta: number) {
     const nv = addMonth(view, delta);
@@ -312,10 +323,11 @@ function TimelineCalendar({ events }: { events: TLEvent[] }) {
     <div>
       {/* Сар сонгох мөр */}
       <div className="flex items-center justify-between mb-3">
-        <button onClick={() => go(-1)} aria-label="Өмнөх сар"
+        {/* ‹ › нь дүрс дээрээ л ярьдаг — хаашаа очихыг нь нэрэндээ агуулна */}
+        <button onClick={() => go(-1)} aria-label={`Өмнөх сар — ${monthLabelMN(prev.year, prev.month)}`}
           className="w-10 h-10 rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand text-lg font-bold transition">‹</button>
-        <b className="text-[14px] text-ink font-bold tabular-nums">{monthLabelMN(view.year, view.month)}</b>
-        <button onClick={() => go(1)} aria-label="Дараах сар"
+        <b className="text-[14px] text-ink font-bold tabular-nums" aria-live="polite">{monthLabelMN(view.year, view.month)}</b>
+        <button onClick={() => go(1)} aria-label={`Дараах сар — ${monthLabelMN(next.year, next.month)}`}
           className="w-10 h-10 rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand text-lg font-bold transition">›</button>
       </div>
 
@@ -336,17 +348,18 @@ function TimelineCalendar({ events }: { events: TLEvent[] }) {
           const isSel = c.iso === selected;
           const isToday = c.iso === todayIso;
           return (
-            <button key={i} onClick={() => setSelected(c.iso)}
-              className={`min-h-[58px] rounded-lg p-1.5 flex flex-col text-left border transition ${
+            <button key={i} onClick={() => setSelected(c.iso)} className={`cal-day min-h-[58px] rounded-lg p-1.5 flex flex-col text-left border transition ${
                 isSel ? "border-brand bg-brand-50 ring-1 ring-brand"
                 : total ? "border-line bg-card2 hover:bg-brand-50"
-                : "border-line bg-cardbg hover:bg-sunken"}`}>
+                : "border-line bg-cardbg hover:bg-sunken"}`}
+              aria-label={dayCellLabel(c.iso, c.counts, KIND_LABEL)}
+              aria-pressed={isSel} {...(isToday ? { "aria-current": "date" as const } : {})}>
               <span className={`text-[13px] font-bold tabular-nums ${
                 isSel ? "text-brand" : isToday ? "text-brand" : "text-t2"}`}>
                 {c.day}{isToday && <i className="inline-block w-1 h-1 rounded-full bg-brand align-super ml-0.5" />}
               </span>
               {total > 0 && (
-                <span className="mt-auto flex items-center gap-1 flex-wrap">
+                <span className="mt-auto flex items-center gap-1 flex-wrap" aria-hidden="true">
                   {kinds.map((k) => <i key={k} className={`w-2 h-2 rounded-full ${dotCls(k)}`} />)}
                   <span className="text-[10px] font-bold text-t3 ml-0.5 tabular-nums">{total}</span>
                 </span>
@@ -355,6 +368,16 @@ function TimelineCalendar({ events }: { events: TLEvent[] }) {
           );
         })}
       </div>
+
+      {/* Цэгний тайлбар — өнгө нь юу гэсэн үг болохыг ЭНД хэлнэ */}
+      <ul className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1 text-[11px] text-t2 list-none p-0">
+        {LEGEND.map((k) => (
+          <li key={k} className="inline-flex items-center gap-1.5">
+            <i className={`w-2 h-2 rounded-full ${dotCls(k)}`} aria-hidden="true" />
+            {KIND_LABEL[k]}
+          </li>
+        ))}
+      </ul>
 
       {/* Сонгосон өдрийн үйл явдлууд */}
       <div className="mt-4 border-t border-line pt-3.5 min-h-[64px]">

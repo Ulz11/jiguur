@@ -55,7 +55,7 @@ export default function Audit() {
           ))}
         </div>
         <input className="inp max-w-[240px] !min-h-10 !py-2 ml-auto" placeholder="Хайх…"
-               value={q} onChange={(e) => setQ(e.target.value)} />
+               aria-label="Үйлдлийн бүртгэлээс хайх" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
 
       <div className="card overflow-x-auto">

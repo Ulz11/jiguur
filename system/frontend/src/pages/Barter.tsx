@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { api, fmt, money, sayaFmt, user } from "../api";
 import { Spinner, Modal, useToast, Empty, Receipt } from "../ui";
 import { parseMoney } from "../lib/num";
@@ -160,19 +160,20 @@ function SellModal({ a, onClose, onDone }: any) {
   const [f, setF] = useState({ date: today(), amount: "", sold_to: "", note: "" });
   const amt = parseMoney(f.amount);
   const gain = amt ? amt - a.value_in : null;
+  const uid = useId();
   return (
     <Modal title={`Зарах — ${a.name}`} onClose={onClose}>
       <div className="grid grid-cols-2 gap-3.5">
-        <div><label className="lbl">Огноо</label>
-          <input type="date" className="inp" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
-        <div><label className="lbl">Зарсан үнэ ₮</label>
-          <input className="inp" inputMode="numeric" placeholder="0" value={f.amount} autoFocus
+        <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+          <input id={`${uid}-date`} type="date" className="inp" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-amount`}>Зарсан үнэ ₮</label>
+          <input id={`${uid}-amount`} className="inp" inputMode="numeric" placeholder="0" value={f.amount} autoFocus
                  onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
       </div>
-      <div className="mt-3.5"><label className="lbl">Худалдан авагч</label>
-        <input className="inp" value={f.sold_to} onChange={(e) => setF({ ...f, sold_to: e.target.value })} /></div>
-      <div className="mt-3.5"><label className="lbl">Тэмдэглэл</label>
-        <input className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
+      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-buyer`}>Худалдан авагч</label>
+        <input id={`${uid}-buyer`} className="inp" value={f.sold_to} onChange={(e) => setF({ ...f, sold_to: e.target.value })} /></div>
+      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
+        <input id={`${uid}-note`} className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
       <div className="mt-4">
         {gain === null ? (
           <p className="text-[12.5px] text-t3">Зарах үнээ оруулмагц ашиг/алдагдал энд бодогдоно.</p>
@@ -206,28 +207,29 @@ function StockModal({ a, onClose, onDone }: any) {
   const toast = useToast();
   const [mats, setMats] = useState<any[] | null>(null);
   const [f, setF] = useState({ material_id: 0, grade_id: 0, qty: "" });
+  const uid = useId();
   useEffect(() => { api("/api/materials").then(setMats); }, []);
   if (!mats) return null;
   const m = mats.find((x) => x.id === f.material_id);
   return (
     <Modal title={`Нөөцөд оруулах — ${a.name}`} onClose={onClose}>
-      <label className="lbl">Материал</label>
-      <select className="inp mb-3.5" value={f.material_id}
+      <label className="lbl" htmlFor={`${uid}-mat`}>Материал</label>
+      <select id={`${uid}-mat`} className="inp mb-3.5" value={f.material_id}
               onChange={(e) => setF({ ...f, material_id: +e.target.value, grade_id: 0 })}>
         <option value={0}>Сонгох…</option>
         {mats.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
       </select>
       {m && (
         <>
-          <label className="lbl">Зэрэглэл</label>
-          <select className="inp mb-3.5" value={f.grade_id} onChange={(e) => setF({ ...f, grade_id: +e.target.value })}>
+          <label className="lbl" htmlFor={`${uid}-grade`}>Зэрэглэл</label>
+          <select id={`${uid}-grade`} className="inp mb-3.5" value={f.grade_id} onChange={(e) => setF({ ...f, grade_id: +e.target.value })}>
             <option value={0}>Сонгох…</option>
             {m.prices.map((p: any) => <option key={p.grade_id} value={p.grade_id}>{p.grade}</option>)}
           </select>
         </>
       )}
-      <label className="lbl">Тоо ширхэг</label>
-      <input type="number" className="inp mb-5" value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value })} />
+      <label className="lbl" htmlFor={`${uid}-qty`}>Тоо ширхэг</label>
+      <input id={`${uid}-qty`} type="number" className="inp mb-5" value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value })} />
       <div className="flex justify-end gap-2.5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <button className="btn-primary" disabled={!f.material_id || !f.grade_id || !+f.qty} onClick={async () => {
@@ -250,32 +252,33 @@ function AssetModal({ a, onClose, onDone }: any) {
     date_in: a?.date_in || today(), value_in: a ? String(a.value_in) : "",
     asking_price: a ? String(a.asking_price) : "", note: a?.note || "",
   });
+  const uid = useId();
   return (
     <Modal title={a ? "Хөрөнгө засах" : "Хөрөнгө бүртгэх"} onClose={onClose}>
-      <label className="lbl">Төрөл</label>
-      <div className="flex gap-2 mb-3.5">
+      <div className="lbl" id={`${uid}-type`}>Төрөл</div>
+      <div className="flex gap-2 mb-3.5" role="group" aria-labelledby={`${uid}-type`}>
         {TYPES.map((t) => (
-          <button key={t} onClick={() => setF({ ...f, type: t })}
+          <button key={t} onClick={() => setF({ ...f, type: t })} aria-pressed={f.type === t}
             className={`flex-1 rounded-[10px] border py-2 font-semibold text-[13px] min-h-10 transition ${
               f.type === t ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{t}</button>
         ))}
       </div>
       <div className="grid grid-cols-2 gap-3.5">
-        <div className="col-span-2"><label className="lbl">Нэр *</label>
-          <input className="inp" placeholder="ж: Автомашин 1234УБА" value={f.name}
+        <div className="col-span-2"><label className="lbl" htmlFor={`${uid}-name`}>Нэр *</label>
+          <input id={`${uid}-name`} className="inp" placeholder="ж: Автомашин 1234УБА" value={f.name}
                  onChange={(e) => setF({ ...f, name: e.target.value })} /></div>
-        <div className="col-span-2"><label className="lbl">Дэлгэрэнгүй (дугаар, м², хаяг…)</label>
-          <input className="inp" value={f.detail} onChange={(e) => setF({ ...f, detail: e.target.value })} /></div>
-        <div><label className="lbl">Орж ирсэн огноо</label>
-          <input type="date" className="inp" value={f.date_in} onChange={(e) => setF({ ...f, date_in: e.target.value })} /></div>
-        <div><label className="lbl">Орж ирсэн үнэ ₮ *</label>
-          <input className="inp" inputMode="numeric" value={f.value_in}
+        <div className="col-span-2"><label className="lbl" htmlFor={`${uid}-detail`}>Дэлгэрэнгүй (дугаар, м², хаяг…)</label>
+          <input id={`${uid}-detail`} className="inp" value={f.detail} onChange={(e) => setF({ ...f, detail: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-datein`}>Орж ирсэн огноо</label>
+          <input id={`${uid}-datein`} type="date" className="inp" value={f.date_in} onChange={(e) => setF({ ...f, date_in: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-valuein`}>Орж ирсэн үнэ ₮ *</label>
+          <input id={`${uid}-valuein`} className="inp" inputMode="numeric" value={f.value_in}
                  onChange={(e) => setF({ ...f, value_in: e.target.value })} /></div>
-        <div><label className="lbl">Зарах санал үнэ ₮</label>
-          <input className="inp" inputMode="numeric" value={f.asking_price}
+        <div><label className="lbl" htmlFor={`${uid}-asking`}>Зарах санал үнэ ₮</label>
+          <input id={`${uid}-asking`} className="inp" inputMode="numeric" value={f.asking_price}
                  onChange={(e) => setF({ ...f, asking_price: e.target.value })} /></div>
-        <div><label className="lbl">Тэмдэглэл</label>
-          <input className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
+          <input id={`${uid}-note`} className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
       </div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>

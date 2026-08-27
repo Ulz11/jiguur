@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useId, useState } from "react";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, Modal, useToast, Empty, InlineEdit, Receipt, ConfirmModal } from "../ui";
 import { parseMoney } from "../lib/num";
@@ -232,23 +232,27 @@ function PayLoanModal({ l, onClose, onDone }: any) {
   const toast = useToast();
   const [f, setF] = useState({ date: today(), amount: String(l.monthly_due), part: "interest", note: "" });
   const amt = parseMoney(f.amount);
+  const uid = useId();
   return (
     <Modal title={`Төлөлт — ${l.name}`} onClose={onClose}>
-      <div className="flex gap-2 mb-4">
+      {/* Хүү/Үндсэн дүн нь ЮУГ төлж байгааг сонгодог — бүлгээ нэрлэнэ */}
+      <div className="lbl" id={`${uid}-part`}>Юуг төлөх вэ</div>
+      <div className="flex gap-2 mb-4" role="group" aria-labelledby={`${uid}-part`}>
         {[["interest", "Хүү"], ["principal", "Үндсэн дүн"]].map(([v, lb]) => (
-          <button key={v} onClick={() => setF({ ...f, part: v, amount: v === "interest" ? String(l.monthly_due) : "" })}
+          <button key={v} aria-pressed={f.part === v}
+            onClick={() => setF({ ...f, part: v, amount: v === "interest" ? String(l.monthly_due) : "" })}
             className={`flex-1 rounded-[10px] border py-2.5 font-semibold text-sm min-h-11 transition ${
               f.part === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{lb}</button>
         ))}
       </div>
       <div className="grid grid-cols-2 gap-3.5">
-        <div><label className="lbl">Огноо</label>
-          <input type="date" className="inp" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
-        <div><label className="lbl">Дүн ₮</label>
-          <input className="inp" inputMode="numeric" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+          <input id={`${uid}-date`} type="date" className="inp" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-amt`}>Дүн ₮</label>
+          <input id={`${uid}-amt`} className="inp" inputMode="numeric" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
       </div>
-      <div className="mt-3.5"><label className="lbl">Тэмдэглэл</label>
-        <input className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
+      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
+        <input id={`${uid}-note`} className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
       {amt > 0 && (
         <div className="mt-3.5">
           {f.part === "principal" ? (
@@ -287,28 +291,30 @@ function PayLoanModal({ l, onClose, onDone }: any) {
 function AddLoanModal({ onClose, onDone }: any) {
   const toast = useToast();
   const [f, setF] = useState({ name: "", kind: "bank", principal: "", monthly_rate: "", start_date: today(), note: "" });
+  const uid = useId();
   return (
     <Modal title="Шинэ зээл бүртгэх" onClose={onClose}>
-      <label className="lbl">Зээлдүүлэгч *</label>
-      <input className="inp mb-3.5" value={f.name} placeholder="ж: Хаан банк — шугам №3" autoFocus
+      <label className="lbl" htmlFor={`${uid}-name`}>Зээлдүүлэгч *</label>
+      <input id={`${uid}-name`} className="inp mb-3.5" value={f.name} placeholder="ж: Хаан банк — шугам №3" autoFocus
              onChange={(e) => setF({ ...f, name: e.target.value })} />
-      <div className="flex gap-2 mb-3.5">
+      <div className="lbl" id={`${uid}-kind`}>Зээлийн төрөл</div>
+      <div className="flex gap-2 mb-3.5" role="group" aria-labelledby={`${uid}-kind`}>
         {[["bank", "Банк"], ["private", "Хувь хүн"], ["credit", "Кредит"]].map(([v, lb]) => (
-          <button key={v} onClick={() => setF({ ...f, kind: v })}
+          <button key={v} onClick={() => setF({ ...f, kind: v })} aria-pressed={f.kind === v}
             className={`flex-1 rounded-[10px] border py-2 font-semibold text-[13px] min-h-10 transition ${
               f.kind === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{lb}</button>
         ))}
       </div>
       <div className="grid grid-cols-3 gap-3.5 max-sm:grid-cols-1">
-        <div><label className="lbl">Үндсэн дүн ₮ *</label>
-          <input className="inp" inputMode="numeric" value={f.principal} onChange={(e) => setF({ ...f, principal: e.target.value })} /></div>
-        <div><label className="lbl">Сарын хүү % *</label>
-          <input className="inp" inputMode="decimal" value={f.monthly_rate} onChange={(e) => setF({ ...f, monthly_rate: e.target.value })} /></div>
-        <div><label className="lbl">Эхэлсэн огноо</label>
-          <input type="date" className="inp" value={f.start_date} onChange={(e) => setF({ ...f, start_date: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-principal`}>Үндсэн дүн ₮ *</label>
+          <input id={`${uid}-principal`} className="inp" inputMode="numeric" value={f.principal} onChange={(e) => setF({ ...f, principal: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-rate`}>Сарын хүү % *</label>
+          <input id={`${uid}-rate`} className="inp" inputMode="decimal" value={f.monthly_rate} onChange={(e) => setF({ ...f, monthly_rate: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-start`}>Эхэлсэн огноо</label>
+          <input id={`${uid}-start`} type="date" className="inp" value={f.start_date} onChange={(e) => setF({ ...f, start_date: e.target.value })} /></div>
       </div>
-      <div className="mt-3.5"><label className="lbl">Тэмдэглэл</label>
-        <input className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
+      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
+        <input id={`${uid}-note`} className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <button className="btn-primary" disabled={!f.name.trim() || !parseMoney(f.principal)} onClick={async () => {

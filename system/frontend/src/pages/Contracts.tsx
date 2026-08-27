@@ -38,14 +38,16 @@ export default function Contracts() {
       </div>
 
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <div className="segment flex-wrap">
+        <div className="segment flex-wrap" role="group" aria-label="Гэрээг төлөвөөр шүүх">
           {FILTERS.map(([v, l]) => (
-            <button key={v} onClick={() => setFilter(v)} className={filter === v ? "on" : ""}>
+            <button key={v} onClick={() => setFilter(v)} aria-pressed={filter === v}
+                    className={filter === v ? "on" : ""}>
               {l} · {cnt(v)}
             </button>
           ))}
         </div>
-        <input className="inp max-w-[240px] !min-h-10 !py-2 ml-auto" placeholder="Харилцагч, № хайх…"
+        <input id="contracts-q" className="inp max-w-[240px] !min-h-10 !py-2 ml-auto" placeholder="Харилцагч, № хайх…"
+               aria-label="Харилцагч, гэрээний дугаараар хайх"
                value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       {filter === "opening" && (
@@ -77,8 +79,14 @@ export default function Contracts() {
                   <td className="td min-w-[150px]">
                     {c.cycle ? (
                       <>
+                        {/* Явцын зураас нь ӨНГӨӨРӨӨ л «хэтэрсэн/дуусах дөхсөн»
+                            гэдгээ хэлдэг байсан — улаан ногоог ялгадаггүй хүнд,
+                            хэвлэсэн цаасан дээр энэ нь чимээгүй алга болно.
+                            Утгыг ҮГ авч явна, өнгө нь ард нь дэмжинэ. */}
                         <div className="text-xs text-t2 mb-1.5">
                           {c.cycle.cycle_start.slice(5)} – {c.cycle.cycle_end.slice(5)} · {c.cycle.days_done}/{c.cycle.days_total}
+                          {c.state === "overdue" && <b className="text-danger"> · хэтэрсэн</b>}
+                          {c.state === "ending" && <b className="text-warn"> · дуусах дөхсөн</b>}
                         </div>
                         <Prog pct={pct} color={c.state === "overdue" ? "#EF4444" : c.state === "ending" ? "#F5A524" : undefined} />
                       </>

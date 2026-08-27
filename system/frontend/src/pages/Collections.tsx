@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, Modal, useToast, Empty } from "../ui";
@@ -71,9 +71,10 @@ export default function Collections() {
         </div>
       </div>
 
-      <div className="segment mb-4 flex-wrap">
+      <div className="segment mb-4 flex-wrap" role="group" aria-label="Авлагыг байдлаар нь шүүх">
         {FILTERS.map(([v, l, fn]) => (
-          <button key={v} onClick={() => setFilter(v)} className={filter === v ? "on" : ""}>
+          <button key={v} onClick={() => setFilter(v)} aria-pressed={filter === v}
+                  className={filter === v ? "on" : ""}>
             {l} · {d.rows.filter(fn).length}
           </button>
         ))}
@@ -156,6 +157,7 @@ function NoteModal({ r, onClose, onDone }: any) {
   const [f, setF] = useState({ date: today(), kind: "call", note: "",
                                promise_date: "", promise_amount: "" });
   const [busy, setBusy] = useState(false);
+  const uid = useId();
   return (
     <Modal title={`Тэмдэглэл — ${r.client}`} onClose={onClose}>
       <div className="bg-sunken rounded-lg px-3.5 py-2.5 mb-4 text-[13px] text-t2">
@@ -165,28 +167,29 @@ function NoteModal({ r, onClose, onDone }: any) {
                             className="font-bold text-ink hover:text-brand hover:underline">☎ {r.phone}</a></>}
       </div>
 
-      <label className="lbl">Хэлбэр</label>
-      <div className="flex gap-2 mb-3.5 flex-wrap">
+      {/* Товчны бүлэг — ганц талбар биш тул `label` биш, нэрлэсэн бүлэг */}
+      <div className="lbl" id={`${uid}-kind`}>Хэлбэр</div>
+      <div className="flex gap-2 mb-3.5 flex-wrap" role="group" aria-labelledby={`${uid}-kind`}>
         {KINDS.map(([v, l]) => (
-          <button key={v} onClick={() => setF({ ...f, kind: v })}
+          <button key={v} onClick={() => setF({ ...f, kind: v })} aria-pressed={f.kind === v}
             className={`rounded-[7px] border px-4 py-2 font-semibold text-[13px] min-h-10 transition ${
               f.kind === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{l}</button>
         ))}
       </div>
 
       <div className="grid grid-cols-2 gap-3.5">
-        <div><label className="lbl">Огноо</label>
-          <input type="date" className="inp" value={f.date}
+        <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+          <input id={`${uid}-date`} type="date" className="inp" value={f.date}
                  onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
-        <div><label className="lbl">Амлах дүн ₮</label>
-          <input className="inp" inputMode="numeric" placeholder="0" value={f.promise_amount}
+        <div><label className="lbl" htmlFor={`${uid}-pamt`}>Амлах дүн ₮</label>
+          <input id={`${uid}-pamt`} className="inp" inputMode="numeric" placeholder="0" value={f.promise_amount}
                  onChange={(e) => setF({ ...f, promise_amount: e.target.value })} /></div>
       </div>
-      <div className="mt-3.5"><label className="lbl">Амлах огноо</label>
-        <input type="date" className="inp" value={f.promise_date}
+      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-pdate`}>Амлах огноо</label>
+        <input id={`${uid}-pdate`} type="date" className="inp" value={f.promise_date}
                onChange={(e) => setF({ ...f, promise_date: e.target.value })} /></div>
-      <div className="mt-3.5"><label className="lbl">Юу ярьсан бэ?</label>
-        <input className="inp" autoFocus placeholder="ж: Даваа гарагт 5 сая шилжүүлнэ гэв"
+      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-note`}>Юу ярьсан бэ?</label>
+        <input id={`${uid}-note`} className="inp" autoFocus placeholder="ж: Даваа гарагт 5 сая шилжүүлнэ гэв"
                value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
 
       <div className="flex justify-end gap-2.5 mt-5">

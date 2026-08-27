@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, setAuth } from "../api";
 import brandLogo from "../assets/jiguur-logo.png";
@@ -9,6 +9,7 @@ export default function Login() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const nav = useNavigate();
+  const uid = useId();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,14 +41,18 @@ export default function Login() {
             </div>
           </div>
 
-          <label className="lbl">Нэвтрэх нэр</label>
-          <input className="inp mb-4" value={username} onChange={(e) => setU(e.target.value)}
+          <label className="lbl" htmlFor={`${uid}-user`}>Нэвтрэх нэр</label>
+          <input id={`${uid}-user`} className="inp mb-4" value={username} onChange={(e) => setU(e.target.value)}
                  placeholder="otgoo" autoFocus autoCapitalize="none" autoComplete="username" />
-          <label className="lbl">Нууц үг</label>
-          <input className="inp mb-2" type="password" value={password} onChange={(e) => setP(e.target.value)}
-                 placeholder="••••" autoComplete="current-password" />
+          <label className="lbl" htmlFor={`${uid}-pw`}>Нууц үг</label>
+          <input id={`${uid}-pw`} className="inp mb-2" type="password" value={password} onChange={(e) => setP(e.target.value)}
+                 placeholder="••••" autoComplete="current-password"
+                 aria-describedby={err ? `${uid}-err` : undefined} />
           {err && (
-            <div className="text-danger text-[12.5px] font-medium mb-2 bg-danger-50 rounded-md px-3 py-2">
+            /* Алдаа гарсныг ХАРААГҮЙ хүн ч мэдэх ёстой — талбарын доор гарч
+               ирэхэд шууд уншигдана. */
+            <div id={`${uid}-err`} role="alert"
+                 className="text-danger text-[12.5px] font-medium mb-2 bg-danger-50 rounded-md px-3 py-2">
               {err}
             </div>
           )}

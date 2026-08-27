@@ -143,7 +143,7 @@ export default function Stocktake() {
 
       <div className="flex gap-2.5 mb-3.5 flex-wrap">
         <input className="inp flex-1 min-w-[180px]" placeholder="Материал хайх…"
-               value={q} onChange={(e) => setQ(e.target.value)} />
+               aria-label="Материал хайх" value={q} onChange={(e) => setQ(e.target.value)} />
         <button className={`btn-secondary ${onlyDiff ? "!border-brand !text-brand" : ""}`}
                 onClick={() => setOnlyDiff(!onlyDiff)}>
           Зөрүүтэй ({diffs.length})
@@ -164,6 +164,7 @@ export default function Stocktake() {
                 </span>
               </div>
               <input type="number" inputMode="numeric" placeholder="тоо"
+                     aria-label={`${r.material} · ${r.grade} — тоолсон тоо (системд ${fmt(r.system)})`}
                      className={`inp !w-28 !min-h-[52px] text-center !text-[17px] font-bold
                        ${diff > 0 ? "!border-money" : diff < 0 ? "!border-danger" : ""}`}
                      value={r.counted}
@@ -196,6 +197,7 @@ export default function Stocktake() {
                        value: `${diffs.length} мөр · ${fmt(diffs.reduce((s, r) => s + diffOf(r), 0))}ш`,
                        accent: diffs.length ? "danger" : "money" }} />
             <input className="inp max-w-[200px]" placeholder="Тэмдэглэл (заавал биш)"
+                   aria-label="Тооллогын тэмдэглэл (заавал биш)"
                    value={note} onChange={(e) => setNote(e.target.value)} />
             <button className="btn-primary !min-h-[52px] px-6" disabled={busy} onClick={submit}>
               {busy ? "Хадгалж байна…" : "✓ Тооллого дуусгах"}

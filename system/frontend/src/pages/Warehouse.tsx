@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, fmt, user } from "../api";
 import { Spinner, Modal, useToast, Prog, Receipt, Empty } from "../ui";
@@ -38,7 +38,7 @@ export default function Warehouse() {
       </div>
 
       <input className="inp max-w-[320px] mb-4" placeholder="Материал хайх…" value={q}
-             onChange={(e) => setQ(e.target.value)} />
+             aria-label="Материал, ангиллаар хайх" onChange={(e) => setQ(e.target.value)} />
 
       <div className="card overflow-x-auto">
         <table className="w-full min-w-[820px]">
@@ -62,6 +62,7 @@ export default function Warehouse() {
                     <div className="flex gap-1.5 flex-wrap">
                       {(m.stock || []).map((s: any) => (
                         <button key={s.grade_id} title="Тооллогын залруулга"
+                          aria-label={`${m.name} · ${s.grade} зэрэглэл — агуулахад ${fmt(s.on_hand)}ш, тооллогын залруулга`}
                           onClick={() => (u?.role !== "finance") && setAdjust({ m, s })}
                           className="pill-grey hover:bg-brand-50 hover:text-brand transition cursor-pointer">
                           {s.grade}: <b className="tabular-nums">{fmt(s.on_hand)}</b>
@@ -76,7 +77,9 @@ export default function Warehouse() {
                       <span className="text-warn font-bold">{fmt(repair)}</span>
                     ) : "—"}
                   </td>
-                  <td className="td"><Prog pct={util} color={util > 85 ? "#EF4444" : util > 70 ? "#F5A524" : undefined} /></td>
+                  {/* Энэ нүдэнд зураасаас өөр юу ч байхгүй — хувийг нэрлэж өгнө */}
+                  <td className="td"><Prog pct={util} label={`Ашиглалт ${Math.round(util)}%`}
+                                           color={util > 85 ? "#EF4444" : util > 70 ? "#F5A524" : undefined} /></td>
                   <td className="td">
                     {repair > 0 && u?.role !== "finance" && (
                       <button className="btn-ghost btn-row text-money"
@@ -108,6 +111,7 @@ export default function Warehouse() {
 function RepairModal({ m, s, onClose, onDone }: any) {
   const toast = useToast();
   const [val, setVal] = useState(String(s.in_repair));
+  const uid = useId();
   const qty = parseMoney(val);
   const over = qty > s.in_repair;
   return (
@@ -116,8 +120,8 @@ function RepairModal({ m, s, onClose, onDone }: any) {
         <b className="text-ink">{m.name}</b> ({s.grade}) — засварт байгаа{" "}
         <b className="tabular-nums">{fmt(s.in_repair)}ш</b>-аас хэдийг агуулахад буцаан оруулах вэ?
       </p>
-      <label className="lbl">Тоо ширхэг</label>
-      <input type="number" className={`inp ${over ? "!border-danger" : ""}`} value={val} autoFocus
+      <label className="lbl" htmlFor={`${uid}-qty`}>Тоо ширхэг</label>
+      <input id={`${uid}-qty`} type="number" className={`inp ${over ? "!border-danger" : ""}`} value={val} autoFocus
              onChange={(e) => setVal(e.target.value)} />
       {over && <p className="text-danger text-[12px] mt-1.5">Засварт байгаагаас их байна</p>}
       <Receipt className="mt-4"
@@ -159,6 +163,7 @@ function AdjustModal({ m, s, onClose, onDone }: any) {
   const [val, setVal] = useState(String(s.on_hand));
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const uid = useId();
   const blank = val.trim() === "";
   const next = parseMoney(val);
   const diff = next - s.on_hand;
@@ -169,7 +174,9 @@ function AdjustModal({ m, s, onClose, onDone }: any) {
         <b className="text-ink">{m.name}</b> ({s.grade}) — бодит тоолсон агуулахын үлдэгдлийг оруулна уу.
         Одоо системд: <b className="tabular-nums">{fmt(s.on_hand)}ш</b>
       </p>
-      <input type="number" className="inp" value={val} autoFocus
+      {/* Талбар нь огт нэргүй байсан — дээрх догол мөр нь ХАРАХ хүнд л тайлбарладаг */}
+      <label className="lbl" htmlFor={`${uid}-onhand`}>Бодит тоолсон үлдэгдэл (ш)</label>
+      <input id={`${uid}-onhand`} type="number" className="inp" value={val} autoFocus
              onChange={(e) => { setVal(e.target.value); setConfirming(false); }} />
       {confirming && (
         <Receipt className="mt-4"

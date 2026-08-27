@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, money, sayaFmt, openPdf, fmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Modal, useToast, InlineEdit, Receipt, ConfirmModal } from "../ui";
@@ -486,6 +486,7 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
     })));
   const [open, setOpen] = useState<number | null>(null);   // задарсан «Гэмтэл/акт» мөр
   const [busy, setBusy] = useState(false);
+  const uid = useId();
   const setRow = (i: number, patch: any) =>
     setRows(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)));
 
@@ -513,8 +514,8 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
 
   return (
     <Modal title="Буцаалт бүртгэх" onClose={onClose} wide dirty={dirty}>
-      <label className="lbl">Огноо</label>
-      <input type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
+      <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+      <input id={`${uid}-date`} type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
 
       {/* Буцаалт нь агуулахын шалан дээр, планшетаар хийгддэг ажил — Тооллоготой
           ижил хэлбэр: мөр бүр нэг материал, том тоон талбар, засвар/акт нь
@@ -545,8 +546,8 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
 
               {ret > 0 && (
                 <div className="mt-2.5 flex items-center gap-2.5 flex-wrap">
-                  <label className="text-[12.5px] text-t2" htmlFor={`rg-${i}`}>Очих зэрэглэл</label>
-                  <select id={`rg-${i}`} className="inp !w-24 !min-h-11 !py-2" value={r.return_grade_id}
+                  <label className="text-[12.5px] text-t2" htmlFor={`${uid}-rg-${i}`}>Очих зэрэглэл</label>
+                  <select id={`${uid}-rg-${i}`} className="inp !w-24 !min-h-11 !py-2" value={r.return_grade_id}
                           onChange={(e) => setRow(i, { return_grade_id: +e.target.value })}>
                     {grades.map((g: any) => <option key={g.id} value={g.id}>{g.code}</option>)}
                   </select>
@@ -567,14 +568,14 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
                 <div className="mt-2.5 rounded-[8px] p-3 flex gap-4 flex-wrap items-end"
                      style={{ background: "var(--color-sunken)" }}>
                   <div>
-                    <label className="lbl">Засварт</label>
-                    <input type="number" min={0} inputMode="numeric" placeholder="0"
+                    <label className="lbl" htmlFor={`${uid}-rep-${i}`}>Засварт</label>
+                    <input id={`${uid}-rep-${i}`} type="number" min={0} inputMode="numeric" placeholder="0"
                            className="inp !w-20 !min-h-11 text-center font-bold"
                            value={r.repair || ""} onChange={(e) => setRow(i, { repair: +e.target.value })} />
                   </div>
                   <div>
-                    <label className="lbl">Актлах</label>
-                    <input type="number" min={0} inputMode="numeric" placeholder="0"
+                    <label className="lbl" htmlFor={`${uid}-wo-${i}`}>Актлах</label>
+                    <input id={`${uid}-wo-${i}`} type="number" min={0} inputMode="numeric" placeholder="0"
                            className="inp !w-20 !min-h-11 text-center font-bold"
                            value={r.writeoff || ""} onChange={(e) => setRow(i, { writeoff: +e.target.value })} />
                   </div>
@@ -636,6 +637,7 @@ function AddModal({ d, onClose, onDone }: any) {
   const [rows, setRows] = useState<any[]>(
     d.items.map((i: any) => ({ ...i, add: 0, rate: rent ? i.daily_rate : i.unit_price })));
   const [busy, setBusy] = useState(false);
+  const uid = useId();
 
   async function submit() {
     const lines = rows.filter((r) => r.add > 0).map((r) => ({
@@ -652,12 +654,14 @@ function AddModal({ d, onClose, onDone }: any) {
 
   return (
     <Modal title="Нэмэлт олголт" onClose={onClose}>
-      <label className="lbl">Огноо</label>
-      <input type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
-      <div className="flex items-center gap-3 pb-1">
+      <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+      <input id={`${uid}-date`} type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
+      <div className="flex items-center gap-3 pb-1" aria-hidden="true">
         <span className="lbl !mb-0 ml-auto w-28 text-right">{rent ? "Тариф ₮/ш/хоног" : "Нэгж үнэ"}</span>
         <span className="lbl !mb-0 w-24 text-right">Нэмэх тоо</span>
       </div>
+      {/* Багана дээрх гарчиг нь ХАРАХ хүнд л ажиллана — талбар бүрийг өөрийнх
+          нь материалын нэрээр бүтнээр нэрлэнэ. */}
       {rows.map((r, i) => (
         <div key={i} className="flex items-center gap-3 py-2 border-b border-sunken last:border-0">
           <div className="min-w-0">
@@ -665,8 +669,10 @@ function AddModal({ d, onClose, onDone }: any) {
             <span className="block text-xs text-t3">{r.grade}</span>
           </div>
           <input type="number" min={0} className="inp !min-h-10 !py-2 w-28 ml-auto text-right" value={r.rate}
+                 aria-label={`${r.material} (${r.grade}) — ${rent ? "тариф ₮/ш/хоног" : "нэгж үнэ"}`}
                  onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, rate: +e.target.value } : x))} />
           <input type="number" min={0} className="inp !min-h-10 !py-2 w-24 text-right" value={r.add}
+                 aria-label={`${r.material} (${r.grade}) — нэмэх тоо`}
                  onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, add: +e.target.value } : x))} />
         </div>
       ))}
@@ -702,6 +708,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   const [method, setMethod] = useState("BANK");
   const [barter, setBarter] = useState("");
   const [busy, setBusy] = useState(false);
+  const uid = useId();
   // null = автомат хуваарилалт (хуучин зам). Object = дарга гараар чиглүүлж байна.
   const [manual, setManual] = useState<Record<number, string> | null>(null);
   const amt = parseMoney(amount);
@@ -754,16 +761,17 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   return (
     <Modal title="Төлбөр бүртгэх" onClose={onClose} dirty={amt > 0 || barter.trim().length > 0}>
       <div className="grid grid-cols-2 gap-3.5">
-        <div><label className="lbl">Огноо</label>
-          <input type="date" className="inp" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-        <div><label className="lbl">Дүн ₮</label>
-          <input className="inp" inputMode="numeric" placeholder="0" value={amount}
+        <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+          <input id={`${uid}-date`} type="date" className="inp" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-amount`}>Дүн ₮</label>
+          <input id={`${uid}-amount`} className="inp" inputMode="numeric" placeholder="0" value={amount}
                  onChange={(e) => setAmount(e.target.value)} /></div>
       </div>
-      <label className="lbl mt-4">Хэлбэр</label>
-      <div className="flex gap-2 mb-4">
+      {/* Гурван товчны БҮЛЭГ — нэг талбар биш тул нэрлэсэн бүлэг болгоно */}
+      <div className="lbl mt-4" id={`${uid}-method`}>Хэлбэр</div>
+      <div className="flex gap-2 mb-4" role="group" aria-labelledby={`${uid}-method`}>
         {[["CASH", "Бэлэн"], ["BANK", "Данс"], ["BARTER", "Бартер"]].map(([v, l]) => (
-          <button key={v} onClick={() => setMethod(v)}
+          <button key={v} onClick={() => setMethod(v)} aria-pressed={method === v}
             className={`flex-1 rounded-[10px] border py-2.5 font-semibold text-sm transition min-h-11 ${
               method === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2 hover:border-line-strong"}`}>
             {l}
@@ -772,8 +780,8 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
       </div>
       {method === "BARTER" && (
         <div className="mb-4">
-          <label className="lbl">Бартераар юу орж ирэв? (машин, байр, материал…)</label>
-          <input className="inp" placeholder="ж: Автомашин 9957УКК" value={barter}
+          <label className="lbl" htmlFor={`${uid}-barter`}>Бартераар юу орж ирэв? (машин, байр, материал…)</label>
+          <input id={`${uid}-barter`} className="inp" placeholder="ж: Автомашин 9957УКК" value={barter}
                  onChange={(e) => setBarter(e.target.value)} />
           <p className="text-[12px] text-t3 mt-1.5">Үнэлсэн дүнгээр нь авлагаас хасагдана. Бартер модуль Үе 2-т бүрэн болно.</p>
         </div>
@@ -807,6 +815,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
                 </div>
               </div>
               <input type="number" min={0} className="inp !min-h-10 !py-2 w-36 text-right"
+                     aria-label={`${n.title}${n.sub ? " " + n.sub : ""} — хуваарилах дүн ₮`}
                      value={manual[i.id] ?? "0"}
                      onChange={(e) => setManual({ ...manual, [i.id]: e.target.value })} />
             </div>
@@ -862,6 +871,7 @@ function DepositModal({ d, onClose, onDone }: any) {
     ret: String(Math.round(d.deposit - suggestApply)),
   });
   const [busy, setBusy] = useState(false);
+  const uid = useId();
   const apply = parseMoney(f.apply);
   const ret = parseMoney(f.ret);
   const over = apply + ret > d.deposit + 0.01;
@@ -875,15 +885,15 @@ function DepositModal({ d, onClose, onDone }: any) {
         {debt > 0 && <> · одоогийн үлдэгдэл өр <b className="text-danger tabular-nums">{money(debt)}</b></>}
       </p>
       <div className="grid grid-cols-2 gap-3.5">
-        <div><label className="lbl">Авлагад суутгах ₮</label>
-          <input className="inp" inputMode="numeric" value={f.apply}
+        <div><label className="lbl" htmlFor={`${uid}-apply`}>Авлагад суутгах ₮</label>
+          <input id={`${uid}-apply`} className="inp" inputMode="numeric" value={f.apply}
                  onChange={(e) => setF({ ...f, apply: e.target.value })} /></div>
-        <div><label className="lbl">Харилцагчид буцаах ₮</label>
-          <input className="inp" inputMode="numeric" value={f.ret}
+        <div><label className="lbl" htmlFor={`${uid}-ret`}>Харилцагчид буцаах ₮</label>
+          <input id={`${uid}-ret`} className="inp" inputMode="numeric" value={f.ret}
                  onChange={(e) => setF({ ...f, ret: e.target.value })} /></div>
       </div>
-      <div className="mt-3.5"><label className="lbl">Огноо</label>
-        <input type="date" className="inp max-w-[200px]" value={f.date}
+      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+        <input id={`${uid}-date`} type="date" className="inp max-w-[200px]" value={f.date}
                onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
 
       <Receipt className="mt-4"
@@ -919,10 +929,11 @@ function DepositModal({ d, onClose, onDone }: any) {
 function ExtendModal({ d, onClose, onDone }: any) {
   const toast = useToast();
   const [date, setDate] = useState(d.end_date || today());
+  const uid = useId();
   return (
     <Modal title="Гэрээ сунгах" onClose={onClose}>
-      <label className="lbl">Шинэ дуусах огноо</label>
-      <input type="date" className="inp mb-5" value={date} onChange={(e) => setDate(e.target.value)} />
+      <label className="lbl" htmlFor={`${uid}-end`}>Шинэ дуусах огноо</label>
+      <input id={`${uid}-end`} type="date" className="inp mb-5" value={date} onChange={(e) => setDate(e.target.value)} />
       <div className="flex justify-end gap-2.5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <button className="btn-primary" onClick={async () => {

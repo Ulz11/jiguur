@@ -90,7 +90,7 @@ function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="jz-app-shell">
       {menu && <div className="jz-scrim" onClick={() => setMenu(false)} />}
-      <aside className={`jz-sidebar ${menu ? "open" : ""} ${collapsed ? "collapsed" : ""}`}
+      <aside id="jz-sidebar" className={`jz-sidebar ${menu ? "open" : ""} ${collapsed ? "collapsed" : ""}`}
              aria-label="Үндсэн навигаци">
         <div className="brand-plate">
           <img src={collapsed ? brandMark : brandLogo} alt="Жигүүр Зам ХХК"
@@ -126,7 +126,9 @@ function Shell({ children }: { children: ReactNode }) {
 
       <main className="jz-main">
         <div className="jz-topbar">
-          <button className="jz-burger" onClick={() => setMenu(true)} aria-label="Цэс">☰</button>
+          {/* ☰ нь дүрс дээрээ л ярьдаг тул нэр ба ТӨЛӨВӨӨ хоёуланг хэлнэ */}
+          <button className="jz-burger" onClick={() => setMenu((m) => !m)}
+                  aria-label="Цэс" aria-expanded={menu} aria-controls="jz-sidebar">☰</button>
           <button className="jz-collapse" onClick={toggleCollapse}
                   title={collapsed ? "Цэсийг дэлгэх" : "Цэсийг хураах"}
                   aria-label={collapsed ? "Цэсийг дэлгэх" : "Цэсийг хураах"}>
@@ -137,9 +139,10 @@ function Shell({ children }: { children: ReactNode }) {
           </span>
           <div className="jz-topbar-actions">
             {showScope && (
-              <div className="segment">
+              <div className="segment" role="group" aria-label="Түрээс / Худалдаагаар шүүх">
                 {[["all", "Бүгд"], ["rent", "Түрээс"], ["sale", "Худалдаа"]].map(([v, l]) => (
-                  <button key={v} onClick={() => setScope(v)} className={scope === v ? "on" : ""}>{l}</button>
+                  <button key={v} onClick={() => setScope(v)} aria-pressed={scope === v}
+                          className={scope === v ? "on" : ""}>{l}</button>
                 ))}
               </div>
             )}

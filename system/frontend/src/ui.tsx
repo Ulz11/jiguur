@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef } from "react";
+import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef, useId } from "react";
+import { tabbablesIn, trapNext } from "./lib/focus";
 
 /* ---------- Toast ---------- */
 const ToastCtx = createContext<(msg: string, kind?: "ok" | "err") => void>(() => {});
@@ -20,7 +21,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastCtx.Provider value={show}>
       {children}
       {toast && (
-        <div role="status" aria-live={toast.kind === "err" ? "assertive" : "polite"}
+        /* Нэг мэдэгдэлд НЭГ л зарлах механизм: `role="status"` нь polite,
+           `role="alert"` нь assertive гэдгээ өөрөө агуулдаг. Дээр нь
+           `aria-live` давхарлавал зарим уншигч хоёр удаа уншина. */
+        <div role={toast.kind === "err" ? "alert" : "status"}
              className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-ink text-white px-5 py-3.5 rounded-xl font-semibold text-sm shadow-2xl z-50 flex items-start gap-2.5 max-w-[90vw]">
           <span className="shrink-0 leading-5">{toast.kind === "ok" ? "✓" : "⚠"}</span>
           <span className="min-w-0 break-words leading-5">{toast.msg}</span>
@@ -45,6 +49,16 @@ export function Modal({ title, onClose, children, wide, dirty }: {
 }) {
   const [askClose, setAskClose] = useState(false);
   const guardRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  /* «Нээгч» товчийг РЕНДЕРИЙН үед бичиж авна, effect дотор биш. React нь
+     `autoFocus`-ыг effect-ээс ӨМНӨ ажиллуулдаг тул effect дотор уншвал модал
+     доторх талбар өөрөө «нээгч» болж бүртгэгдээд, хаагдахад фокус хуудасны
+     эхэнд унана (AddLoanModal, GradeModal … бүгд autoFocus-тай). */
+  if (openerRef.current === null && typeof document !== "undefined") {
+    openerRef.current = document.activeElement as HTMLElement | null;
+  }
+  const titleId = useId();
   const attemptClose = useCallback(() => {
     if (dirty) setAskClose(true); else onClose();
   }, [dirty, onClose]);
@@ -52,8 +66,40 @@ export function Modal({ title, onClose, children, wide, dirty }: {
   // Урт модал доошоо гүйлгэсэн байхад асуулт нүднээс гарч үлдэх ёсгүй
   useEffect(() => { if (askClose) guardRef.current?.scrollIntoView({ block: "nearest" }); }, [askClose]);
 
+  /* Фокусын шилжилт: нээхэд ДОТОГШ, хаахад нээсэн товч дээрээ БУЦАЖ.
+     Хаагдмагц фокус хуудасны эхэнд унавал Отгоо Tab-аа тэгээс эхлэн дарна. */
   useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") attemptClose(); };
+    const panel = panelRef.current;
+    // React-ийн `autoFocus` аль хэдийн модал дотор фокус тавьсан бол хүндэтгэнэ —
+    // ConfirmModal аюултай үйлдэл дээр ЦУЦЛАХ товчийг санаатай сонгодог.
+    if (panel && !panel.contains(document.activeElement)) {
+      (tabbablesIn(panel)[0] || panel).focus();
+    }
+    return () => {
+      // Нээсэн товч устсан байж болно (жагсаалт дахин ачаалагдсан) — байгаа бол л буцаана
+      const opener = openerRef.current;
+      if (opener && opener.isConnected) opener.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { attemptClose(); return; }
+      if (e.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      /* Фокусын хавх: модал нээлттэй байхад Tab нь ард үлдсэн хуудас руу
+         гарах ёсгүй. Жагсаалтыг дарах бүрд шинээр уншина — модалын агуулга
+         (задарсан талбар, идэвхгүй болсон товч) хөдөлж байдаг. */
+      const list = tabbablesIn(panel);
+      const to = trapNext(list.length, list.indexOf(document.activeElement as HTMLElement), e.shiftKey);
+      if (to === null) {
+        if (list.length === 0) e.preventDefault();   // гарах газар алга
+        return;
+      }
+      e.preventDefault();
+      list[to].focus();
+    };
     window.addEventListener("keydown", h);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";   // ард нь гүйлгэхгүй
@@ -67,10 +113,11 @@ export function Modal({ title, onClose, children, wide, dirty }: {
     <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto py-10 px-4 backdrop-blur-md"
          style={{ background: "rgba(11,37,69,0.4)" }}
          onMouseDown={(e) => e.target === e.currentTarget && attemptClose()}>
-      <div className={`rounded-[26px] shadow-2xl w-full border border-line ${wide ? "max-w-3xl" : "max-w-lg"} p-6`}
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+           className={`rounded-[26px] shadow-2xl w-full border border-line ${wide ? "max-w-3xl" : "max-w-lg"} p-6 outline-none`}
            style={{ background: "var(--color-cardbg)" }}>
         <div className="flex items-center justify-between mb-5 pb-4 border-b border-line">
-          <h3 className="text-[17px] font-bold text-ink tracking-tight">{title}</h3>
+          <h3 id={titleId} className="text-[17px] font-bold text-ink tracking-tight">{title}</h3>
           <button className="btn-ghost !min-h-0 !p-2 text-xl leading-none" onClick={attemptClose} aria-label="Хаах">×</button>
         </div>
         {askClose && (
@@ -223,25 +270,28 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
     catch { /* toast нь дуудагч талд */ }
     finally { setBusy(false); }
   };
+  // Товчны нэр нь УТГАА + үйлдлээ хоёуланг агуулна: «12345678 · засах».
+  // ✎ нь чимэг тул нуугдана — эс бөгөөс уншигч «харандаа» гэж дуудна.
   if (mode === "view") {
     return (
       <button className="inline-val" onClick={start} title="Дарж засна">
         <span>{display ?? (value === null || value === undefined || value === "" ? "—" : String(value))}{suffix}</span>
-        <span className="pen">✎</span>
+        <span className="pen" aria-hidden="true">✎</span>
+        <span className="sr-only"> · засах</span>
       </button>
     );
   }
   return (
     <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
       {options ? (
-        <select autoFocus
+        <select autoFocus aria-label="Шинэ утга"
           className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width}`}
           value={val} onChange={(e) => setVal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }}>
           {options.map(([v, lb]) => <option key={v} value={v}>{lb}</option>)}
         </select>
       ) : (
-        <input autoFocus type={type}
+        <input autoFocus type={type} aria-label="Шинэ утга"
           className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width} ${right ? "text-right" : ""}`}
           value={val} onChange={(e) => setVal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }} />
@@ -266,9 +316,13 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   );
 }
 
-export function Prog({ pct, color }: { pct: number; color?: string }) {
+/** Явцын зураас. Дэргэд нь тоо/үг байвал энэ бол зөвхөн ЧИМЭГ — давхардуулж
+ *  уншуулахгүйн тулд нуугдана. Ганцаараа зогсож байвал (ж: агуулахын ашиглалт)
+ *  `label` өгч НЭРЛЭ — эс бөгөөс утга нь зөвхөн өнгө/уртаараа үлдэнэ. */
+export function Prog({ pct, color, label }: { pct: number; color?: string; label?: string }) {
   return (
-    <div className="h-[7px] rounded-full bg-sunken overflow-hidden">
+    <div className="h-[7px] rounded-full bg-sunken overflow-hidden"
+         {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true as const })}>
       <div className="h-full rounded-full transition-all duration-700"
            style={{ width: `${Math.min(Math.max(pct, 0), 100)}%`, background: color || "var(--color-brand)" }} />
     </div>

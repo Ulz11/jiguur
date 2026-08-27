@@ -335,6 +335,53 @@ body::before { inset: 0; opacity: .028; background-image: url("./assets/jiguur-p
 .login-rule { height: 2px; width: 40px; background: var(--jz-orange); margin: 16px 0 13px; }
 .login-title { color: var(--jz-blue-deep); font: 700 22px/1.2 var(--jz-display); letter-spacing: -.035em; }
 
+/* ============================================================
+   ФОКУСЫН БӨГЖ — гараар ажилладаг хүн ХААНА байгаагаа үргэлж мэднэ
+   ------------------------------------------------------------
+   Хулганаар дарахад бөгж гарахгүй (`:focus-visible`, `:focus` биш) —
+   Отгоо хулганаараа дарахдаа гэнэтийн хүрээ хараад цочихгүй, харин Tab
+   дарж яваа санхүүч хаана зогсож байгаагаа секунд ч эргэлзэхгүй.
+
+   Бөгжний өнгө нь дэвсгэрийнхээ ЭСРЭГ брэнд өнгө байна:
+     · цайвар гадаргуу (карт, хүснэгт, topbar) → гүн navy  (цагаан дээр 13:1)
+     · navy sidebar                            → улбар шар (navy дээр 5.2:1)
+   Хоёулаа WCAG 1.4.11 (3:1) босгыг давна. `.inp:focus` хэвээрээ — талбарын
+   хүрээ+гэрэлтэлт нь өөрөө бөгжийн үүрэг гүйцэтгэдэг. */
+:root { --ring: var(--jz-blue-deep); --ring-navy: var(--jz-orange); }
+
+/* Суурь тор: нэрлэгдээгүй товч, холбоос, задаргаа ч гэсэн бөгжгүй үлдэхгүй.
+   `:where()` тул онцлог нь 0 — доорх нэрлэсэн дүрмүүд үүнийг чөлөөтэй тохируулна. */
+:where(a, button, summary, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.btn-primary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.btn-secondary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.btn-ghost:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* Хүснэгтийн мөрөн дэх нягт үйлдэл — зэргэлдээ нүд рүү халихгүйгээр */
+.btn-row:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+/* Дарж заслаг талбар: доогуураа тасархай зураастай тул бөгж нь ойрхон суух ёстой */
+.inline-val:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.segment > button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tab-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.cal-day:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.pick-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.work-row:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tech-details > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* Цэс хураах/дэлгэх ба ☰ — эдгээр нь ЦАЙВАР topbar дээр сууна */
+.jz-collapse:focus-visible, .jz-burger:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* Drawer хаах ✕ — цагаан brand-plate дээр байдаг тул navy бөгж */
+.jz-drawer-close:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+
+/* ---- Navy sidebar: цагаан/улбар бөгж ---- */
+.jz-sidebar :where(a, button, summary, [tabindex]):focus-visible { outline-color: var(--ring-navy); }
+/* Цэсний мөр бүтэн өргөнөө эзэлдэг — бөгжийг ДОТОГШ нь татна, эс бөгөөс
+   sidebar-ийн ирмэгээр таслагдана. */
+.nav-btn:focus-visible { outline: 2px solid var(--ring-navy); outline-offset: -3px; }
+.side-foot-btn:focus-visible { outline: 2px solid var(--ring-navy); outline-offset: 2px; }
+.jz-sidebar .jz-drawer-close:focus-visible { outline-color: var(--ring); }
+
 /* ---- Drawer (жижиг дэлгэц) ба хураангуй sidebar ---- */
 .jz-burger { display: none; width: var(--target); height: var(--target); margin-right: 4px; border-radius: 7px; color: var(--jz-blue); font-size: 18px; line-height: 1; flex: 0 0 var(--target); }
 .jz-burger:hover { background: var(--color-sunken); }

@@ -6,6 +6,7 @@ import {
   buildMonthGrid,
   eventsOn,
   addMonth,
+  dayCellLabel,
   type TLEvent,
 } from "./calendar";
 
@@ -111,5 +112,35 @@ describe("eventsOn / latestDayInMonth / addMonth", () => {
   it("addMonth он дамжина", () => {
     expect(addMonth({ year: 2026, month: 12 }, 1)).toEqual({ year: 2027, month: 1 });
     expect(addMonth({ year: 2026, month: 1 }, -1)).toEqual({ year: 2025, month: 12 });
+  });
+});
+
+// Хуанлийн нүдэн дэх өнгөт цэгүүд нь ХАРАХ хүнд л ярьдаг. Дэлгэц уншигчид
+// нүд бүр өөрөө «хэдэн сарын хэдэн, юу болсон» гэдгээ хэлэх ёстой.
+describe("dayCellLabel", () => {
+  const LABELS = { payment: "төлбөр", issue: "ачилт", return: "буцаалт" };
+
+  it("үйл явдалгүй өдрийг үйл явдалгүй гэж хэлнэ", () => {
+    expect(dayCellLabel("2026-08-25", {}, LABELS)).toBe("8-р сарын 25 · үйл явдалгүй");
+  });
+
+  it("нийт тоог хэлээд төрлөөр нь задална", () => {
+    expect(dayCellLabel("2026-08-25", { payment: 2 }, LABELS))
+      .toBe("8-р сарын 25 · 2 үйл явдал (төлбөр 2)");
+  });
+
+  it("хэд хэдэн төрлийг таслалаар тоочно", () => {
+    expect(dayCellLabel("2026-08-25", { payment: 1, issue: 1 }, LABELS))
+      .toBe("8-р сарын 25 · 2 үйл явдал (төлбөр 1, ачилт 1)");
+  });
+
+  it("танихгүй төрлийг кодоор нь дуудна — чимээгүй алга болгохгүй", () => {
+    expect(dayCellLabel("2026-08-25", { hongololt: 1 }, LABELS))
+      .toBe("8-р сарын 25 · 1 үйл явдал (hongololt 1)");
+  });
+
+  it("тэг тоотой төрөл нэрсэд орохгүй", () => {
+    expect(dayCellLabel("2026-08-25", { payment: 1, issue: 0 }, LABELS))
+      .toBe("8-р сарын 25 · 1 үйл явдал (төлбөр 1)");
   });
 });

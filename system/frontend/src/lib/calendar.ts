@@ -124,6 +124,30 @@ export function buildMonthGrid(events: TLEvent[], year: number, month: number): 
   return { year, month, weeks };
 }
 
+/** Хуанлийн нүдний дуудагдах нэр.
+ *
+ *  Тор дотор өдөр бүр өнгөт цэгээр л ярьдаг — цэг ХАРАХ хүнд зориулагдсан.
+ *  Дэлгэц уншигчаар явж буй хүнд нүд бүр «8-р сарын 25 · 2 үйл явдал
+ *  (төлбөр 1, ачилт 1)» гэж бүтнээр нь хэлж өгнө.
+ *
+ *  @param counts төрөл→тоо (buildMonthGrid-ийн DayCell.counts)
+ *  @param labels төрлийн код→монгол нэр. Байхгүй кодыг өөрөөр нь дуудна —
+ *         шинэ төрөл нэмэгдэхэд чимээгүй алга болохоос сэргийлнэ. */
+export function dayCellLabel(
+  iso: string,
+  counts: Record<string, number>,
+  labels: Record<string, string>,
+): string {
+  const { month, day } = parseIso(iso);
+  const head = `${month}-р сарын ${day}`;
+  const parts = Object.keys(counts)
+    .filter((k) => counts[k] > 0)
+    .map((k) => `${labels[k] || k} ${counts[k]}`);
+  if (parts.length === 0) return `${head} · үйл явдалгүй`;
+  const total = Object.keys(counts).reduce((s, k) => s + (counts[k] > 0 ? counts[k] : 0), 0);
+  return `${head} · ${total} үйл явдал (${parts.join(", ")})`;
+}
+
 /** Долоо хоногийн толгойн богино нэрс (Даваа-аас). */
 export const WEEKDAYS_MN = ["Да", "Мя", "Лх", "Пү", "Ба", "Бя", "Ня"] as const;
 

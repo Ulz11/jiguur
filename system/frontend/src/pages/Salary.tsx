@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useId, useState } from "react";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, Modal, useToast, Empty, Receipt, ConfirmModal } from "../ui";
 import { parseMoney } from "../lib/num";
@@ -165,29 +165,30 @@ function EmpModal({ e, onClose, onDone }: any) {
     monthly_salary: e ? String(e.monthly_salary) : "", daily_rate: e ? String(e.daily_rate) : "",
     ndsh: e?.ndsh || false,
   });
+  const uid = useId();
   return (
     <Modal title={e ? "Ажилтан засах" : "Шинэ ажилтан"} onClose={onClose}>
       <div className="grid grid-cols-2 gap-3.5">
-        <div><label className="lbl">Нэр *</label>
-          <input className="inp" value={f.name} onChange={(ev) => setF({ ...f, name: ev.target.value })} autoFocus /></div>
-        <div><label className="lbl">Албан тушаал</label>
-          <input className="inp" value={f.role_title} onChange={(ev) => setF({ ...f, role_title: ev.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-name`}>Нэр *</label>
+          <input id={`${uid}-name`} className="inp" value={f.name} onChange={(ev) => setF({ ...f, name: ev.target.value })} autoFocus /></div>
+        <div><label className="lbl" htmlFor={`${uid}-role`}>Албан тушаал</label>
+          <input id={`${uid}-role`} className="inp" value={f.role_title} onChange={(ev) => setF({ ...f, role_title: ev.target.value })} /></div>
       </div>
-      <label className="lbl mt-3.5">Төрөл</label>
-      <div className="flex gap-2 mb-3.5">
+      <div className="lbl mt-3.5" id={`${uid}-type`}>Төрөл</div>
+      <div className="flex gap-2 mb-3.5" role="group" aria-labelledby={`${uid}-type`}>
         {Object.entries(TYPE_LABEL).map(([v, lb]) => (
-          <button key={v} onClick={() => setF({ ...f, type: v })}
+          <button key={v} onClick={() => setF({ ...f, type: v })} aria-pressed={f.type === v}
             className={`flex-1 rounded-[10px] border py-2 font-semibold text-[13px] min-h-10 transition ${
               f.type === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{lb}</button>
         ))}
       </div>
       {f.type === "daily" ? (
-        <div><label className="lbl">Өдрийн хөлс ₮</label>
-          <input className="inp" inputMode="numeric" value={f.daily_rate}
+        <div><label className="lbl" htmlFor={`${uid}-daily`}>Өдрийн хөлс ₮</label>
+          <input id={`${uid}-daily`} className="inp" inputMode="numeric" value={f.daily_rate}
                  onChange={(ev) => setF({ ...f, daily_rate: ev.target.value })} /></div>
       ) : (
-        <div><label className="lbl">Сарын цалин ₮</label>
-          <input className="inp" inputMode="numeric" value={f.monthly_salary}
+        <div><label className="lbl" htmlFor={`${uid}-monthly`}>Сарын цалин ₮</label>
+          <input id={`${uid}-monthly`} className="inp" inputMode="numeric" value={f.monthly_salary}
                  onChange={(ev) => setF({ ...f, monthly_salary: ev.target.value })} /></div>
       )}
       <label className="mt-4 flex items-center gap-2.5 cursor-pointer">
@@ -222,6 +223,7 @@ function RunModal({ emps, onClose, onDone }: any) {
   const dailies = emps.filter((e: any) => e.type === "daily");
   const [days, setDays] = useState<Record<string, string>>(
     Object.fromEntries(dailies.map((e: any) => [String(e.id), ""])));
+  const uid = useId();
 
   const fixed = emps.filter((e: any) => e.type !== "daily");
   const fixedBase = fixed.reduce((s: number, e: any) => s + e.monthly_salary / 2, 0);
@@ -231,12 +233,12 @@ function RunModal({ emps, onClose, onDone }: any) {
   return (
     <Modal title="Цалин бодох" onClose={onClose}>
       <div className="grid grid-cols-2 gap-3.5 mb-3.5">
-        <div><label className="lbl">Сар</label>
-          <input type="month" className="inp" value={period} onChange={(e) => setPeriod(e.target.value)} /></div>
-        <div><label className="lbl">Хагас</label>
-          <div className="flex gap-2">
+        <div><label className="lbl" htmlFor={`${uid}-period`}>Сар</label>
+          <input id={`${uid}-period`} type="month" className="inp" value={period} onChange={(e) => setPeriod(e.target.value)} /></div>
+        <div><div className="lbl" id={`${uid}-half`}>Хагас</div>
+          <div className="flex gap-2" role="group" aria-labelledby={`${uid}-half`}>
             {[1, 2].map((h) => (
-              <button key={h} onClick={() => setHalf(h)}
+              <button key={h} onClick={() => setHalf(h)} aria-pressed={half === h}
                 className={`flex-1 rounded-[10px] border py-2.5 font-semibold text-sm min-h-[46px] transition ${
                   half === h ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{h}-р хагас</button>
             ))}
@@ -244,12 +246,14 @@ function RunModal({ emps, onClose, onDone }: any) {
       </div>
       {dailies.length > 0 && (
         <>
-          <label className="lbl">Өдрийн ажилчдын ажилласан өдөр (энэ хагаст)</label>
+          {/* Мөр бүр өөр ажилтных — нэг `label` бүгдийг нь нэрлэж чадахгүй */}
+          <div className="lbl">Өдрийн ажилчдын ажилласан өдөр (энэ хагаст)</div>
           {dailies.map((e: any) => (
             <div key={e.id} className="flex items-center gap-3 py-1.5">
               <span className="text-[13.5px] flex-1"><b className="text-ink">{e.name}</b>
                 <span className="text-t3"> · {money(e.daily_rate)}/өдөр</span></span>
               <input type="number" min={0} max={16} className="inp !min-h-10 !py-2 w-24 text-right"
+                     aria-label={`${e.name} — ажилласан өдрийн тоо`}
                      placeholder="0" value={days[String(e.id)]}
                      onChange={(ev) => setDays({ ...days, [String(e.id)]: ev.target.value })} />
             </div>

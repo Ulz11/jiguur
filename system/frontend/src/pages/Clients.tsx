@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, fmt, sayaFmt, token, user } from "../api";
 import { Spinner, Modal, useToast, Empty } from "../ui";
@@ -58,7 +58,8 @@ export default function Clients() {
           </div>
         )}
       </div>
-      <input className="inp max-w-[300px] mb-4" placeholder="Хайх…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <input className="inp max-w-[300px] mb-4" placeholder="Хайх…" aria-label="Харилцагч хайх"
+             value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="card overflow-x-auto">
         <table className="w-full min-w-[680px]">
           <thead><tr>
@@ -100,19 +101,20 @@ function NewClientModal({ onClose, onDone }: any) {
   const toast = useToast();
   const [f, setF] = useState({ name: "", reg: "", person: "", phone: "", note: "" });
   const [busy, setBusy] = useState(false);
+  const uid = useId();
   return (
     <Modal title="Шинэ харилцагч" onClose={onClose}>
       <div className="grid grid-cols-2 gap-3.5 max-sm:grid-cols-1">
-        <div className="col-span-2 max-sm:col-span-1"><label className="lbl">Компанийн нэр *</label>
-          <input className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></div>
-        <div><label className="lbl">Регистр</label>
-          <input className="inp" value={f.reg} onChange={(e) => setF({ ...f, reg: e.target.value })} /></div>
-        <div><label className="lbl">Утас</label>
-          <input className="inp" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></div>
-        <div className="col-span-2 max-sm:col-span-1"><label className="lbl">Хариуцах хүн</label>
-          <input className="inp" value={f.person} onChange={(e) => setF({ ...f, person: e.target.value })} /></div>
-        <div className="col-span-2 max-sm:col-span-1"><label className="lbl">Тэмдэглэл</label>
-          <input className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
+        <div className="col-span-2 max-sm:col-span-1"><label className="lbl" htmlFor={`${uid}-name`}>Компанийн нэр *</label>
+          <input id={`${uid}-name`} className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></div>
+        <div><label className="lbl" htmlFor={`${uid}-reg`}>Регистр</label>
+          <input id={`${uid}-reg`} className="inp" value={f.reg} onChange={(e) => setF({ ...f, reg: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-phone`}>Утас</label>
+          <input id={`${uid}-phone`} className="inp" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></div>
+        <div className="col-span-2 max-sm:col-span-1"><label className="lbl" htmlFor={`${uid}-person`}>Хариуцах хүн</label>
+          <input id={`${uid}-person`} className="inp" value={f.person} onChange={(e) => setF({ ...f, person: e.target.value })} /></div>
+        <div className="col-span-2 max-sm:col-span-1"><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
+          <input id={`${uid}-note`} className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
       </div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>

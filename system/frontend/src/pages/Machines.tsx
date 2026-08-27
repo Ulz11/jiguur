@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { api, money, sayaFmt, user } from "../api";
 import { Spinner, Modal, useToast, Empty } from "../ui";
 import { parseMoney } from "../lib/num";
@@ -115,32 +115,34 @@ function LogModal({ kind, m, onClose, onDone }: any) {
   const labels = kind === "job" ? JOB_LABELS : EXP_LABELS;
   const [f, setF] = useState({ date: today(), label: labels[0], client: "", amount: "", method: "BANK", note: "" });
   const amt = parseMoney(f.amount);
+  const uid = useId();
   return (
     <Modal title={kind === "job" ? `Ажил бүртгэх — ${m.name}` : `Зарлага — ${m.name}`} onClose={onClose}>
-      <label className="lbl">{kind === "job" ? "Ажлын төрөл" : "Зарлагын ангилал"}</label>
-      <div className="flex gap-2 mb-3.5 flex-wrap">
+      <div className="lbl" id={`${uid}-label`}>{kind === "job" ? "Ажлын төрөл" : "Зарлагын ангилал"}</div>
+      <div className="flex gap-2 mb-3.5 flex-wrap" role="group" aria-labelledby={`${uid}-label`}>
         {labels.map((lb) => (
-          <button key={lb} onClick={() => setF({ ...f, label: lb, method: lb === "Дотоод ажил" ? "INTERNAL" : f.method })}
+          <button key={lb} aria-pressed={f.label === lb}
+            onClick={() => setF({ ...f, label: lb, method: lb === "Дотоод ажил" ? "INTERNAL" : f.method })}
             className={`rounded-[10px] border px-4 py-2 font-semibold text-[13px] min-h-10 transition ${
               f.label === lb ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{lb}</button>
         ))}
       </div>
       <div className="grid grid-cols-2 gap-3.5">
-        <div><label className="lbl">Огноо</label>
-          <input type="date" className="inp" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
-        <div><label className="lbl">Дүн ₮</label>
-          <input className="inp" inputMode="numeric" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} autoFocus /></div>
+        <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+          <input id={`${uid}-date`} type="date" className="inp" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-amount`}>Дүн ₮</label>
+          <input id={`${uid}-amount`} className="inp" inputMode="numeric" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} autoFocus /></div>
       </div>
       {kind === "job" && (
         <>
-          <div className="mt-3.5"><label className="lbl">Хэнд / хаана</label>
-            <input className="inp" placeholder="Харилцагч эсвэл дотоод ажлын тайлбар" value={f.client}
+          <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-client`}>Хэнд / хаана</label>
+            <input id={`${uid}-client`} className="inp" placeholder="Харилцагч эсвэл дотоод ажлын тайлбар" value={f.client}
                    onChange={(e) => setF({ ...f, client: e.target.value })} /></div>
           {f.label !== "Дотоод ажил" && (
-            <div className="mt-3.5"><label className="lbl">Төлбөрийн хэлбэр</label>
-              <div className="flex gap-2">
+            <div className="mt-3.5"><div className="lbl" id={`${uid}-method`}>Төлбөрийн хэлбэр</div>
+              <div className="flex gap-2" role="group" aria-labelledby={`${uid}-method`}>
                 {[["CASH", "Бэлэн"], ["BANK", "Данс"], ["BARTER", "Бартер"]].map(([v, lb]) => (
-                  <button key={v} onClick={() => setF({ ...f, method: v })}
+                  <button key={v} onClick={() => setF({ ...f, method: v })} aria-pressed={f.method === v}
                     className={`flex-1 rounded-[10px] border py-2 font-semibold text-[13px] min-h-10 transition ${
                       f.method === v ? "border-brand bg-brand-50 text-brand" : "border-line-strong text-t2"}`}>{lb}</button>
                 ))}
@@ -167,10 +169,11 @@ function LogModal({ kind, m, onClose, onDone }: any) {
 function AddMachineModal({ onClose, onDone }: any) {
   const toast = useToast();
   const [name, setName] = useState("");
+  const uid = useId();
   return (
     <Modal title="Машин нэмэх" onClose={onClose}>
-      <label className="lbl">Нэр *</label>
-      <input className="inp mb-5" placeholder="ж: Ачааны машин 6800УКС" value={name}
+      <label className="lbl" htmlFor={`${uid}-name`}>Нэр *</label>
+      <input id={`${uid}-name`} className="inp mb-5" placeholder="ж: Ачааны машин 6800УКС" value={name}
              onChange={(e) => setName(e.target.value)} autoFocus />
       <div className="flex justify-end gap-2.5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
