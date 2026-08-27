@@ -7,6 +7,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # app.main импортлогдохоос ӨМНӨ түр DB зааж өгнө (бодит jiguur.db-д хүрэхгүй)
 _IMPORT_DB = os.path.join(tempfile.gettempdir(), "jiguur_import.db")
 os.environ.setdefault("DATABASE_URL", "sqlite:///" + _IMPORT_DB)
+# Импортын үеийн авто-нөөцлөлт ч бас түр хавтаст явна (14-өөр өөрөө эргэлдэнэ)
+os.environ.setdefault("JIGUUR_BACKUP_DIR",
+                      os.path.join(tempfile.gettempdir(), "jiguur_test_backups"))
 
 import pytest
 from fastapi.testclient import TestClient

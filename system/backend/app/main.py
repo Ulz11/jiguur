@@ -11,7 +11,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .db import Base, engine, SessionLocal, get_db, BASE_DIR, DATABASE_URL, IS_SQLITE
+from .db import Base, engine, SessionLocal, get_db, DATABASE_URL, IS_SQLITE
 from .schema import migrate_schema
 from .seed import seed
 from . import models
@@ -31,7 +31,10 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # ---------- Автомат нөөцлөлт (сервер асах бүрд) ----------
 def backup_db(keep: int = 14, src: str | None = None, bdir: str | None = None):
-    """DB-г backups/ дотор өдрөөр хуулж, сүүлийн `keep`-ийг үлдээнэ.
+    """DB-г өөрийнх нь хажуугийн backups/ дотор хуулж, сүүлийн `keep`-ийг үлдээнэ.
+
+    Нөөцийн хавтас DB файлаа дагана (dirname(src)/backups) — тестийн түр DB
+    бодит backups/-ыг идэхгүй. JIGUUR_BACKUP_DIR env-ээр өөр газар заана.
 
     sqlite3-ийн backup API-г ашиглана: WAL (-wal) файлд сууж буй дата-г хуулбар руу
     шингээж бичдэг. Өмнө нь shutil.copy2 зөвхөн үндсэн файлыг хуулдаг тул
@@ -43,7 +46,8 @@ def backup_db(keep: int = 14, src: str | None = None, bdir: str | None = None):
         src = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(src) or os.path.getsize(src) == 0:
         return
-    bdir = bdir or os.path.join(BASE_DIR, "backups")
+    bdir = bdir or os.environ.get("JIGUUR_BACKUP_DIR") or os.path.join(
+        os.path.dirname(os.path.abspath(src)), "backups")
     os.makedirs(bdir, exist_ok=True)
     dst = os.path.join(bdir, f"jiguur-{datetime.now():%Y%m%d-%H%M}.db")
     try:

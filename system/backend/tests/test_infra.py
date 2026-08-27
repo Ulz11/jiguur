@@ -4,6 +4,8 @@
 """
 import os
 import sqlite3
+import subprocess
+import sys
 from datetime import date
 from types import SimpleNamespace
 
@@ -56,6 +58,48 @@ def test_backup_keeps_last_14(tmp_path):
     assert len(left) == 14
     assert "jiguur-20260101-0000.db" not in left      # хамгийн хуучин нь устсан
     assert "jiguur-20260101-0019.db" in left          # хамгийн шинэ нь үлдсэн
+
+
+def test_import_with_temp_db_leaves_real_backups_untouched(tmp_path):
+    """Түр DATABASE_URL-тэй импортлоход БОДИТ backups/ хавтас огт өөрчлөгдөхгүй.
+
+    Регресс: pytest бүр conftest-ээр app.main-ийг импортлох үед тестийн түр DB
+    system/backend/backups/ руу нөөцлөгдөж, 14-ийн эргэлтээр жинхэнэ хуучин
+    нөөцүүдийг нэг нэгээр нь идэж байв. Нөөц DB файлынхаа ХАЖУУД очих ёстой.
+    """
+    backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    real_bdir = os.path.join(backend, "backups")
+
+    def snapshot():
+        if not os.path.isdir(real_bdir):
+            return {}
+        return {f: os.stat(os.path.join(real_bdir, f)).st_mtime_ns
+                for f in os.listdir(real_bdir)}
+
+    src = str(tmp_path / "temp.db")
+    sqlite3.connect(src).execute("CREATE TABLE t (id INTEGER)")   # хоосон биш
+    env = {**os.environ, "DATABASE_URL": "sqlite:///" + src}
+    env.pop("JIGUUR_BACKUP_DIR", None)   # default замын логикийг шалгаж байна
+
+    before = snapshot()
+    r = subprocess.run([sys.executable, "-c", "import app.main"],
+                       cwd=backend, env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert snapshot() == before                       # бодит хавтас хэвээрээ
+    assert len(list((tmp_path / "backups").glob("jiguur-*.db"))) == 1
+
+
+def test_backup_dir_env_override(tmp_path, monkeypatch):
+    """JIGUUR_BACKUP_DIR заасан бол нөөц тийшээ очно — default-ыг дарна."""
+    src = str(tmp_path / "jiguur.db")
+    sqlite3.connect(src).execute("CREATE TABLE t (id INTEGER)")
+    target = tmp_path / "elsewhere"
+    monkeypatch.setenv("JIGUUR_BACKUP_DIR", str(target))
+
+    backup_db(src=src)
+
+    assert len(list(target.glob("jiguur-*.db"))) == 1
+    assert not (tmp_path / "backups").exists()
 
 
 # ---------- Схемийн шинэчлэл ----------
