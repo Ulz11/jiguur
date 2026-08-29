@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useId, useState } from "react";
+import { Fragment, ReactNode, useEffect, useId, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, money, fmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, useToast,
@@ -10,6 +10,7 @@ import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
+import { materialSections, MaterialSection } from "../lib/lots";
 
 const today = () => new Date().toISOString().slice(0, 10);
 /** Хөдөлгөөний нэр — мөрөн дээр ч, дуудагдах нэрэнд ч НЭГ эх сурвалж. */
@@ -21,6 +22,13 @@ export default function ContractDetail() {
   const [grades, setGrades] = useState<any[]>([]);
   const [modal, setModal] = useState<"" | "return" | "add" | "pay" | "extend" | "deposit" | "close">("");
   const [openMv, setOpenMv] = useState<number | null>(null);
+  /* Задарсан материалын мөр — `material_id:grade_id` түлхүүрээр санана, тул
+     тоо засаад хуудас дахин ачаалагдахад ЯГ тэр мөр задарсан хэвээр үлдэнэ. */
+  const [openMat, setOpenMat] = useState<string | null>(null);
+  /* Хөдөлгөөний хуучин түүх нь ХОЁРДОГЧ болов (материал бүрийн доор задардаг
+     дэвтэр нь үндсэн байрлал). null = хараахан шийдээгүй → хүлээгдэж буй
+     ачилт байвал өөрөө нээлттэй, эс бөгөөс хумигдсан. */
+  const [histOpen, setHistOpen] = useState<boolean | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const toast = useToast();
   const pdf = usePdf();
@@ -60,6 +68,9 @@ export default function ContractDetail() {
 
   const cyc = d.cycle;
   const canManage = u?.role === "manager" || u?.role === "factory";
+  const sections = materialSections(d.items || [], d.material_lines || []);
+  const pendingMv = d.movements.filter((m: any) => m.status === "pending").length;
+  const showHist = histOpen ?? pendingMv > 0;
 
   return (
     <div>
@@ -170,7 +181,7 @@ export default function ContractDetail() {
 
       <div className="grid grid-cols-[1.6fr_1fr] gap-4 max-lg:grid-cols-1">
         <div className="space-y-4">
-          {/* Материал */}
+          {/* Материал — мөр бүр өөрийнхөө хөдөлгөөний түүхийг доороо задална */}
           <div className="card overflow-x-auto">
             <div className="flex items-center justify-between px-4 pt-4 pb-1">
               <h3 className="font-bold text-ink text-[15.5px]">
@@ -186,33 +197,63 @@ export default function ContractDetail() {
                 <th className="th text-right">{d.type === "rent" ? "Өдрийн дүн" : "Нийт"}</th>
               </tr></thead>
               <tbody>
-                {d.items.map((it: any, i: number) => (
-                  <tr key={i}>
-                    <td className="td font-bold text-ink">{it.material}</td>
-                    <td className="td"><span className="pill-blue">{it.grade}</span></td>
-                    <td className="td text-right tabular-nums">{fmt(it.qty)}</td>
-                    <td className="td text-right tabular-nums">
-                      {u?.role === "manager" ? (
-                        <InlineEdit type="number" right width="w-24"
-                          label={`${it.material} (${it.grade}) · ${d.type === "rent" ? "тариф" : "нэгж үнэ"}`}
-                          value={d.type === "rent" ? it.daily_rate : it.unit_price}
-                          display={fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}
-                          confirmText="Энэ циклээс шинэ үнээр?"
-                          onSave={(v) => {
-                            const num = parseMoney(v);
-                            return savePatch(`/api/contracts/${d.id}/items`,
-                              { material_id: it.material_id, grade_id: it.grade_id,
-                                old_rate: d.type === "rent" ? it.daily_rate : it.unit_price,
-                                ...(d.type === "rent" ? { daily_rate: num } : { unit_price: num }) },
-                              "Үнэ шинэчлэгдлээ — одоогийн циклээс шинэ утгаар бодогдоно");
-                          }} />
-                      ) : fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}
-                    </td>
-                    <td className="td text-right tabular-nums font-bold text-ink">
-                      {money(d.type === "rent" ? it.day_amount : it.qty * it.unit_price)}
-                    </td>
-                  </tr>
-                ))}
+                {sections.map((sec) => {
+                  const open = openMat === sec.key;
+                  const has = sec.lines.length > 0;
+                  return (
+                  <Fragment key={sec.key}>
+                    {/* Хүснэгтэд мөргүй үлдсэн түүх (гэрээний мөрд ороогүй
+                        материал) ч мөрөө авна — түүх чимээгүй алга болохгүй. */}
+                    {(sec.rows.length ? sec.rows : [{ ...sec, orphan: true }]).map((it: any, i: number) => (
+                      <tr key={i} className={has ? "cursor-pointer hover:bg-canvas transition" : undefined}
+                          {...(has ? { "aria-expanded": open } : {})}
+                          {...(has ? rowClickProps(() => setOpenMat(open ? null : sec.key),
+                                `${sec.material} (${sec.grade}) — хөдөлгөөний түүхийг ${open ? "хаах" : "нээх"}`,
+                                "row") : {})}>
+                        <td className="td font-bold text-ink">
+                          {/* Задрах тэмдэг ЗӨВХӨН хэсгийн эхний мөрөнд — доорх
+                              тарифын мөрүүд нь тэр материалын үргэлжлэл. */}
+                          {i === 0 && has && <span className="text-t3 font-normal mr-1.5">{open ? "▾" : "›"}</span>}
+                          {sec.material}
+                          {/* «Хэдэн мөр» биш «ХЭД ирж байна» — баталгаажаагүй
+                              ачилтыг задлалгүйгээр мөрөн дээрээс уншина. */}
+                          {i === 0 && sec.pending > 0 && (
+                            <span className="pill-amber ml-2">+{fmt(sec.pendingQty)}ш хүлээгдэж буй</span>
+                          )}
+                        </td>
+                        <td className="td"><span className="pill-blue">{it.grade}</span></td>
+                        <td className="td text-right tabular-nums">{fmt(it.qty)}</td>
+                        <td className="td text-right tabular-nums" onClick={(e) => e.stopPropagation()}>
+                          {it.orphan ? "—" : u?.role === "manager" ? (
+                            <InlineEdit type="number" right width="w-24"
+                              label={`${it.material} (${it.grade}) · ${d.type === "rent" ? "тариф" : "нэгж үнэ"}`}
+                              value={d.type === "rent" ? it.daily_rate : it.unit_price}
+                              display={fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}
+                              confirmText="Энэ циклээс шинэ үнээр?"
+                              onSave={(v) => {
+                                const num = parseMoney(v);
+                                return savePatch(`/api/contracts/${d.id}/items`,
+                                  { material_id: it.material_id, grade_id: it.grade_id,
+                                    old_rate: d.type === "rent" ? it.daily_rate : it.unit_price,
+                                    ...(d.type === "rent" ? { daily_rate: num } : { unit_price: num }) },
+                                  "Үнэ шинэчлэгдлээ — одоогийн циклээс шинэ утгаар бодогдоно");
+                              }} />
+                          ) : fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}
+                        </td>
+                        <td className="td text-right tabular-nums font-bold text-ink">
+                          {it.orphan ? "—" : money(d.type === "rent" ? it.day_amount : it.qty * it.unit_price)}
+                        </td>
+                      </tr>
+                    ))}
+                    {open && (
+                      <tr><td colSpan={5} className="td !bg-canvas !p-0">
+                        <MaterialLedger sec={sec} sale={d.type === "sale"}
+                          canEdit={u?.role === "manager"} onEdit={gatedPatch} />
+                      </td></tr>
+                    )}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -277,9 +318,31 @@ export default function ContractDetail() {
 
         {/* Хөдөлгөөн + төлбөр */}
         <div className="space-y-4">
+          {/* Он цагийн дараалсан түүх — материалын доорх дэвтэр гарснаар
+              ХОЁРДОГЧ болов. Гэхдээ хумигдсанаас өөр юу ч алдагдаагүй:
+              хөдөлгөөний ОГНОО, тэмдэглэл нь ганц хөдөлгөөнд бүхэлд нь
+              хамаардаг тул материалын мөрөнд бус, зөвхөн энд засагдана. */}
           <div className="card p-5">
-            <h3 className="font-bold text-ink text-[15.5px] mb-4">Хөдөлгөөний түүх</h3>
-            <div className="relative pl-6 before:content-[''] before:absolute before:left-[7px] before:top-1.5 before:bottom-1.5 before:w-0.5 before:bg-sunken">
+            {/* Гарчиг нь ТОВЧИЙГ агуулна (button дотор heading биш) — уншигчаар
+                ажилладаг хүн гарчгаар нь үсэрч, тэндээсээ задална. */}
+            <h3 className="text-[15.5px]">
+              <button type="button" aria-expanded={showHist} aria-controls="mv-history"
+                      className="flex items-center gap-2 w-full text-left font-bold text-ink"
+                      onClick={() => setHistOpen(!showHist)}>
+                <span className="text-t3">{showHist ? "▾" : "›"}</span>
+                Хөдөлгөөний түүх
+                <span className="pill-grey ml-auto">{fmt(d.movements.length)}</span>
+                {pendingMv > 0 && <span className="pill-amber">{fmt(pendingMv)} хүлээгдэж буй</span>}
+              </button>
+            </h3>
+            {!showHist && (
+              <p className="text-[12.5px] text-t3 mt-2">
+                Он цагийн дараалал, хөдөлгөөний огноо/тэмдэглэлийн засвар энд.
+                Материал бүрийн түүх дээд хүснэгтийн мөр дээр дарахад задарна.
+              </p>
+            )}
+            {showHist && (
+            <div id="mv-history" className="relative pl-6 mt-4 before:content-[''] before:absolute before:left-[7px] before:top-1.5 before:bottom-1.5 before:w-0.5 before:bg-sunken">
               {d.movements.map((mv: any) => {
                 const open = openMv === mv.id;
                 return (
@@ -362,6 +425,7 @@ export default function ContractDetail() {
                 );
               })}
             </div>
+            )}
           </div>
 
           {seesMoney && (
@@ -511,6 +575,121 @@ function RebuildModal({ p, onClose, onDone }: {
         }}>{busy ? "…" : "Баталгаажуулж дахин бодох"}</button>
       </div>
     </Modal>
+  );
+}
+
+/* ---------- Материалын хөдөлгөөний дэвтэр (задарсан мөр) ----------
+   Отгоогийн Numbers дэвтрийн «материалын доорх түүх»: юу гарсан (падан), юу
+   буцсан, БУЦААЛТ АЛЬ ПАДАНГААС хасагдсан, тэгээд мөр бүрийн дараа хэд гадаа
+   үлдсэн. Хамаарлыг тооцооны хөдөлгүүр өөрөө бодож өгдөг (хадгалагддаггүй) —
+   энд зөвхөн харагдана.
+
+   Тоо/тарифын засвар нь Хөдөлгөөний түүхийн ЯГ тэр зам: `gatedPatch` →
+   нэхэмжлэгдсэн циклд хүрвэл эхлээд зөрүүг харуулж, баталгаажуулсан үед л
+   дахин бодно. Хөдөлгүүр татгалзвал (жишээ нь гадаа байгаагаас их буцаалт)
+   серверийн монгол шалтгаан мэдэгдэл болж гарна. */
+function MaterialLedger({ sec, sale, canEdit, onEdit }: {
+  sec: MaterialSection;
+  sale: boolean;
+  canEdit: boolean;
+  onEdit: (path: string, body: any, okMsg: string) => Promise<void>;
+}) {
+  const th = "th !text-[11px] !py-1.5 !px-2.5";
+  const td = "td !text-[12.5px] !py-2 !px-2.5 align-top";
+  return (
+    <div className="p-3 overflow-x-auto">
+      {/* Худалдаанд падан гэж байхгүй, бараа «гадаа» ч байхгүй — зарагдсан.
+          Нэг л толгойн мөр хоёр өөр бодит байдлыг зөв нэрлэнэ. */}
+      <div className="text-[12px] text-t2 mb-2">
+        <b className="text-ink">{sec.material}</b> ({sec.grade}) —{" "}
+        {sale ? "бүх олголтын түүх · нийт олгогдсон " : "бүх падангийн хөдөлгөөн · одоо гадаа "}
+        <b className="text-ink tabular-nums">{fmt(sec.qty)}</b>ш
+      </div>
+      <table className="w-full min-w-[520px]">
+        <thead><tr>
+          <th className={th}>Огноо</th>
+          <th className={th}>Хөдөлгөөн</th>
+          <th className={`${th} text-right`}>Тоо</th>
+          <th className={`${th} text-right`}>{sale ? "Нэгж үнэ" : "Тариф"}</th>
+          {!sale && <th className={th} title="Аль олголтын мөрөөс хасагдав">Падан</th>}
+          <th className={`${th} text-right`}>{sale ? "Нийт олгогдсон" : "Гадаа үлдсэн"}</th>
+        </tr></thead>
+        <tbody>
+          {sec.lines.map((ln) => {
+            const issue = ln.type === "ISSUE";
+            const name = `${sec.material} · ${ln.date} · ${mvName(ln.type)}`;
+            return (
+            <tr key={ln.id}>
+              <td className={`${td} whitespace-nowrap tabular-nums`}>{ln.date}</td>
+              <td className={td}>
+                <b className="text-ink">{mvName(ln.type)}</b>
+                {ln.status === "pending" && <span className="pill-amber ml-1.5">хүлээгдэж буй</span>}
+                {!!ln.return_grade && ln.return_grade !== sec.grade && (
+                  <span className="text-t3"> → {ln.return_grade}</span>
+                )}
+                {(ln.repair_fee ?? 0) > 0 && (
+                  <span className="block text-warn">
+                    засвар {fmt(ln.repair_qty ?? 0)}ш · {money(ln.repair_fee ?? 0)}
+                  </span>
+                )}
+                {(ln.writeoff_fee ?? 0) > 0 && (
+                  <span className="block text-danger">
+                    акт {fmt(ln.writeoff_qty ?? 0)}ш · {money(ln.writeoff_fee ?? 0)}
+                  </span>
+                )}
+                {ln.note ? <span className="block text-t3">{ln.note}</span> : null}
+              </td>
+              <td className={`${td} text-right tabular-nums whitespace-nowrap`}>
+                {canEdit ? (
+                  <InlineEdit type="number" right width="w-20" label={`${name} — тоо`}
+                    value={ln.qty} display={(issue ? "+" : "−") + fmt(ln.qty)}
+                    confirmText="Тоо солих уу?"
+                    onSave={(v) => onEdit(`/api/movement-lines/${ln.id}`,
+                                          { qty: parseMoney(v) },
+                                          "Хөдөлгөөний тоо шинэчлэгдлээ")} />
+                ) : (
+                  <span className={issue ? "text-ink font-semibold" : "text-warn font-semibold"}>
+                    {(issue ? "+" : "−") + fmt(ln.qty)}
+                  </span>
+                )}
+              </td>
+              <td className={`${td} text-right tabular-nums whitespace-nowrap`}>
+                {!issue ? <span className="text-t3">—</span>
+                  : canEdit ? (
+                  <InlineEdit type="number" right width="w-20" label={`${name} — ${sale ? "нэгж үнэ" : "тариф"}`}
+                    value={ln.rate ?? ""} display={ln.rate != null ? fmt(ln.rate) : "—"}
+                    confirmText={sale ? "Нэгж үнэ солих уу?" : "Тариф солих уу?"}
+                    onSave={(v) => onEdit(`/api/movement-lines/${ln.id}`,
+                                          { rate: parseMoney(v) },
+                                          "Паданны тариф шинэчлэгдлээ")} />
+                ) : (ln.rate != null ? fmt(ln.rate) : "—")}
+              </td>
+              {!sale && (
+                <td className={td}>
+                  {issue ? (
+                    /* Олголтын мөр өөрөө ПАДАН — доорх буцаалтууд энэ дугаараар
+                       нь буцаж заана, тул Отгоо нүдээрээ холбож уншина. */
+                    <span className="text-t3">#{ln.id} падан</span>
+                  ) : ln.sources && ln.sources.length ? ln.sources.map((s, i) => (
+                    <span key={i} className="block whitespace-nowrap">
+                      #{s.issue_line_id} · {fmt(s.rate)}₮ → <b className="tabular-nums">{fmt(s.qty)}</b>ш
+                      {s.pinned && <span className="text-t3"> (заасан)</span>}
+                    </span>
+                  )) : <span className="text-t3">—</span>}
+                </td>
+              )}
+              <td className={`${td} text-right tabular-nums font-bold text-ink`}>
+                {/* Хүлээгдэж буй ачилт үлдэгдлийг ХӨДӨЛГӨӨГҮЙ — давхардсан тоо
+                    бичвэл «нэмэгдчихсэн юм болов уу» гэж уншигдана. */}
+                {ln.counted ? fmt(ln.balance)
+                  : <span className="text-t3 font-normal" title="Баталгаажаагүй тул үлдэгдэлд ороогүй">—</span>}
+              </td>
+            </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

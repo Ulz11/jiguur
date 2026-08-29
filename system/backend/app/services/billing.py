@@ -74,6 +74,12 @@ def _lots(contract: models.Contract) -> list[dict]:
     хязгаарлаж), үлдсэнийг нь (material, grade) дотор FIFO-гоор.
     Хамаарал нь ХАДГАЛАГДАХГҮЙ, бодогдоно — тул хоёр паданг дамнасан буцаалт
     өөрөө хуваагдана. Хүлээгдэж буй (pending) олголт ХЭЗЭЭ Ч тооцоонд орохгүй.
+
+    Падан бүр хоёр бүртгэл авч явна:
+      · `consumed` — (огноо, тоо). ЗӨВХӨН тооцоонд: `_lot_qty_days` ба
+        `_lot_segments` үүгээр алхдаг тул хэлбэр нь ХЭВЭЭР үлдэнэ.
+      · `takes`    — (аль МӨР хассан, огноо, тоо, заасан эсэх). Тооцоонд
+        оролцохгүй, зөвхөн ХАРУУЛАХ (`return_attribution`) зориулалттай.
     """
     defaults = default_rates(contract)
     lots: list[dict] = []
@@ -84,13 +90,19 @@ def _lots(contract: models.Contract) -> list[dict]:
         for ln in mv.lines:
             key = (mv.date, mv.id, ln.id or 0)
             if mv.type == "ISSUE":
-                lots.append({"line_id": ln.id, "material_id": ln.material_id,
+                lots.append({"line_id": ln.id, "movement_id": mv.id,
+                             "material_id": ln.material_id,
                              "grade_id": ln.grade_id, "date": mv.date, "qty": ln.qty,
                              "rate": line_rate(contract, ln, defaults),
-                             "left": ln.qty, "consumed": [], "_key": key})
+                             "left": ln.qty, "consumed": [], "takes": [], "_key": key})
             else:
                 eats.append((key, ln))
     lots.sort(key=lambda l: l["_key"])
+
+    def _eat(lot: dict, day: date, take: float, ln, pinned: bool):
+        lot["left"] -= take
+        lot["consumed"].append((day, take))
+        lot["takes"].append({"line_id": ln.id, "date": day, "qty": take, "pinned": pinned})
 
     for key, ln in sorted(eats, key=lambda e: e[0]):
         day = key[0]
@@ -103,8 +115,7 @@ def _lots(contract: models.Contract) -> list[dict]:
             if pinned:
                 take = min(remain, pinned["left"])
                 if take > 0:
-                    pinned["left"] -= take
-                    pinned["consumed"].append((day, take))
+                    _eat(pinned, day, take, ln, True)
                     remain -= take
         # 2) үлдсэнийг FIFO — хамгийн хуучин падангаас
         for lot in pool:
@@ -113,14 +124,34 @@ def _lots(contract: models.Contract) -> list[dict]:
             take = min(remain, lot["left"])
             if take <= 0:
                 continue
-            lot["left"] -= take
-            lot["consumed"].append((day, take))
+            _eat(lot, day, take, ln, False)
             remain -= take
 
     for lot in lots:
         lot.pop("_key")
         lot["consumed"].sort(key=lambda e: e[0])
     return lots
+
+
+def return_attribution(contract: models.Contract) -> dict[int, list[dict]]:
+    """Буцаалт/актын МӨР бүр АЛЬ падангаас хассаныг буцаана (зөвхөн УНШИНА).
+
+    `{мөрийн id: [{issue_line_id, issue_movement_id, date, rate, qty, pinned}]}`.
+    Хамаарлыг ХАДГАЛАХГҮЙ — `_lots`-ийн ЯГ тэр хуваарилалтаас (заасан падан →
+    FIFO) уншиж авна, тул дэлгэц дээр харагдах хамаарал нэхэмжлэлийн тоог
+    гаргасан хамаарал ХОЁР ӨӨР байх боломжгүй.
+
+    Падангийн дарааллаар (хуучнаас шинэ) — Отгоо «эхлээд хуучнаас хасагдав»
+    гэдгийг дээрээс нь доош уншина.
+    """
+    out: dict[int, list[dict]] = {}
+    for lot in _lots(contract):
+        for t in lot["takes"]:
+            out.setdefault(t["line_id"], []).append(
+                {"issue_line_id": lot["line_id"], "issue_movement_id": lot["movement_id"],
+                 "date": str(lot["date"]), "rate": lot["rate"],
+                 "qty": t["qty"], "pinned": t["pinned"]})
+    return out
 
 
 def _lot_qty_days(lot: dict, d_from: date, d_to: date) -> float:

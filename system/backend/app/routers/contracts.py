@@ -145,6 +145,8 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
     return {**serializers.contract_row(c, today),
             "vat_percent": c.vat_percent, "cycle_days": c.cycle_days,
             "items": live,
+            # Материалын мөр бүрийн доор задардаг хөдөлгөөний дэвтэр (зөвхөн унших)
+            "material_lines": serializers.material_lines(c, gmap, mmap, today),
             "movements": [serializers.movement(m, gmap, mmap)
                           for m in sorted(c.movements, key=lambda m: (m.date, m.id), reverse=True)],
             "invoices": [serializers.invoice(i, today)
