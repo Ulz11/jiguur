@@ -1,18 +1,21 @@
 import { Fragment, useEffect, useId, useState } from "react";
 import { api, money, sayaFmt } from "../api";
-import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt, ConfirmModal } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt, ConfirmModal, InlineEdit } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
+import { empBody, type EmployeeBody } from "../lib/employee";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const TYPE_LABEL: Record<string, string> = { main: "Үндсэн", contract: "Гэрээт", daily: "Өдрийн" };
+const TYPE_OPTIONS = Object.entries(TYPE_LABEL) as [string, string][];
 
 export default function Salary() {
   const [emps, setEmps] = useState<any[] | null>(null);
   const [runs, setRuns] = useState<any[] | null>(null);
-  const [modal, setModal] = useState<any>(null); // {kind:'emp'|'run', emp?}
+  const [modal, setModal] = useState<any>(null); // {kind:'emp'|'run'}
   const [open, setOpen] = useState<number | null>(null);
   const [payRun, setPayRun] = useState<any>(null); // олгохоор баталгаажуулж буй бодолт
+  const [drop, setDrop] = useState<any>(null);     // жагсаалтаас хасахаар баталгаажуулж буй ажилтан
   const toast = useToast();
 
   const load = () => {
@@ -20,6 +23,16 @@ export default function Salary() {
     api("/api/salary/runs").then(setRuns);
   };
   useEffect(load, []);
+
+  /* Мөр дээрх засвар. PUT нь БҮТЭН ажилтныг хүлээж авдаг тул зассан талбараа
+     үлдсэнтэй нь хамт (`empBody`) явуулна — эс бөгөөс цалин чимээгүй 0 болно.
+     Алдааг toast-оор гаргаад InlineEdit руу дахин throw хийнэ (засварын горимд үлдэнэ). */
+  const saveEmp = async (e: any, patch: Partial<EmployeeBody>, msg: string) => {
+    try {
+      await api(`/api/salary/employees/${e.id}`, { method: "PUT", body: JSON.stringify(empBody(e, patch)) });
+      toast(msg); load();
+    } catch (er: any) { toast(er.message, "err"); throw er; }
+  };
   if (!emps || !runs) return <Spinner />;
 
   const monthlyFund = emps.reduce((s, e) => s + (e.type === "daily" ? e.daily_rate * 22 : e.monthly_salary), 0);
@@ -69,15 +82,44 @@ export default function Salary() {
             <tbody>
               {emps.map((e) => (
                 <tr key={e.id}>
-                  <td className="td"><b className="text-ink">{e.name}</b>
-                    <span className="block text-xs text-t3">{e.role_title}</span></td>
-                  <td className="td"><span className={e.type === "daily" ? "pill-amber" : "pill-blue"}>{TYPE_LABEL[e.type]}</span></td>
-                  <td className="td text-right tabular-nums font-bold">
-                    {e.type === "daily" ? `${money(e.daily_rate)}/өдөр` : money(e.monthly_salary)}
+                  <td className="td">
+                    <InlineEdit label="Ажилтны нэр" value={e.name} width="w-40" confirmText="Нэр солих уу?"
+                      onSave={(v) => saveEmp(e, { name: v }, "Нэр шинэчлэгдлээ")} />
+                    <span className="block text-xs text-t3 mt-0.5">
+                      <InlineEdit label="Албан тушаал" value={e.role_title}
+                        display={e.role_title || "албан тушаал…"} width="w-36" confirmText="Хадгалах уу?"
+                        onSave={(v) => saveEmp(e, { role_title: v }, "Албан тушаал шинэчлэгдлээ")} />
+                    </span>
                   </td>
-                  <td className="td">{e.ndsh ? <span className="pill-green">Тийм</span> : <span className="pill-grey">Үгүй</span>}</td>
+                  <td className="td">
+                    <InlineEdit label="Ажлын төрөл" value={e.type} display={TYPE_LABEL[e.type]}
+                      width="w-28" options={TYPE_OPTIONS} confirmText="Төрөл солих уу?"
+                      onSave={(v) => saveEmp(e, { type: v },
+                        "Төрөл шинэчлэгдлээ — дараагийн бодолт үүгээр бодогдоно")} />
+                  </td>
+                  {/* Төрөлдөө тохирох ГАНЦ тоог засна: өдрийнх нь хөлс, бусад нь сарын цалин */}
+                  <td className="td text-right tabular-nums font-bold">
+                    {e.type === "daily" ? (
+                      <InlineEdit type="number" right label="Өдрийн хөлс" value={e.daily_rate}
+                        display={`${money(e.daily_rate)}/өдөр`} width="w-28" confirmText="Өдрийн хөлс солих уу?"
+                        onSave={(v) => saveEmp(e, { daily_rate: parseMoney(v) },
+                          "Өдрийн хөлс шинэчлэгдлээ — дараагийн бодолтод тусна")} />
+                    ) : (
+                      <InlineEdit type="number" right label="Сарын цалин" value={e.monthly_salary}
+                        display={money(e.monthly_salary)} width="w-32" confirmText="Цалин солих уу?"
+                        onSave={(v) => saveEmp(e, { monthly_salary: parseMoney(v) },
+                          "Цалин шинэчлэгдлээ — дараагийн бодолтод тусна")} />
+                    )}
+                  </td>
+                  <td className="td">
+                    <InlineEdit label="НДШ суутгах эсэх" value={e.ndsh ? "1" : "0"}
+                      display={e.ndsh ? "Тийм" : "Үгүй"} width="w-24"
+                      options={[["1", "Тийм"], ["0", "Үгүй"]]} confirmText="НДШ солих уу?"
+                      onSave={(v) => saveEmp(e, { ndsh: v === "1" },
+                        v === "1" ? "НДШ суутгана" : "НДШ суутгахгүй боллоо")} />
+                  </td>
                   <td className="td"><button className="btn-ghost btn-row"
-                    onClick={() => setModal({ kind: "emp", emp: e })}>Засах</button></td>
+                    onClick={() => setDrop(e)}>Хасах</button></td>
                 </tr>
               ))}
             </tbody>
@@ -129,8 +171,32 @@ export default function Salary() {
         </div>
       </div>
 
-      {modal?.kind === "emp" && <EmpModal e={modal.emp} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
+      {modal?.kind === "emp" && <EmpModal onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
       {modal?.kind === "run" && <RunModal emps={emps} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
+      {drop && (
+        <ConfirmModal
+          title="Ажилтныг жагсаалтаас хасах"
+          intro={<><b className="text-ink">{drop.name}</b> — хасагдсаны дараа ДАРААГИЙН цалингийн
+                  бодолтод орохгүй. Өмнөх бодолтууд хэвээр үлдэнэ.</>}
+          rows={[
+            { label: "Албан тушаал", value: drop.role_title || "—" },
+            { label: "Төрөл", value: TYPE_LABEL[drop.type] },
+            { label: drop.type === "daily" ? "Өдрийн хөлс" : "Сарын цалин",
+              value: drop.type === "daily" ? `${money(drop.daily_rate)}/өдөр` : money(drop.monthly_salary) },
+          ]}
+          total={{ label: "Сарын сангаас хасагдана",
+                   value: "−" + money(drop.type === "daily" ? drop.daily_rate * 22 : drop.monthly_salary),
+                   accent: "money" }}
+          confirmLabel="Хасах" danger
+          onClose={() => setDrop(null)}
+          onConfirm={async () => {
+            try {
+              await api(`/api/salary/employees/${drop.id}`, { method: "DELETE" });
+              toast(`${drop.name} жагсаалтаас хасагдлаа`);
+              setDrop(null); load();
+            } catch (e: any) { toast(e.message, "err"); setDrop(null); }
+          }} />
+      )}
       {payRun && (
         <ConfirmModal
           title="Цалин олгох"
@@ -159,17 +225,14 @@ export default function Salary() {
   );
 }
 
-function EmpModal({ e, onClose, onDone }: any) {
+/** ШИНЭ ажилтан бүртгэх. Байгаа ажилтныг мөр дээр нь шууд заснаа (InlineEdit). */
+function EmpModal({ onClose, onDone }: any) {
   const toast = useToast();
-  const f0 = {
-    name: e?.name || "", role_title: e?.role_title || "", type: e?.type || "main",
-    monthly_salary: e ? String(e.monthly_salary) : "", daily_rate: e ? String(e.daily_rate) : "",
-    ndsh: e?.ndsh || false,
-  };
+  const f0 = { name: "", role_title: "", type: "main", monthly_salary: "", daily_rate: "", ndsh: false };
   const [f, setF] = useState(f0);
   const uid = useId();
   return (
-    <FormModal title={e ? "Ажилтан засах" : "Шинэ ажилтан"} onClose={onClose} dirty={formDirty(f0, f)}>
+    <FormModal title="Шинэ ажилтан" onClose={onClose} dirty={formDirty(f0, f)}>
       <div className="grid grid-cols-2 gap-3.5">
         <div><label className="lbl" htmlFor={`${uid}-name`}>Нэр *</label>
           <input id={`${uid}-name`} className="inp" value={f.name} onChange={(ev) => setF({ ...f, name: ev.target.value })} autoFocus /></div>
@@ -204,9 +267,8 @@ function EmpModal({ e, onClose, onDone }: any) {
           const body = { ...f, monthly_salary: parseMoney(f.monthly_salary),
                          daily_rate: parseMoney(f.daily_rate) };
           try {
-            if (e) await api(`/api/salary/employees/${e.id}`, { method: "PUT", body: JSON.stringify(body) });
-            else await api("/api/salary/employees", { method: "POST", body: JSON.stringify(body) });
-            toast("Хадгалагдлаа");
+            await api("/api/salary/employees", { method: "POST", body: JSON.stringify(body) });
+            toast("Ажилтан бүртгэгдлээ");
             onDone();
           } catch (er: any) { toast(er.message, "err"); }
         }}>Хадгалах</SubmitButton>

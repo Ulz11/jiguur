@@ -59,3 +59,54 @@ def test_salary_pay_marks_paid(client, as_role):
 
 def test_factory_cannot_see_salary_403(client, as_role):
     assert client.get("/api/salary/employees", headers=as_role("darga")).status_code == 403
+
+
+def test_edit_employee_changes_what_the_next_run_pays(client, as_role):
+    """Ажилтны мөрийг засахад ДАРААГИЙН бодолт шинэ утгаар бодогдоно —
+    бодолт нь ажилчдыг бодох мөчид уншдаг гэдгийн баталгаа."""
+    h = as_role("otgoo")
+    e = client.post("/api/salary/employees", headers=h, json={
+        "name": "Засагдах Ажилтан", "role_title": "Оператор", "type": "main",
+        "monthly_salary": 2_000_000, "ndsh": False}).json()
+    r1 = client.post("/api/salary/runs", headers=h,
+                     json={"period": "2026-09", "half": 1, "daily_days": {}}).json()
+    assert next(i for i in r1["items"] if i["employee_id"] == e["id"])["base"] == 1_000_000
+
+    r = client.put(f"/api/salary/employees/{e['id']}", headers=h, json={
+        "name": "Засагдсан Ажилтан", "role_title": "Ахлах оператор", "type": "main",
+        "monthly_salary": 3_000_000, "daily_rate": 0, "ndsh": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Засагдсан Ажилтан"
+    assert r.json()["ndsh"] is True
+
+    r2 = client.post("/api/salary/runs", headers=h,
+                     json={"period": "2026-09", "half": 2, "daily_days": {}}).json()
+    it = next(i for i in r2["items"] if i["employee_id"] == e["id"])
+    assert it["base"] == 1_500_000                     # 3.0 сая / 2
+    assert it["ndsh_amount"] == 1_500_000 * 0.115      # НДШ асаасан нь тусав
+    assert it["net"] == 1_500_000 - 172_500
+
+
+def test_edit_employee_to_daily_switches_how_the_run_pays(client, as_role):
+    """Үндсэн → өдрийн болгож зассан ажилтан ажилласан өдрөөрөө бодогдоно."""
+    h = as_role("otgoo")
+    e = client.post("/api/salary/employees", headers=h, json={
+        "name": "Төрөл Солигдох", "type": "main", "monthly_salary": 1_200_000}).json()
+    client.put(f"/api/salary/employees/{e['id']}", headers=h, json={
+        "name": "Төрөл Солигдох", "role_title": "", "type": "daily",
+        "monthly_salary": 0, "daily_rate": 90_000, "ndsh": False})
+    run = client.post("/api/salary/runs", headers=h, json={
+        "period": "2026-10", "half": 1, "daily_days": {str(e["id"]): 12}}).json()
+    it = next(i for i in run["items"] if i["employee_id"] == e["id"])
+    assert it["days"] == 12 and it["base"] == 12 * 90_000
+
+
+def test_deactivated_employee_drops_out_of_the_next_run(client, as_role):
+    h = as_role("otgoo")
+    e = client.post("/api/salary/employees", headers=h, json={
+        "name": "Гарах Ажилтан", "type": "main", "monthly_salary": 900_000}).json()
+    assert client.delete(f"/api/salary/employees/{e['id']}", headers=h).status_code == 200
+    assert all(x["id"] != e["id"] for x in client.get("/api/salary/employees", headers=h).json())
+    run = client.post("/api/salary/runs", headers=h,
+                      json={"period": "2026-11", "half": 1, "daily_days": {}}).json()
+    assert all(i["employee_id"] != e["id"] for i in run["items"])
