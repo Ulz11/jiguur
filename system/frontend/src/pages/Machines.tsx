@@ -61,13 +61,15 @@ export default function Machines() {
 
   return (
     <div>
-      <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
+      <div className="dashboard-header">
         <div>
-          <h1 className="text-2xl font-extrabold text-ink tracking-tight">Механизм</h1>
-          <p className="text-t2 text-[13.5px] mt-0.5">Автокран г.м. — өдрийн ажил, зарлага, машин бүрийн ашиг.</p>
+          <div className="dashboard-kicker">МЕХАНИЗМ <span>•</span> {d.machines.length} МАШИН</div>
+          <h1 className="dashboard-title">Механизм</h1>
+          <p className="dashboard-subtitle">Автокран г.м. — өдрийн ажил, зарлага, машин бүрийн ашиг.</p>
         </div>
         {isManager && (
-          <button className="btn-secondary" onClick={() => setModal({ kind: "add" })}>+ Машин нэмэх</button>
+          <button className="btn-secondary command-action"
+                  onClick={() => setModal({ kind: "add" })}>+ Машин нэмэх</button>
         )}
       </div>
 
@@ -191,16 +193,16 @@ export default function Machines() {
         <div className="card mt-4 overflow-x-auto">
           <div className="flex items-center justify-between px-4 pt-4 pb-1 flex-wrap gap-2">
             <div>
-              <h3 className="font-bold text-ink text-[15.5px]">Нэхэмжлэхүүд</h3>
+              <h3 className="font-bold text-ink text-[15.5px]">Нэхэмжлэлүүд</h3>
               {/* Энэ бол ТУСДАА баримт: авлагын жагсаалтад ордоггүй, төлбөрийн
                   бодит байдал нь бичилтийн «Хэлбэр» талбар дээр бүртгэгддэг. */}
               <p className="text-[12.5px] text-t3 mt-0.5">Краны ажлын мөрүүдээс гаргасан баримт — авлагын тооцоонд ордоггүй.</p>
             </div>
             <button className="btn-secondary !min-h-9 !py-1.5"
-                    onClick={() => setModal({ kind: "invoice", machine: sel })}>Нэхэмжлэх үүсгэх</button>
+                    onClick={() => setModal({ kind: "invoice", machine: sel })}>Нэхэмжлэл үүсгэх</button>
           </div>
           {sel.invoices.length === 0 ? (
-            <Empty title="Нэхэмжлэх үүсгээгүй"
+            <Empty title="Нэхэмжлэл үүсгээгүй"
                    sub="Харилцагч, хугацаа сонгоод тухайн үеийн ажлуудыг нэг баримт болгоно." />
           ) : (
             <table className="w-full min-w-[680px]">
@@ -225,7 +227,7 @@ export default function Machines() {
                           {pdf.busyPath === path ? "…" : "PDF"}
                         </button>
                         <button className="w-7 h-7 rounded-lg bg-danger-50 text-danger shrink-0 ml-1.5 align-middle"
-                                title="Нэхэмжлэх устгах" aria-label={`№${inv.no} — нэхэмжлэх устгах`}
+                                title="Нэхэмжлэл устгах" aria-label={`№${inv.no} — нэхэмжлэл устгах`}
                                 onClick={() => setAsk({ kind: "delInv", inv })}>✕</button>
                       </td>
                     </tr>
@@ -266,7 +268,7 @@ export default function Machines() {
         <ConfirmModal
           title={ask.machine.active ? "Механизм зогсоох" : "Механизм идэвхжүүлэх"}
           intro={ask.machine.active
-            ? <><b className="text-ink">{ask.machine.name}</b> — түүх БҮРЭН хадгалагдана (бичилт, нэхэмжлэх,
+            ? <><b className="text-ink">{ask.machine.name}</b> — түүх БҮРЭН хадгалагдана (бичилт, нэхэмжлэл,
                 тайлангийн тоо хэвээр). Зөвхөн ШИНЭ бичилт нэмэх боломж хаагдана.</>
             : <><b className="text-ink">{ask.machine.name}</b> — дахин ажиллаж эхэлнэ, шинэ бичилт нэмэгдэнэ.</>}
           rows={[
@@ -281,9 +283,9 @@ export default function Machines() {
       )}
       {ask?.kind === "delInv" && (
         <ConfirmModal
-          title="Нэхэмжлэх устгах"
+          title="Нэхэмжлэл устгах"
           intro={<>Баримт устгагдана. Краны <b className="text-ink">ажлын бүртгэл хэвээр</b> үлдэх тул
-                  шаардвал дахин нэхэмжлэх гаргаж болно.</>}
+                  шаардвал дахин нэхэмжлэл гаргаж болно.</>}
           rows={[
             { label: "№", value: ask.inv.no },
             { label: "Харилцагч", value: ask.inv.client },
@@ -292,7 +294,7 @@ export default function Machines() {
           total={{ label: "Нийт дүн", value: money(ask.inv.grand_total) }}
           confirmLabel="Устгах" danger
           onClose={() => setAsk(null)}
-          onConfirm={() => doDelete(`/api/machine-invoices/${ask.inv.id}`, "Нэхэмжлэх устгагдлаа")} />
+          onConfirm={() => doDelete(`/api/machine-invoices/${ask.inv.id}`, "Нэхэмжлэл устгагдлаа")} />
       )}
     </div>
   );
@@ -362,7 +364,7 @@ function LogModal({ kind, m, onClose, onDone }: any) {
   );
 }
 
-/* ---------- Механизмын нэхэмжлэх ----------
+/* ---------- Механизмын нэхэмжлэл ----------
    «Үүсгэх» дарахаас ӨМНӨ ЯГ ЮУ орохыг харуулна: сонгогдсон мөрүүд, тэдгээрийн
    нийт дүн. Сонголтын дүрэм нь серверийнхтэй нэг эх сурвалжаас (lib/machine.ts,
    machine.test.ts-ээр барьцаалагдсан) — дэлгэц дээрх амлалт баримт дээр эвдэрэхгүй. */
@@ -390,7 +392,7 @@ function InvoiceModal({ m, onClose, onDone }: any) {
   const suggestions = Array.from(new Set([...(m.clients || []), ...names]));
 
   return (
-    <FormModal title={`Нэхэмжлэх үүсгэх — ${m.name}`} onClose={onClose} dirty={formDirty(f0, f)}>
+    <FormModal title={`Нэхэмжлэл үүсгэх — ${m.name}`} onClose={onClose} dirty={formDirty(f0, f)}>
       <label className="lbl" htmlFor={`${uid}-client`}>Харилцагч *</label>
       <input id={`${uid}-client`} className="inp" list={`${uid}-clients`} autoFocus
              placeholder="Бичилт дээрх нэртэй ЯГ ижил байх ёстой" value={f.client}
@@ -408,7 +410,7 @@ function InvoiceModal({ m, onClose, onDone }: any) {
                  onChange={(e) => setF({ ...f, to: e.target.value })} /></div>
       </div>
       <p className="text-[12.5px] text-t3 mt-2">
-        Хоёр огноо хоёулаа ОРНО. Дотоод ажил, зарлага нэхэмжлэхэд орохгүй.
+        Хоёр огноо хоёулаа ОРНО. Дотоод ажил, зарлага нэхэмжлэлд орохгүй.
       </p>
 
       <div className="mt-4">
@@ -437,7 +439,7 @@ function InvoiceModal({ m, onClose, onDone }: any) {
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <SubmitButton disabled={rows.length === 0} busyLabel="Үүсгэж байна…"
-          title={rows.length === 0 ? "Орох мөр байхгүй тул нэхэмжлэх үүсгэхгүй" : undefined}
+          title={rows.length === 0 ? "Орох мөр байхгүй тул нэхэмжлэл үүсгэхгүй" : undefined}
           onSubmit={async () => {
             try {
               const inv = await api(`/api/machines/${m.id}/invoices`, { method: "POST",

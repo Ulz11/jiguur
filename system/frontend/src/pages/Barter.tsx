@@ -1,8 +1,10 @@
 import { useEffect, useId, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, fmt, money, sayaFmt, user } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
+import { clientHref } from "../lib/links";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const TYPES = ["Машин", "Байр", "Материал", "Бусад"];
@@ -22,14 +24,18 @@ export default function Barter() {
 
   return (
     <div>
-      <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
+      <div className="dashboard-header">
         <div>
-          <h1 className="text-2xl font-extrabold text-ink tracking-tight">Бартер</h1>
-          <p className="text-t2 text-[13.5px] mt-0.5">
+          <div className="dashboard-kicker">БАРТЕР <span>•</span> {d.assets.length} ХӨРӨНГӨ</div>
+          <h1 className="dashboard-title">Бартер</h1>
+          <p className="dashboard-subtitle">
             Төлбөрт орж ирсэн хөрөнгө — орж ирсэн үнэ ↔ зарсан үнийн зөрүү тайланд шууд харагдана.
           </p>
         </div>
-        {canSell && <button className="btn-primary" onClick={() => setModal({ kind: "add" })}>+ Хөрөнгө бүртгэх</button>}
+        {canSell && (
+          <button className="btn-primary command-action"
+                  onClick={() => setModal({ kind: "add" })}>+ Хөрөнгө бүртгэх</button>
+        )}
       </div>
 
       <div className="command-metrics mb-4">
@@ -98,7 +104,13 @@ export default function Barter() {
                     {a.detail || ""} {a.date_in}-нд орж ирсэн
                   </span>
                 </td>
-                <td className="td text-t2">{a.client || "—"}</td>
+                {/* «Хэнээс» нь ХАРИЛЦАГЧ — тэр хөрөнгө яагаад орж ирснийг
+                    профайл дээрх нь түүхээс уншина. */}
+                <td className="td text-t2">
+                  {a.client_id
+                    ? <Link to={clientHref(a.client_id)} className="text-ink hover:underline">{a.client}</Link>
+                    : a.client || "—"}
+                </td>
                 <td className="td text-right tabular-nums font-bold">{money(a.value_in)}</td>
                 <td className="td text-right tabular-nums">{a.asking_price ? money(a.asking_price) : "—"}</td>
                 <td className="td">

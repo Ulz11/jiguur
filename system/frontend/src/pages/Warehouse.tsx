@@ -1,9 +1,10 @@
 import { useEffect, useId, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, fmt, user } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Prog, Receipt, Empty } from "../ui";
 import { parseMoney } from "../lib/num";
 import { rowClickProps } from "../lib/rowClick";
+import { materialHref } from "../lib/links";
 
 export default function Warehouse() {
   const [d, setD] = useState<any>(null);
@@ -28,15 +29,15 @@ export default function Warehouse() {
 
   return (
     <div>
-      <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
+      <div className="dashboard-header">
         <div>
-          <h1 className="text-2xl font-extrabold text-ink tracking-tight">Агуулах</h1>
-          <p className="text-t2 text-[13.5px] mt-0.5">Амьд үлдэгдэл — хөдөлгөөн бүртгэгдэнгүүт шинэчлэгдэнэ.</p>
+          <div className="dashboard-kicker">АГУУЛАХ <span>•</span> {d.rows.length} МАТЕРИАЛ</div>
+          <h1 className="dashboard-title">Агуулах</h1>
+          <p className="dashboard-subtitle">Амьд үлдэгдэл — хөдөлгөөн бүртгэгдэнгүүт шинэчлэгдэнэ.</p>
         </div>
+        {/* Материалын дэлгэрэнгүй хуудастай ИЖИЛ — тооллого руу ХОЛБООС */}
         {u?.role !== "finance" && (
-          <button className="btn-primary" onClick={() => nav("/warehouse/stocktake")}>
-            ▣ Тооллого хийх
-          </button>
+          <Link to="/warehouse/stocktake" className="btn-primary command-action">▣ Тооллого хийх</Link>
         )}
       </div>
 
@@ -67,7 +68,7 @@ export default function Warehouse() {
                    Зэрэглэлийн товч, «Засвар дуусгах» нь мөрөн ДОТРОО өөрийн
                    үйлдлээ хийсэн хэвээр (товшилтоо мөрөнд өгөхгүй). */
                 <tr key={m.id} className="cursor-pointer hover:bg-canvas transition group"
-                    {...rowClickProps(() => nav(`/warehouse/materials/${m.id}`),
+                    {...rowClickProps(() => nav(materialHref(m.id)),
                       `${m.name} — агуулахад ${fmt(hand)}ш, түрээсэнд ${fmt(rent)}ш, дэлгэрэнгүй нээх`,
                       "row")}>
                   <td className="td"><b className="text-ink">{m.name}</b>

@@ -4,6 +4,8 @@ import { api, money, sayaFmt, user } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty } from "../ui";
 import { formDirty } from "../lib/dirty";
 import { useDownload } from "../lib/docs";
+import { rowClickProps } from "../lib/rowClick";
+import { clientHref } from "../lib/links";
 
 export default function Clients() {
   const [rows, setRows] = useState<any[] | null>(null);
@@ -37,10 +39,11 @@ export default function Clients() {
 
   return (
     <div>
-      <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
+      <div className="dashboard-header">
         <div>
-          <h1 className="text-2xl font-extrabold text-ink tracking-tight">Харилцагч</h1>
-          <p className="text-t2 text-[13.5px] mt-0.5">Профайл дээр дарж бүх түүхийг нь үзнэ.</p>
+          <div className="dashboard-kicker">ХАРИЛЦАГЧ <span>•</span> {rows.length} БҮРТГЭЛТЭЙ</div>
+          <h1 className="dashboard-title">Харилцагч</h1>
+          <p className="dashboard-subtitle">Профайл дээр дарж бүх түүхийг нь үзнэ.</p>
         </div>
         {u?.role !== "factory" && (
           <div className="flex gap-2.5 flex-wrap">
@@ -54,7 +57,7 @@ export default function Clients() {
                     onClick={() => dl.download(EXPORT, "avlaga.xlsx")}>
               {dl.busyPath === EXPORT ? "Бэлтгэж байна…" : "⇩ Авлага Excel-ээр"}
             </button>
-            <button className="btn-primary" onClick={() => setShow(true)}>+ Шинэ харилцагч</button>
+            <button className="btn-primary command-action" onClick={() => setShow(true)}>+ Шинэ харилцагч</button>
           </div>
         )}
       </div>
@@ -69,7 +72,11 @@ export default function Clients() {
           </tr></thead>
           <tbody>
             {shown.map((c) => (
-              <tr key={c.id} className="cursor-pointer hover:bg-canvas transition group" onClick={() => nav(`/clients/${c.id}`)}>
+              /* Мөр дарагддаг бол ГАРААР ч дарагдана — бусад бүх жагсаалттай
+                 ижил дүрэм (Tab → Enter). Энэ хүснэгт л ганцаараа гацдаг байв. */
+              <tr key={c.id} className="cursor-pointer hover:bg-canvas transition group"
+                  {...rowClickProps(() => nav(clientHref(c.id)),
+                                    `${c.name} — харилцагчийн хуудсыг нээх`, "row")}>
                 <td className="td">
                   <span className="font-bold text-ink">{c.name}</span>
                   <span className="block text-xs text-t3">{c.person}{c.phone && ` · ${c.phone}`}</span>
@@ -88,7 +95,7 @@ export default function Clients() {
                    c.receivable > 0 ? <span className="pill-amber">Үлдэгдэлтэй</span> :
                    <span className="pill-green">Хэвийн</span>}
                 </td>
-                <td className="td text-t3 opacity-0 group-hover:opacity-100 transition">→</td>
+                <td className="td text-t3 group-hover:text-ink transition" aria-hidden="true">→</td>
               </tr>
             ))}
           </tbody>

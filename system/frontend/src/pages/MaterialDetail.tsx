@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, fmt, user } from "../api";
 import { Spinner, Empty } from "../ui";
 import { rowClickProps } from "../lib/rowClick";
+import { clientHref, contractHref } from "../lib/links";
 import { holdingSections, rateLabel, daysLabel } from "../lib/material";
 
 /* Материалын дэлгэрэнгүй — «энэ хэв ХААНА байна вэ?» гэсэн ганц хариу.
@@ -74,7 +75,7 @@ export default function MaterialDetail() {
           <div className="grid grid-cols-4 gap-6 max-sm:grid-cols-2">
             <Stat label="Нийт эзэмшил" val={fmt(t.total)} unit={unit} strong />
             <Stat label="Агуулахад" val={fmt(t.on_hand)} unit={unit} />
-            <Stat label="Гадаа" val={fmt(t.out)} unit={unit}
+            <Stat label="Түрээсэнд" val={fmt(t.out)} unit={unit}
                   sub={t.out > 0 ? `${fmt(t.contracts)} гэрээ · ${fmt(t.clients)} харилцагч` : undefined} />
             <Stat label="Засварт" val={t.in_repair > 0 ? fmt(t.in_repair) : "—"}
                   unit={t.in_repair > 0 ? unit : ""} warn={t.in_repair > 0} />
@@ -86,12 +87,12 @@ export default function MaterialDetail() {
       <div className="card overflow-x-auto mb-4">
         <div className="flex items-center justify-between gap-3 px-4 pt-4 pb-1 flex-wrap">
           <h2 className="font-bold text-ink text-[15.5px]">Хуваарилалт — хэнд хэд байна</h2>
-          {t.out > 0 && <span className="pill-grey">{fmt(t.out)} {unit} гадаа</span>}
+          {t.out > 0 && <span className="pill-grey">{fmt(t.out)} {unit} түрээсэнд</span>}
         </div>
         <table className="w-full min-w-[860px]">
           <thead><tr>
             <th className="th">Харилцагч</th><th className="th">Гэрээ №</th>
-            <th className="th">Зэрэглэл</th><th className="th text-right">Гадаа {unit}</th>
+            <th className="th">Зэрэглэл</th><th className="th text-right">Түрээсэнд {unit}</th>
             <th className="th text-right">Тариф</th><th className="th">Хэзээнээс</th>
             <th className="th"></th>
           </tr></thead>
@@ -100,19 +101,19 @@ export default function MaterialDetail() {
               <Fragment key={sec.grade_id}>
                 {sec.rows.map((h: any) => (
                   <tr key={`${h.contract_id}-${h.grade_id}`} className="cursor-pointer hover:bg-canvas transition group"
-                      {...rowClickProps(() => nav(`/contracts/${h.contract_id}`),
-                        `Гэрээ №${h.contract_no} · ${h.client} — ${h.grade} зэрэглэлийн ${fmt(h.qty)}${unit} гадаа, нээх`,
+                      {...rowClickProps(() => nav(contractHref(h.contract_id)),
+                        `Гэрээ №${h.contract_no} · ${h.client} — ${h.grade} зэрэглэлийн ${fmt(h.qty)}${unit} түрээсэнд, нээх`,
                         "row")}>
                     {/* Харилцагчийн нэр нь ПРОФАЙЛ руу — мөр өөрөө гэрээ рүү.
                         Хоёр өөр газар очих тул холбоос дарсан товшилтыг мөр
                         авах ёсгүй. */}
                     <td className="td" onClick={(e) => e.stopPropagation()}>
-                      <Link to={`/clients/${h.client_id}`} className="font-bold text-ink hover:underline">
+                      <Link to={clientHref(h.client_id)} className="font-bold text-ink hover:underline">
                         {h.client}
                       </Link>
                     </td>
                     <td className="td" onClick={(e) => e.stopPropagation()}>
-                      <Link to={`/contracts/${h.contract_id}`} className="text-t1 hover:underline tabular-nums">
+                      <Link to={contractHref(h.contract_id)} className="text-t1 hover:underline tabular-nums">
                         №{h.contract_no}
                       </Link>
                       {h.status === "closed" && <span className="pill-grey ml-1.5">хаагдсан</span>}
@@ -136,7 +137,7 @@ export default function MaterialDetail() {
                 {many && (
                   <tr className="bg-sunken">
                     <td className="td" colSpan={3}>
-                      <b className="text-ink">{sec.grade} зэрэглэл — гадаа нийт</b>
+                      <b className="text-ink">{sec.grade} зэрэглэл — түрээсэнд нийт</b>
                     </td>
                     <td className="td text-right tabular-nums font-extrabold text-ink">{fmt(sec.qty)}</td>
                     <td className="td" colSpan={3}></td>
@@ -147,7 +148,7 @@ export default function MaterialDetail() {
           </tbody>
         </table>
         {sections.length === 0 && (
-          <Empty title="Гадаа байхгүй"
+          <Empty title="Түрээсэнд гараагүй"
                  sub="Энэ материалын бүх үлдэгдэл агуулахад байна — идэвхтэй гэрээнд гараагүй." />
         )}
       </div>
@@ -163,7 +164,7 @@ export default function MaterialDetail() {
         <table className="w-full min-w-[680px]">
           <thead><tr>
             <th className="th">Зэрэглэл</th><th className="th text-right">Агуулахад</th>
-            <th className="th text-right">Гадаа</th><th className="th text-right">Засварт</th>
+            <th className="th text-right">Түрээсэнд</th><th className="th text-right">Засварт</th>
             <th className="th text-right">Акталсан</th>
             <th className="th text-right">Нийт эзэмшил</th>
           </tr></thead>
@@ -206,7 +207,7 @@ export default function MaterialDetail() {
       {/* ---------- Сүүлийн хөдөлгөөн ---------- */}
       <div className="card overflow-x-auto">
         <div className="flex items-center justify-between gap-3 px-4 pt-4 pb-1 flex-wrap">
-          <h2 className="font-bold text-ink text-[15.5px]">Сүүлийн хөдөлгөөн</h2>
+          <h2 className="font-bold text-ink text-[15.5px]">Хөдөлгөөний түүх</h2>
           {/* Жагсаалт тасарсан бол тасарсан гэдгээ ХЭЛНЭ — «нийт 34-ийн 20» */}
           <span className="pill-grey">
             {d.movements_total > d.movements.length
@@ -226,7 +227,7 @@ export default function MaterialDetail() {
               const name = issue ? "Ачилт" : mv.type === "RETURN" ? "Буцаалт" : "Акт";
               return (
                 <tr key={`${mv.movement_id}-${mv.id}`} className="cursor-pointer hover:bg-canvas transition group"
-                    {...rowClickProps(() => nav(`/contracts/${mv.contract_id}`),
+                    {...rowClickProps(() => nav(contractHref(mv.contract_id)),
                       `${mv.date} · ${name} ${fmt(mv.qty)}${unit} · гэрээ №${mv.contract_no} — нээх`,
                       "row")}>
                   <td className="td whitespace-nowrap tabular-nums">{mv.date}</td>
@@ -245,9 +246,13 @@ export default function MaterialDetail() {
                       </span>
                     )}
                   </td>
+                  {/* Хуваарилалтын хүснэгттэй ИЖИЛ дүрэм: мөр нь гэрээ рүү,
+                      харилцагчийн нэр нь профайл руугаа. */}
                   <td className="td">
                     <span className="font-semibold text-ink">№{mv.contract_no}</span>
-                    <span className="block text-[12px] text-t3">{mv.client}</span>
+                    <span className="block text-[12px]" onClick={(e) => e.stopPropagation()}>
+                      <Link to={clientHref(mv.client_id)} className="text-t2 hover:underline">{mv.client}</Link>
+                    </span>
                   </td>
                   <td className="td"><span className="pill-blue">{mv.grade}</span></td>
                   <td className={`td text-right tabular-nums font-bold ${issue ? "text-ink" : "text-warn"}`}>

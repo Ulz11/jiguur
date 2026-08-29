@@ -33,12 +33,13 @@ export default function Reports() {
 
   return (
     <Refreshing busy={busy}>
-      <div className="flex items-end justify-between gap-4 mb-5 flex-wrap">
+      <div className="dashboard-header">
         <div>
-          <h1 className="text-[22px] font-bold text-ink tracking-tight">Тайлан</h1>
-          <p className="text-t3 text-[13px] mt-0.5">{p.from} — {p.to} · түрээс дууссан циклээр, зардал төлөгдсөнөөр</p>
+          <div className="dashboard-kicker">ТАЙЛАН <span>•</span> {p.from} — {p.to}</div>
+          <h1 className="dashboard-title">Тайлан</h1>
+          <p className="dashboard-subtitle">Түрээс дууссан циклээр, зардал төлөгдсөнөөр.</p>
         </div>
-        <div className="flex gap-2.5 items-center flex-wrap">
+        <div className="flex gap-2.5 items-center flex-wrap command-action">
           <div className="segment">
             {[3, 6, 12].map((m) => (
               <button key={m} onClick={() => setMonths(m)} className={months === m ? "on" : ""}>{m} сар</button>
@@ -74,7 +75,7 @@ export default function Reports() {
         </div>
         <div className="card p-5 col-span-3 max-lg:col-span-6 max-sm:col-span-12">
           <div className="text-[12px] text-t3 font-medium mb-1.5 flex items-center gap-2">
-            <span className="cdot" style={{ background: "#8B5CF6", boxShadow: "0 0 0 3px #EFE7FE" }} />Бартерын үр дүн
+            <span className="cdot" style={{ background: "#6756a4", boxShadow: "0 0 0 3px #eeeafa" }} />Бартерын үр дүн
           </div>
           <div className={`text-[28px] font-bold tracking-tight tabular-nums ${p.barter_result < 0 ? "text-danger" : "text-money"}`}>
             {p.barter_result > 0 ? "+" : ""}{sayaFmt(p.barter_result)}<span className="text-[15px] text-t3 font-medium ml-1">₮</span>
@@ -169,7 +170,10 @@ function Total({ label, val, tone }: any) {
   );
 }
 
-const CASH_C = "#1f8b69", BANK_C = "#253886", BARTER_C = "#f88712", OUT_C = "#E5484D";
+/* Өнгө нь ОЙЛГОЛТООС гардаг, графикаас биш: бартер бол violet (төлбөрийн
+   pill, орлогын график, дээрх «Бартерын үр дүн» цэг бүгд violet). Энд ганцаараа
+   улбар шар байсан нь НЭГ хуудсан дээр нэг ойлголтыг хоёр өнгөөр зурж байв. */
+const CASH_C = "#1f8b69", BANK_C = "#253886", BARTER_C = "#6756a4", OUT_C = "#E5484D";
 
 function CashBars({ s }: {
   s: {

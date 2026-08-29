@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import { Spinner, useToast, Empty } from "../ui";
+import { auditHref } from "../lib/links";
 
 const ACTIONS: Record<string, [string, string]> = {
   create: ["Үүсгэсэн", "pill-green"],
@@ -67,6 +69,7 @@ export default function Audit() {
           <tbody>
             {shown.map((r) => {
               const [label, cls] = ACTIONS[r.action] || [r.action, "pill-grey"];
+              const to = auditHref(r.entity, r.entity_id);
               return (
                 <tr key={r.id}>
                   {/* `text-[12.5px]` энд байсан ч огт үйлчилдэггүй байв — `.td`
@@ -74,8 +77,16 @@ export default function Audit() {
                   <td className="td whitespace-nowrap text-t2 tabular-nums">{r.at}</td>
                   <td className="td font-semibold text-ink">{r.user_name || "—"}</td>
                   <td className="td"><span className={cls}>{label}</span></td>
+                  {/* «Гэрээ #26» гэдэг нь мухардмал текст байв — хуудастай
+                      объект бол тэр хуудас руугаа нээгдэнэ. Хуудасгүй объект
+                      (төлбөр, хөдөлгөөн, нэхэмжлэл) нь текст хэвээр: тэдгээрийн
+                      id гэрээнийх БИШ тул худал холбоос үүсгэхгүй. */}
                   <td className="td text-t2">
-                    {ENTITIES[r.entity] || r.entity}{r.entity_id ? ` #${r.entity_id}` : ""}
+                    {to
+                      ? <Link to={to} className="text-ink hover:underline">
+                          {ENTITIES[r.entity] || r.entity} #{r.entity_id}
+                        </Link>
+                      : <>{ENTITIES[r.entity] || r.entity}{r.entity_id ? ` #${r.entity_id}` : ""}</>}
                   </td>
                   <td className="td text-t2">{r.detail}</td>
                 </tr>

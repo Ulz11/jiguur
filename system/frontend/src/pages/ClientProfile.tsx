@@ -6,6 +6,7 @@ import { PayModal } from "./ContractDetail";
 import { invoiceLabel } from "../lib/invoice";
 import { useDownload } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
+import { contractHref } from "../lib/links";
 import { dueLabel, todayIso } from "../lib/schedule";
 import {
   buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth, dayCellLabel,
@@ -67,12 +68,12 @@ export default function ClientProfile() {
             {d.name.slice(0, 2)}
           </div>
           <div className="flex-1 min-w-[230px]">
-            <h2 className="text-xl font-extrabold text-ink flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-[22px] font-extrabold text-ink tracking-tight flex items-center gap-2.5 flex-wrap">
               {d.name}
               {d.overdue ? <span className="pill-red">Хэтэрсэн өртэй</span> :
                d.receivable > 0 ? <span className="pill-amber">Үлдэгдэлтэй</span> :
                <span className="pill-green">Хэвийн</span>}
-            </h2>
+            </h1>
             <div className="text-[13px] text-t2 mt-1.5 flex gap-x-4 gap-y-1.5 flex-wrap items-center">
               <span className="inline-flex items-center gap-1.5">Регистр:
                 <InlineEdit label="Регистр" value={d.reg} width="w-28" confirmText="Хадгалах уу?"
@@ -143,7 +144,7 @@ export default function ClientProfile() {
                   ) : upcoming.map((s: any) => (
                     <div key={s.contract_id}
                          className="flex items-center justify-between gap-3 py-2.5 border-b border-sunken cursor-pointer hover:bg-canvas -mx-2 px-2 rounded-lg transition"
-                         {...rowClickProps(() => nav(`/contracts/${s.contract_id}`),
+                         {...rowClickProps(() => nav(contractHref(s.contract_id)),
                            `Гэрээ №${s.contract_no} — ${s.expected_date}-нд ойролцоогоор ${money(s.projected_amount)}, нээх`,
                            "link")}>
                       <div className="min-w-0">
@@ -169,7 +170,11 @@ export default function ClientProfile() {
               {d.invoices.slice(0, 6).map((inv: any) => (
                 <div key={inv.id} className="flex items-center justify-between gap-3 py-2.5 border-b border-sunken last:border-0">
                   <div>
-                    <b className="text-[13px] text-ink">{inv.contract_no} · {inv.cycle_start}</b>
+                    <Link to={contractHref(inv.contract_id)}
+                          className="text-[13px] font-bold text-ink hover:underline">
+                      №{inv.contract_no}
+                    </Link>
+                    <b className="text-[13px] text-ink"> · {inv.cycle_start}</b>
                     <span className="block text-xs text-t3 tabular-nums">{money(inv.total)}
                       {inv.penalty > 0 && <span className="text-danger"> + алданги {money(inv.penalty)}</span>}</span>
                   </div>
@@ -189,7 +194,7 @@ export default function ClientProfile() {
               <tbody>
                 {d.contracts.map((c: any) => (
                   <tr key={c.id} className="cursor-pointer hover:bg-canvas group"
-                      {...rowClickProps(() => nav(`/contracts/${c.id}`),
+                      {...rowClickProps(() => nav(contractHref(c.id)),
                                         `Гэрээ №${c.no} нээх`, "row")}>
                     <td className="td"><b className="text-ink">№{c.no}</b>
                       <span className="block text-xs text-t3">{c.start_date}-с</span></td>
@@ -218,9 +223,12 @@ export default function ClientProfile() {
                   <tr key={inv.id}>
                     {/* Гэрээний дэлгэрэнгүй ба төлбөрийн модалтой ИЖИЛ нэр */}
                     <td className="td"><b className="text-ink">{invoiceLabel(inv).title}</b>
-                      {invoiceLabel(inv).sub && (
-                        <span className="block text-xs text-t3">{invoiceLabel(inv).sub}</span>
-                      )}</td>
+                      <span className="block text-xs text-t3">
+                        {invoiceLabel(inv).sub && <>{invoiceLabel(inv).sub} · </>}
+                        <Link to={contractHref(inv.contract_id)} className="text-t2 hover:underline">
+                          Гэрээ №{inv.contract_no}
+                        </Link>
+                      </span></td>
                     <td className="td text-right tabular-nums">{money(inv.total)}</td>
                     <td className="td text-right tabular-nums">{money(inv.paid)}</td>
                     {/* Гэрээний дэлгэрэнгүйтэй ИЖИЛ багана — хоёр дэлгэц дээр
@@ -254,7 +262,13 @@ export default function ClientProfile() {
                         {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн" : "Данс"}
                       </span>
                     </td>
-                    <td className="td text-t2">{p.contract_no ? `№${p.contract_no}` : "—"}</td>
+                    <td className="td text-t2">
+                      {p.contract_id
+                        ? <Link to={contractHref(p.contract_id)} className="text-ink hover:underline">
+                            №{p.contract_no}
+                          </Link>
+                        : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>

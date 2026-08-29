@@ -11,6 +11,7 @@ import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import { materialSections, MaterialSection } from "../lib/lots";
+import { clientHref, materialHref } from "../lib/links";
 
 const today = () => new Date().toISOString().slice(0, 10);
 /** Хөдөлгөөний нэр — мөрөн дээр ч, дуудагдах нэрэнд ч НЭГ эх сурвалж. */
@@ -78,7 +79,7 @@ export default function ContractDetail() {
       <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
         <div>
           <h1 className="text-[22px] font-extrabold text-ink tracking-tight flex items-center gap-2.5 flex-wrap">
-            <Link to={`/clients/${d.client_id}`} className="hover:underline">{d.client}</Link>
+            <Link to={clientHref(d.client_id)} className="hover:underline">{d.client}</Link>
             <StatePill state={d.state} /><TypePill type={d.type} />
           </h1>
           <div className="text-t2 text-[13.5px] mt-1.5 flex items-center gap-x-4 gap-y-1.5 flex-wrap">
@@ -600,9 +601,14 @@ function MaterialLedger({ sec, sale, canEdit, onEdit }: {
     <div className="p-3 overflow-x-auto">
       {/* Худалдаанд падан гэж байхгүй, бараа «гадаа» ч байхгүй — зарагдсан.
           Нэг л толгойн мөр хоёр өөр бодит байдлыг зөв нэрлэнэ. */}
+      {/* Дэвтрийн толгой дахь материалын нэр нь АГУУЛАХЫН хуудас руугаа:
+          «энэ хэв өөр хаана байна вэ» гэдгийг нэг товшилтоор. Хүснэгтийн мөр
+          өөрөө дэвтрээ задлах үүрэгтэй хэвээр — тэр үйлдлийг булаахгүй. */}
       <div className="text-[12px] text-t2 mb-2">
-        <b className="text-ink">{sec.material}</b> ({sec.grade}) —{" "}
-        {sale ? "бүх олголтын түүх · нийт олгогдсон " : "бүх падангийн хөдөлгөөн · одоо гадаа "}
+        <Link to={materialHref(sec.material_id)} className="font-bold text-ink hover:underline">
+          {sec.material}
+        </Link>{" "}({sec.grade}) —{" "}
+        {sale ? "бүх олголтын түүх · нийт олгогдсон " : "бүх падангийн хөдөлгөөн · одоо түрээсэнд "}
         <b className="text-ink tabular-nums">{fmt(sec.qty)}</b>ш
       </div>
       <table className="w-full min-w-[520px]">
@@ -612,7 +618,7 @@ function MaterialLedger({ sec, sale, canEdit, onEdit }: {
           <th className={`${th} text-right`}>Тоо</th>
           <th className={`${th} text-right`}>{sale ? "Нэгж үнэ" : "Тариф"}</th>
           {!sale && <th className={th} title="Аль олголтын мөрөөс хасагдав">Падан</th>}
-          <th className={`${th} text-right`}>{sale ? "Нийт олгогдсон" : "Гадаа үлдсэн"}</th>
+          <th className={`${th} text-right`}>{sale ? "Нийт олгогдсон" : "Түрээсэнд үлдсэн"}</th>
         </tr></thead>
         <tbody>
           {sec.lines.map((ln) => {
@@ -743,7 +749,7 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
     }));
     if (!lines.length) { toast("Буцаах тоо оруулна уу", "err"); return; }
     for (const r of rows.filter((r) => r.ret > 0)) {
-      if (r.ret > r.qty) { toast(`${r.material}: гадаа байгаагаас их байна`, "err"); return; }
+      if (r.ret > r.qty) { toast(`${r.material}: түрээсэнд байгаагаас их байна`, "err"); return; }
       if (r.repair + r.writeoff > r.ret) { toast(`${r.material}: засвар + акт нь буцаалтаас их байна`, "err"); return; }
     }
     setBusy(true);
@@ -780,7 +786,7 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
                   <b className="text-[15.5px] text-ink block leading-tight">{r.material}</b>
                   <span className="text-[12.5px] text-t2">
                     <span className="pill-grey !py-0 mr-1.5">{r.grade}</span>
-                    гадаа <b className="tabular-nums">{fmt(r.qty)}</b>ш
+                    түрээсэнд <b className="tabular-nums">{fmt(r.qty)}</b>ш
                   </span>
                 </div>
                 <input type="number" inputMode="numeric" min={0} max={r.qty} placeholder="0"
@@ -804,8 +810,8 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
                   </button>
                   <span className={`ml-auto text-[12.5px] tabular-nums ${
                         over ? "text-danger font-semibold" : "text-t2"}`}>
-                    {over ? `гадаа байгаагаас ${fmt(ret - r.qty)}ш их`
-                          : `${fmt(r.qty - ret)}ш гадаа үлдэнэ`}
+                    {over ? `түрээсэнд байгаагаас ${fmt(ret - r.qty)}ш их`
+                          : `${fmt(r.qty - ret)}ш түрээсэнд үлдэнэ`}
                   </span>
                 </div>
               )}

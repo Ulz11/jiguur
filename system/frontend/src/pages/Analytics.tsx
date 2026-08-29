@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, useToast, Prog, Refreshing } from "../ui";
 import { useLive } from "../lib/live";
+import { rowClickProps } from "../lib/rowClick";
+import { materialHref } from "../lib/links";
 
 /** Материалын ашигт байдал + мөнгөний урсгалын прогноз. */
 export default function Analytics() {
@@ -52,6 +55,7 @@ export default function Analytics() {
 const utilWord = (p: number) => (p < 20 ? "бага" : p < 50 ? "дунд" : "хэвийн");
 
 function Materials({ d, busy, months, setMonths }: any) {
+  const nav = useNavigate();
   if (!d) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
   const t = d.totals;
   const worst = d.rows.filter((r: any) => r.utilization < 20 && r.idle_value > 0).slice(0, 3);
@@ -93,14 +97,23 @@ function Materials({ d, busy, months, setMonths }: any) {
       {worst.length > 0 && (
         <div className="card p-4 mb-4" style={{ borderTop: "2px solid #C9363B" }}>
           <b className="text-[13.5px] text-ink">Хамгийн бага ашиглалттай:</b>
+          {/* Нэр нь мухардмал текст байв — материал бүр өөрийн хуудастай */}
           <span className="text-[13px] text-t2">
-            {" "}{worst.map((r: any) => `${r.material} (${r.utilization}% · ${sayaFmt(r.idle_value)}₮ хэвтэж байна)`).join(" · ")}
+            {worst.map((r: any, i: number) => (
+              <span key={r.material_id}>
+                {i > 0 && " · "}
+                <Link to={materialHref(r.material_id)} className="font-semibold text-ink hover:underline">
+                  {r.material}
+                </Link>
+                {` (${r.utilization}% · ${sayaFmt(r.idle_value)}₮ хэвтэж байна)`}
+              </span>
+            ))}
           </span>
         </div>
       )}
 
       <div className="card overflow-x-auto">
-        <table className="w-full min-w-[920px]">
+        <table className="w-full min-w-[980px]">
           <thead><tr>
             <th className="th">Материал</th>
             <th className="th text-right">Эзэмшиж буй</th>
@@ -110,10 +123,15 @@ function Materials({ d, busy, months, setMonths }: any) {
             <th className="th text-right">{months} сарын орлого</th>
             <th className="th text-right">Өгөөж</th>
             <th className="th text-right">Жилээр</th>
+            <th className="th"></th>
           </tr></thead>
           <tbody>
             {d.rows.map((r: any) => (
-              <tr key={r.material_id}>
+              /* Агуулахын жагсаалттай ИЖИЛ дүрэм: мөр бүхэлдээ материалын
+                 дэлгэрэнгүй рүү — «энэ хэв хэнд байна» гэдгийг эндээс шууд. */
+              <tr key={r.material_id} className="cursor-pointer hover:bg-canvas transition group"
+                  {...rowClickProps(() => nav(materialHref(r.material_id)),
+                    `${r.material} — ашиглалт ${r.utilization}%, дэлгэрэнгүй нээх`, "row")}>
                 <td className="td"><b className="text-ink">{r.material}</b>
                   <span className="block text-xs text-t3">{r.category}
                     {r.in_repair > 0 && <span className="text-warn"> · засварт {r.in_repair}</span>}</span></td>
@@ -140,6 +158,7 @@ function Materials({ d, busy, months, setMonths }: any) {
                   </b>
                 </td>
                 <td className="td text-right tabular-nums text-t2">{r.annual_yield}%</td>
+                <td className="td text-t3 group-hover:text-ink transition" aria-hidden="true">→</td>
               </tr>
             ))}
           </tbody>

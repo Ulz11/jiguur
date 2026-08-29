@@ -33,7 +33,9 @@ const ScopeCtx = createContext<{ scope: string; setScope: (s: string) => void }>
 export const useScope = () => useContext(ScopeCtx);
 
 const NAV = [
-  { to: "/", label: "Дашбоард", icon: "▦" },
+  /* Цэсний нэр = хуудасны гарчиг = дээд мөрийн байршил: НЭГ хуудас НЭГ нэртэй.
+     («Дашбоард» гэж зөвхөн энд бичигдэж, бусад гурван газар «Удирдлагын төв» байв.) */
+  { to: "/", label: "Удирдлагын төв", icon: "▦" },
   { to: "/contracts", label: "Гэрээнүүд", icon: "▤" },
   { to: "/clients", label: "Харилцагч", icon: "◉" },
   { to: "/collections", label: "Авлага цуглуулах", icon: "☎", hide: "factory" },

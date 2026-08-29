@@ -1,11 +1,12 @@
 import { useId, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { useLive } from "../lib/live";
 import { nextSort, ariaSort, sortByNumber, type SortState } from "../lib/sort";
+import { clientHref } from "../lib/links";
 
 const today = () => new Date().toISOString().slice(0, 10);
 /** «9911-2233» → «tel:99112233» — зай, зураас утасны програмыг төөрөгдүүлнэ. */
@@ -23,7 +24,6 @@ export default function Collections() {
      залгах вэ» гэсэн нэг асуултад хариулдаг тул эрэмбэ нь ХООСОН байж болохгүй. */
   const [sort, setSort] = useState<SortState<SortKey>>({ key: "overdue", dir: "desc" });
   const toast = useToast();
-  const nav = useNavigate();
 
   const load = () => api("/api/collections").then(setD).catch((e) => toast(e.message, "err"));
   /** Фонд шинэчлэх — эргэлдэгч гаргахгүй, алдааг чимээгүй залгина. */
@@ -63,8 +63,8 @@ export default function Collections() {
     <div>
       <div className="dashboard-header">
         <div>
-          <div className="dashboard-kicker">АВЛАГА ЦУГЛУУЛАЛТ <span>•</span> {d.rows.length} ХАРИЛЦАГЧ</div>
-          <h1 className="dashboard-title">Авлага цуглуулалт</h1>
+          <div className="dashboard-kicker">АВЛАГА ЦУГЛУУЛАХ <span>•</span> {d.rows.length} ХАРИЛЦАГЧ</div>
+          <h1 className="dashboard-title">Авлага цуглуулах</h1>
           <p className="dashboard-subtitle">Хэнд хэзээ залгах, хэн юу амласныг нэг дэлгэцээс.</p>
         </div>
       </div>
@@ -120,8 +120,11 @@ export default function Collections() {
             {rows.map((r: any) => (
               <tr key={r.client_id} className="hover:bg-canvas transition">
                 <td className="td">
-                  <button className="font-bold text-ink hover:underline text-left"
-                          onClick={() => nav(`/clients/${r.client_id}`)}>{r.client}</button>
+                  {/* Нэр нь ӨӨРИЙН баганадаа зогсож байгаа тул холбоос:
+                      залгах хүн профайл руу нь шууд орж түүхийг нь хардаг. */}
+                  <Link to={clientHref(r.client_id)} className="font-bold text-ink hover:underline">
+                    {r.client}
+                  </Link>
                   {/* Энэ бол залгах жагсаалт — дугаар нь дарахад залгадаг байх
                       ёстой. Отгоо дугаарыг гараар хуулж бичихээ болино. */}
                   <span className="block text-xs text-t3">

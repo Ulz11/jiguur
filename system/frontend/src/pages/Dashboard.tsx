@@ -5,6 +5,7 @@ import { Spinner, Prog, useToast, ConfirmModal, Refreshing } from "../ui";
 import { useScope } from "../App";
 import { useLive } from "../lib/live";
 import { rowClickProps } from "../lib/rowClick";
+import { clientHref, contractHref, contractsHref, notificationHref } from "../lib/links";
 import { invoiceLabel } from "../lib/invoice";
 import { dueLabel, todayIso } from "../lib/schedule";
 import RevChart from "../components/RevChart";
@@ -107,7 +108,7 @@ export default function Dashboard() {
               touch ? "flex-wrap items-center py-3.5" : "items-center py-3"}`}>
           {/* Мөр дарагддаг — гараар ч дарагдана (Tab → Enter) */}
           <div className={`min-w-0 cursor-pointer ${touch ? "flex-1 min-w-[170px]" : ""}`}
-               {...rowClickProps(() => nav(`/contracts/${p.contract_id}`),
+               {...rowClickProps(() => nav(contractHref(p.contract_id)),
                                  `Гэрээ №${p.contract_no} · ${p.client} — нээх`, "link")}>
             <b className={`text-ink font-semibold block ${touch ? "text-[15.5px] leading-tight" : "text-[13.5px]"}`}>
               {p.client} — №{p.contract_no}
@@ -139,22 +140,22 @@ export default function Dashboard() {
         <h3 className="font-bold text-ink text-[17px]">Буцаалт хүлээж буй гэрээ</h3>
         {!!outQueue?.length && (
           <span className="pill-grey">
-            {fmt(outQueue.reduce((s: number, c: any) => s + c.qty_out, 0))} ш гадаа
+            {fmt(outQueue.reduce((s: number, c: any) => s + c.qty_out, 0))} ш түрээсэнд
           </span>
         )}
       </div>
       {outQueue === null && <p className="text-t3 text-sm py-4">Ачаалж байна…</p>}
-      {outQueue?.length === 0 && <p className="text-t3 text-sm py-4">Гадаа байгаа материал алга.</p>}
+      {outQueue?.length === 0 && <p className="text-t3 text-sm py-4">Түрээсэнд байгаа материал алга.</p>}
       {outQueue?.map((c: any) => (
-        <button key={c.id} className="work-row" onClick={() => nav(`/contracts/${c.id}`)}
-                aria-label={`Гэрээ №${c.no} · ${c.client} — ${fmt(c.qty_out)}ш гадаа, нээх`}>
+        <button key={c.id} className="work-row" onClick={() => nav(contractHref(c.id))}
+                aria-label={`Гэрээ №${c.no} · ${c.client} — ${fmt(c.qty_out)}ш түрээсэнд, нээх`}>
           <div className="min-w-0">
             <b className="text-[15px] text-ink font-semibold block truncate">{c.client}</b>
             <span className="text-[12.5px] text-t2">№{c.no} · {c.start_date}-с</span>
           </div>
           <div className="ml-auto text-right shrink-0">
             <b className="text-[17px] tabular-nums text-ink leading-none">{fmt(c.qty_out)}</b>
-            <span className="block text-[12px] text-t3 mt-1">ширхэг гадаа</span>
+            <span className="block text-[12px] text-t3 mt-1">ширхэг түрээсэнд</span>
           </div>
         </button>
       ))}
@@ -165,15 +166,17 @@ export default function Dashboard() {
     <div className="card p-5">
       <h3 className="font-bold text-ink text-[15.5px] mb-3">Мэдэгдэл</h3>
       {notes.length === 0 && <p className="text-t3 text-sm py-4">Одоогоор мэдэгдэл алга. 🙌</p>}
-      {notes.map((n: any, i: number) => (
-        /* Гэрээ рүү аваачдаг мэдэгдэл нь гараар ч дарагдана; аваачдаггүй
-           мэдэгдэл фокус татахгүй — хоосон зогсоол үлдээхгүй. */
+      {notes.map((n: any, i: number) => {
+        /* Мэдэгдэл бүр ХААШАА аваачихаа мэднэ: гэрээтэй бол гэрээ рүү, эс
+           бөгөөс төрлийнхөө хуудас руу (зээл → Зээл, амлалт → Авлага
+           цуглуулах, бартер → Бартер). Даргад хаалттай хуудас руу холбоос
+           үүсэхгүй — тэр мөр зүгээр л уншигдана. */
+        const to = notificationHref(n, u?.role);
+        return (
         <div key={i}
-             {...(n.contract_id
-               ? rowClickProps(() => nav(`/contracts/${n.contract_id}`), `${n.title} — гэрээг нээх`, "link")
-               : {})}
+             {...(to ? rowClickProps(() => nav(to), `${n.title} — нээх`, "link") : {})}
              className={`flex gap-3 py-3 border-b border-sunken last:border-0 items-start -mx-2 px-2 rounded-lg transition ${
-               n.contract_id ? "cursor-pointer hover:bg-canvas" : ""}`}>
+               to ? "cursor-pointer hover:bg-canvas" : ""}`}>
           <div className={`w-8 h-8 rounded-[10px] grid place-items-center shrink-0 text-sm ${
             n.level === "danger" ? "bg-danger-50 text-danger" :
             n.level === "warn" ? "bg-warn-50 text-warn" : "bg-brand-50 text-brand-ink"}`}>
@@ -184,7 +187,8 @@ export default function Dashboard() {
             <span className="text-[12.5px] text-t2">{n.sub}</span>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 
@@ -215,7 +219,7 @@ export default function Dashboard() {
         <div>
           <div className="dashboard-kicker">ӨДРИЙН АЖИЛ <span>•</span> АМЬД</div>
           <h1 className="dashboard-title">Өнөөдрийн ажил</h1>
-          <p className="dashboard-subtitle">Ачилтаа баталгаажуулж, гадаа байгаа материалаа хараарай.</p>
+          <p className="dashboard-subtitle">Ачилтаа баталгаажуулж, түрээсэнд байгаа материалаа хараарай.</p>
         </div>
       </div>
       <div className="work-queue">
@@ -277,7 +281,17 @@ export default function Dashboard() {
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Идэвхтэй гэрээ</div>
           <div className="text-[28px] font-extrabold text-ink tabular-nums leading-tight">{k.active_contracts}</div>
-          <div className="mt-2"><span className="pill-blue">{k.ending_soon} нь удахгүй дуусна</span></div>
+          {/* Тоо нь АЛЬ гэрээнүүд болохыг хэлэх ёстой — шүүлтүүр нь хаягаар
+              дамжиж, Гэрээнүүд «Дуусах дөхсөн» дээр нээгдэнэ. */}
+          <div className="mt-2">
+            {k.ending_soon > 0 ? (
+              <Link to={contractsHref("ending")} className="pill-blue hover:underline">
+                {k.ending_soon} нь удахгүй дуусна →
+              </Link>
+            ) : (
+              <span className="pill-blue">{k.ending_soon} нь удахгүй дуусна</span>
+            )}
+          </div>
         </div>
         {scope === "sale" ? (
           <div className="card p-5">
@@ -317,7 +331,7 @@ export default function Dashboard() {
                 <tbody>
                   {overdueList.map((o: any) => (
                     <tr key={o.id} className="cursor-pointer hover:bg-canvas"
-                        {...rowClickProps(() => nav(`/contracts/${o.contract_id}`),
+                        {...rowClickProps(() => nav(contractHref(o.contract_id)),
                           `${o.client} — ${money(o.remaining)}, ${o.days_overdue} хоног хэтэрсэн, гэрээ №${o.contract_no} нээх`,
                           "row")}>
                       <td className="td">
@@ -327,7 +341,11 @@ export default function Dashboard() {
                           Гэрээ №{o.contract_no} · {o.due_date}-нд төлөгдөх ёстой байсан
                         </span>
                       </td>
-                      <td className="td">{o.client}</td>
+                      {/* Мөр нь ГЭРЭЭ рүү; харилцагчийн нэр ӨӨРИЙН баганадаа
+                          зогсож байгаа тул профайл руугаа очно. */}
+                      <td className="td" onClick={(e) => e.stopPropagation()}>
+                        <Link to={clientHref(o.client_id)} className="text-ink hover:underline">{o.client}</Link>
+                      </td>
                       <td className="td text-right tabular-nums font-bold text-danger">{money(o.remaining)}</td>
                       <td className="td text-right"><span className="pill-red tabular-nums">{o.days_overdue} хоног</span></td>
                     </tr>
@@ -351,7 +369,7 @@ export default function Dashboard() {
         </p>
         {schedule.length === 0 ? (
           <p className="text-t3 text-sm py-4">
-            Хүлээгдэж буй төлбөр алга — идэвхтэй түрээсийн гэрээн дээр бараа гадаа гарахад энд гарч ирнэ.
+            Хүлээгдэж буй төлбөр алга — идэвхтэй түрээсийн гэрээн дээр бараа түрээсэнд гарахад энд гарч ирнэ.
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -364,12 +382,14 @@ export default function Dashboard() {
               <tbody>
                 {schedule.map((s: any) => (
                   <tr key={s.contract_id} className="cursor-pointer hover:bg-canvas"
-                      {...rowClickProps(() => nav(`/contracts/${s.contract_id}`),
+                      {...rowClickProps(() => nav(contractHref(s.contract_id)),
                         `${s.client} — ${s.expected_date}-нд ойролцоогоор ${money(s.projected_amount)}, гэрээ №${s.contract_no} нээх`,
                         "row")}>
                     <td className="td"><b className="text-ink tabular-nums">{s.expected_date}</b>
                       <span className="block text-xs text-t3">{dueLabel(s.expected_date, today)} · {s.cycle_label}</span></td>
-                    <td className="td">{s.client}</td>
+                    <td className="td" onClick={(e) => e.stopPropagation()}>
+                      <Link to={clientHref(s.client_id)} className="text-ink hover:underline">{s.client}</Link>
+                    </td>
                     <td className="td text-t2">№{s.contract_no}</td>
                     {/* ≈ нь энэ тоо ТООЦООЛСОН гэдгийг нүдэнд шууд хэлнэ */}
                     <td className="td text-right tabular-nums font-bold text-ink"
@@ -424,8 +444,7 @@ export default function Dashboard() {
         <div className="card p-5">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-bold text-ink text-[15.5px]">Зээлийн ойрын төлөлт</h3>
-            <button className="text-[12.5px] text-brand-ink font-semibold cursor-pointer"
-                    onClick={() => nav("/loans")}>Бүгд →</button>
+            <Link to="/loans" className="text-[12.5px] text-brand-ink font-semibold hover:underline">Бүгд →</Link>
           </div>
           {(d.loans_upcoming || []).length === 0 && <p className="text-t3 text-sm py-4">Идэвхтэй зээл алга.</p>}
           {(d.loans_upcoming || []).map((l: any, i: number) => (

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, money, sayaFmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Empty, Refreshing, useToast } from "../ui";
 import { rowClickProps } from "../lib/rowClick";
+import { contractFilterFrom, contractHref, type ContractFilter } from "../lib/links";
 import { useScope } from "../App";
 
 /** Түрээс/Худалдаа — хуудсын хамгийн эхний, хамгийн том шийдвэр. */
@@ -12,7 +13,11 @@ export default function Contracts() {
   const { scope, setScope } = useScope();
   const [rows, setRows] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const [filter, setFilter] = useState("all");
+  const [params] = useSearchParams();
+  const stateParam = params.get("state");
+  /* Дашбоардаас «3 нь удахгүй дуусна» дарж ирэхэд ЯГ тэр гурав нээгдэнэ —
+     шүүлтүүрийг гараар хайж олох шаардлагагүй. */
+  const [filter, setFilter] = useState(() => contractFilterFrom(stateParam));
   const [q, setQ] = useState("");
   const nav = useNavigate();
   const toast = useToast();
@@ -30,6 +35,7 @@ export default function Contracts() {
       .finally(() => { if (live) setBusy(false); });
     return () => { live = false; };
   }, [scope]);
+  useEffect(() => { setFilter(contractFilterFrom(stateParam)); }, [stateParam]);
   if (!rows) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
 
   // «Хуучин үлдэгдэл» (OB-) гэрээнүүд жагсаалтыг дүүргэхгүйн тулд тусдаа шүүлтүүрт
@@ -39,7 +45,7 @@ export default function Contracts() {
   const cnt = (f: string) => rows.filter((c) => match(c, f)).length;
   const shown = rows.filter((c) => match(c, filter))
     .filter((c) => !q || c.client.toLowerCase().includes(q.toLowerCase()) || c.no.includes(q));
-  const FILTERS: [string, string][] = [
+  const FILTERS: [ContractFilter, string][] = [
     ["all", "Идэвхтэй бүгд"], ["active", "Хэвийн"], ["ending", "Дуусах дөхсөн"],
     ["overdue", "Хэтэрсэн"], ["closed", "Хаагдсан"], ["opening", "Хуучин үлдэгдэл"],
   ];
@@ -49,12 +55,13 @@ export default function Contracts() {
 
   return (
     <Refreshing busy={busy}>
-      <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
+      <div className="dashboard-header">
         <div>
-          <h1 className="text-2xl font-extrabold text-ink tracking-tight">Гэрээнүүд</h1>
-          <p className="text-t2 text-[13.5px] mt-0.5">Бүх түрээс, худалдааны гэрээ нэг дор.</p>
+          <div className="dashboard-kicker">ГЭРЭЭНҮҮД <span>•</span> {cnt("all")} ИДЭВХТЭЙ</div>
+          <h1 className="dashboard-title">Гэрээнүүд</h1>
+          <p className="dashboard-subtitle">Бүх түрээс, худалдааны гэрээ нэг дор.</p>
         </div>
-        {u?.role !== "factory" && <Link to="/contracts/new" className="btn-primary">+ Шинэ гэрээ</Link>}
+        {u?.role !== "factory" && <Link to="/contracts/new" className="btn-primary command-action">+ Шинэ гэрээ</Link>}
       </div>
 
       {/* Түрээс/Худалдаа нь топбарын баруун дээд буланд, хуудаснаасаа тусдаа
@@ -102,7 +109,7 @@ export default function Contracts() {
               const pct = c.cycle ? (c.cycle.days_done / c.cycle.days_total) * 100 : c.type === "sale" ? 100 : 0;
               return (
                 <tr key={c.id} className="cursor-pointer hover:bg-canvas transition group"
-                    {...rowClickProps(() => nav(`/contracts/${c.id}`),
+                    {...rowClickProps(() => nav(contractHref(c.id)),
                                       `Гэрээ №${c.no} · ${c.client} — нээх`, "row")}>
                   <td className="td">
                     <span className="font-bold text-ink">{c.client}</span>

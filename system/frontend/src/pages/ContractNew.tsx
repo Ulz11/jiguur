@@ -96,7 +96,7 @@ export default function ContractNew() {
   return (
     <div className="max-w-4xl">
       <Link to="/contracts" className="btn-ghost mb-3 inline-flex">← Болих</Link>
-      <h1 className="text-2xl font-extrabold text-ink tracking-tight mb-1">Шинэ гэрээ</h1>
+      <h1 className="text-[22px] font-extrabold text-ink tracking-tight mb-1">Шинэ гэрээ</h1>
       <p className="text-t2 text-[13.5px] mb-5">4 алхам — бүх тооцоо автоматаар.</p>
 
       <div className="flex gap-2 mb-5">

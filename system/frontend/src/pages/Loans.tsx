@@ -53,12 +53,14 @@ export default function Loans() {
 
   return (
     <div>
-      <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
+      <div className="dashboard-header">
         <div>
-          <h1 className="text-2xl font-extrabold text-ink tracking-tight">Зээл / Өглөг</h1>
-          <p className="text-t2 text-[13.5px] mt-0.5">Банк + хувь зээлдүүлэгч — үлдэгдэл, сарын хүү, дараагийн төлөлт.</p>
+          <div className="dashboard-kicker">ЗЭЭЛ / ӨГЛӨГ <span>•</span> {s.active_count} ИДЭВХТЭЙ</div>
+          <h1 className="dashboard-title">Зээл / Өглөг</h1>
+          <p className="dashboard-subtitle">Банк + хувь зээлдүүлэгч — үлдэгдэл, сарын хүү, дараагийн төлөлт.</p>
         </div>
-        <button className="btn-primary" onClick={() => setModal({ kind: "add" })}>+ Шинэ зээл</button>
+        <button className="btn-primary command-action"
+                onClick={() => setModal({ kind: "add" })}>+ Шинэ зээл</button>
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-4 max-sm:grid-cols-1">

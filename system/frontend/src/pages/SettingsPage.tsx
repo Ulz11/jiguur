@@ -22,8 +22,13 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-extrabold text-ink tracking-tight mb-1">Тохиргоо</h1>
-      <p className="text-t2 text-[13.5px] mb-5">Зэрэглэл, каталог, үнэ, системийн суурь утгууд.</p>
+      <div className="dashboard-header">
+        <div>
+          <div className="dashboard-kicker">ТОХИРГОО <span>•</span> {materials.length} МАТЕРИАЛ · {grades.length} ЗЭРЭГЛЭЛ</div>
+          <h1 className="dashboard-title">Тохиргоо</h1>
+          <p className="dashboard-subtitle">Зэрэглэл, каталог, үнэ, системийн суурь утгууд.</p>
+        </div>
+      </div>
 
       <div className="grid grid-cols-[1fr_1.8fr] gap-4 max-lg:grid-cols-1 items-start">
         <div className="space-y-4">

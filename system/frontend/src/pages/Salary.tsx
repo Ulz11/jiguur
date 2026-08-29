@@ -4,6 +4,7 @@ import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt, ConfirmModa
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { empBody, type EmployeeBody } from "../lib/employee";
+import { rowClickProps } from "../lib/rowClick";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const TYPE_LABEL: Record<string, string> = { main: "Үндсэн", contract: "Гэрээт", daily: "Өдрийн" };
@@ -39,12 +40,13 @@ export default function Salary() {
 
   return (
     <div>
-      <div className="flex items-end justify-between gap-4 mb-4 flex-wrap">
+      <div className="dashboard-header">
         <div>
-          <h1 className="text-2xl font-extrabold text-ink tracking-tight">Цалин</h1>
-          <p className="text-t2 text-[13.5px] mt-0.5">Үндсэн ба гэрээт — сард 2 удаа (15/15), өдрийн ажилтан — ажилласан өдрөөр.</p>
+          <div className="dashboard-kicker">ЦАЛИН <span>•</span> {emps.length} АЖИЛТАН</div>
+          <h1 className="dashboard-title">Цалин</h1>
+          <p className="dashboard-subtitle">Үндсэн ба гэрээт — сард 2 удаа (15/15), өдрийн ажилтан — ажилласан өдрөөр.</p>
         </div>
-        <div className="flex gap-2.5">
+        <div className="flex gap-2.5 command-action">
           <button className="btn-secondary" onClick={() => setModal({ kind: "emp" })}>+ Ажилтан</button>
           <button className="btn-primary" onClick={() => setModal({ kind: "run" })}>Цалин бодох</button>
         </div>
@@ -136,7 +138,10 @@ export default function Salary() {
             <tbody>
               {runs.map((r) => (
                 <Fragment key={r.id}>
-                  <tr className="cursor-pointer hover:bg-canvas" onClick={() => setOpen(open === r.id ? null : r.id)}>
+                  <tr className="cursor-pointer hover:bg-canvas" aria-expanded={open === r.id}
+                      {...rowClickProps(() => setOpen(open === r.id ? null : r.id),
+                        `${r.period} · ${r.half}-р хагас — задаргааг ${open === r.id ? "хаах" : "нээх"}`,
+                        "row")}>
                     <td className="td"><b className="text-ink">{r.period}</b>
                       <span className="block text-xs text-t3">{r.half}-р хагас · {r.items.length} хүн</span></td>
                     <td className="td text-right tabular-nums">{money(r.total_base)}</td>
