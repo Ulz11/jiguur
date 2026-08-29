@@ -72,10 +72,12 @@ def export_report(months: int = 6, db: Session = Depends(get_db), user=Depends(g
     ws2.column_dimensions["A"].width = 32
 
     ws3 = wb.create_sheet("Зээл")
-    ws3.append(["Зээлдүүлэгч", "Үндсэн дүн", "Үлдэгдэл", "Хүү %/сар", "Сарын төлбөр"])
-    from ..services.loans import loan_balance, monthly_due
+    ws3.append(["Зээлдүүлэгч", "Үндсэн дүн", "Нэмэлт олголт", "Үлдэгдэл",
+                "Хүү %/сар", "Сарын хүү", "Сарын төлөлт"])
+    from ..services.loans import loan_balance, monthly_due, topup_total
     for l in db.query(models.Loan).filter_by(status="active").all():
-        ws3.append([l.name, l.principal, loan_balance(l), l.monthly_rate, monthly_due(l)])
+        ws3.append([l.name, l.principal, topup_total(l), loan_balance(l),
+                    l.monthly_rate, monthly_due(l), l.monthly_payment or 0])
     ws3.column_dimensions["A"].width = 32
 
     return Response(_xlsx(wb), media_type=XLSX_MIME,

@@ -160,16 +160,19 @@ def cash_forecast(db: Session, today: date | None = None):
     # Зээлийн төлөлт (3 сар урагш)
     monthly_loan = 0.0
     for l in db.query(models.Loan).filter(models.Loan.status == "active").all():
-        due = loans_svc.monthly_due(l)
+        # Гэрээгээр тохирсон сарын төлөлт байвал мөнгө ТЭР дүнгээр гарна; үгүй бол
+        # хуучин конвенцоор сарын хүүгээр (Зээл хуудсын ойрын төлөлттэй нэг эх сурвалж).
+        due = loans_svc.planned_due(l)
         if due <= 0:
             continue
+        label = f"{l.name} · " + ("сарын төлөлт" if (l.monthly_payment or 0) > 0 else "хүү")
         monthly_loan += due
         d = loans_svc.next_due_date(l, today)
         for _ in range(3):
             b = bucket_for(d)
             if b:
                 b["outflow"] += due
-                b["items_out"].append({"label": f"{l.name} · хүү", "date": str(d), "amount": round(due)})
+                b["items_out"].append({"label": label, "date": str(d), "amount": round(due)})
             y, m = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
             import calendar
             d = date(y, m, min(d.day, calendar.monthrange(y, m)[1]))

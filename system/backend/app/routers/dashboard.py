@@ -136,7 +136,11 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
             notifications.insert(0, {
                 "kind": "loan", "level": "warn",
                 "title": f"{u_['name']} — зээлийн төлөлт {left} хоногийн дараа",
-                "sub": f"{u_['amount']:,.0f}₮ · сарын хүү {u_['rate']}%"})
+                # Гэрээгээр тохирсон сарын төлөлттэй бол дүн нь тэр — «сарын хүү»
+                # гэж нэрлэвэл өөр тоог өөр нэрээр уншуулна.
+                "sub": (f"{u_['amount']:,.0f}₮ · тохирсон сарын төлөлт"
+                        if u_.get("planned")
+                        else f"{u_['amount']:,.0f}₮ · сарын хүү {u_['rate']}%")})
 
     # Зогсонги бартер хөрөнгө — их мөнгө хөдөлгөөнгүй хэвтэж байвал сануулна
     from .barter import STALE_DAYS

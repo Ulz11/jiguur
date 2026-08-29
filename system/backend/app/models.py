@@ -263,6 +263,9 @@ class Loan(Base):
     start_date: Mapped[date] = mapped_column(Date)
     note: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(12), default="active")  # active | closed
+    # Гэрээгээр тохирсон САРЫН ТӨЛӨЛТ (үндсэн+хүү нийлсэн дүн). 0 = тохироогүй →
+    # ойрын төлөлтийн тооцоо хуучин конвенцоороо сарын хүүг харуулна.
+    monthly_payment: Mapped[float] = mapped_column(Float, default=0)
 
     payments: Mapped[list["LoanPayment"]] = relationship(back_populates="loan")
 
@@ -273,7 +276,8 @@ class LoanPayment(Base):
     loan_id: Mapped[int] = mapped_column(ForeignKey("loans.id"))
     date: Mapped[date] = mapped_column(Date)
     amount: Mapped[float] = mapped_column(Float)
-    part: Mapped[str] = mapped_column(String(10), default="interest")  # interest | principal
+    # interest | principal | topup («topup» = НЭМЭЛТ ОЛГОЛТ, үлдэгдлийг ӨСГӨНӨ)
+    part: Mapped[str] = mapped_column(String(10), default="interest")
     note: Mapped[str] = mapped_column(Text, default="")
 
     loan: Mapped["Loan"] = relationship(back_populates="payments")

@@ -5,13 +5,30 @@ from sqlalchemy.orm import Session
 from .. import models
 
 
+def topup_total(loan: models.Loan) -> float:
+    """Нэмэлт олголтуудын нийлбэр — нэг гэрээн дээр дахин авсан мөнгө."""
+    return sum(p.amount for p in loan.payments if p.part == "topup")
+
+
 def loan_balance(loan: models.Loan) -> float:
-    """Үлдэгдэл = үндсэн дүн − үндсэн төлөлтүүд (хүү үлдэгдлийг бууруулахгүй)."""
-    return loan.principal - sum(p.amount for p in loan.payments if p.part == "principal")
+    """Үлдэгдэл = үндсэн дүн + нэмэлт олголтууд − үндсэн төлөлтүүд.
+
+    Хүүгийн төлөлт үлдэгдлийг бууруулахгүй; нэмэлт олголт нь эсрэгээрээ ӨСГӨНӨ.
+    """
+    return (loan.principal + topup_total(loan)
+            - sum(p.amount for p in loan.payments if p.part == "principal"))
 
 
 def monthly_due(loan: models.Loan) -> float:
+    """Сарын ХҮҮ = ОДООГИЙН үлдэгдэл × хүү%. Хагас сарын пропорц тооцдоггүй тул
+    нэмэлт олголт хийсэн даруйд хүү нь өссөн үлдэгдлээрээ бодогдоно."""
     return loan_balance(loan) * loan.monthly_rate / 100
+
+
+def planned_due(loan: models.Loan) -> float:
+    """Ойрын төлөлтөд ХАРАГДАХ дүн: гэрээгээр тохирсон сарын төлөлт байвал түүгээр,
+    үгүй бол хуучин конвенцоор сарын хүүгээр."""
+    return loan.monthly_payment if (loan.monthly_payment or 0) > 0 else monthly_due(loan)
 
 
 def next_due_date(loan: models.Loan, today: date) -> date:
@@ -35,8 +52,9 @@ def summary(db: Session, today: date | None = None):
     burden = sum(monthly_due(l) for l in loans)
     upcoming = sorted(
         [{"loan_id": l.id, "name": l.name, "rate": l.monthly_rate,
-          "amount": round(monthly_due(l)), "due": str(next_due_date(l, today))}
-         for l in loans if monthly_due(l) > 0],
+          "amount": round(planned_due(l)), "planned": (l.monthly_payment or 0) > 0,
+          "due": str(next_due_date(l, today))}
+         for l in loans if planned_due(l) > 0],
         key=lambda x: x["due"])
     return {"total_debt": round(total_debt), "monthly_burden": round(burden),
             "active_count": len(loans), "upcoming": upcoming}

@@ -170,3 +170,137 @@ def test_delete_loan_payment(client, as_role):
     assert r.status_code == 200
     assert r.json()["balance"] == 1_000_000
     assert all(p["id"] != pid for p in r.json()["payments"])
+
+
+# ---------- Нэмэлт олголт (topup) ----------
+# Дүрэм: нэмэлт олголт нь үлдэгдлийг ӨСГӨНӨ. Хүү нь энэ модулийн хэвшсэн
+# конвенцоор ОДООГИЙН үлдэгдэл × сарын хүү — тиймээс олголт хийсэн даруйд
+# (хагас сарын пропорцгүйгээр) сарын хүү нь өссөн үлдэгдлээр бодогдоно.
+
+def test_topup_increases_balance_and_interest():
+    from app.services import loans as L
+    from app import models
+
+    loan = models.Loan(name="Хувь зээлдүүлэгч", principal=100_000_000, monthly_rate=2.0,
+                       start_date=date(2026, 3, 14))
+    loan.payments = []
+    assert L.loan_balance(loan) == 100_000_000
+    loan.payments.append(models.LoanPayment(date=date(2026, 5, 1), amount=50_000_000, part="topup"))
+    assert L.loan_balance(loan) == 150_000_000
+    assert L.monthly_due(loan) == 150_000_000 * 0.02      # 3.0 сая — өссөн үлдэгдлээр
+    # үндсэн төлөлт нь олголтын дараа ч үлдэгдлийг бууруулна
+    loan.payments.append(models.LoanPayment(date=date(2026, 6, 1), amount=20_000_000, part="principal"))
+    assert L.loan_balance(loan) == 130_000_000
+
+
+def test_topup_api_rides_the_same_history(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h, principal=1_000_000)["id"]
+    r = client.post(f"/api/loans/{lid}/payments", headers=h,
+                    json={"date": iso(3), "amount": 400_000, "part": "topup", "note": "нэмэлт"})
+    assert r.status_code == 200, r.text
+    assert r.json()["balance"] == 1_400_000
+    assert r.json()["topup_total"] == 400_000
+    row = next(x for x in client.get("/api/loans", headers=h).json()["loans"] if x["id"] == lid)
+    assert row["balance"] == 1_400_000
+    assert [p["part"] for p in row["payments"]] == ["topup"]
+    assert row["monthly_due"] == 1_400_000 * 0.02
+
+
+def test_topup_on_closed_loan_rejected(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h)["id"]
+    client.patch(f"/api/loans/{lid}", headers=h, json={"status": "closed"})
+    r = client.post(f"/api/loans/{lid}/payments", headers=h,
+                    json={"date": iso(1), "amount": 100_000, "part": "topup"})
+    assert r.status_code == 400
+    assert "хаагдсан" in r.json()["detail"].lower()
+
+
+def test_topup_amount_must_be_positive(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h)["id"]
+    assert client.post(f"/api/loans/{lid}/payments", headers=h,
+                       json={"date": iso(1), "amount": 0, "part": "topup"}).status_code == 400
+
+
+def test_topup_row_edits_and_deletes_like_a_payment(client, as_role):
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h)["id"]                       # 1,000,000
+    r0 = client.post(f"/api/loans/{lid}/payments", headers=h,
+                     json={"date": iso(5), "amount": 300_000, "part": "topup"}).json()
+    pid = r0["payments"][0]["id"]
+    assert r0["balance"] == 1_300_000
+    r = client.patch(f"/api/loans/{lid}/payments/{pid}", headers=h,
+                     json={"date": iso(5), "amount": 500_000, "part": "topup"})
+    assert r.status_code == 200
+    assert r.json()["balance"] == 1_500_000
+    r2 = client.delete(f"/api/loans/{lid}/payments/{pid}", headers=h)
+    assert r2.status_code == 200
+    assert r2.json()["balance"] == 1_000_000
+
+
+def test_deleting_topup_that_was_already_repaid_is_refused(client, as_role):
+    """Олголт 500,000 → нийт 1.5 сая, үүнээс 1.2 саяг үндсэнд төлсөн.
+    Олголтыг устгавал үлдэгдэл сөрөг болно — тиймээс хориглоно."""
+    h = as_role("sanhuu")
+    lid = _mk_loan(client, h)["id"]
+    r0 = client.post(f"/api/loans/{lid}/payments", headers=h,
+                     json={"date": iso(9), "amount": 500_000, "part": "topup"}).json()
+    tid = r0["payments"][0]["id"]
+    client.post(f"/api/loans/{lid}/payments", headers=h,
+                json={"date": iso(4), "amount": 1_200_000, "part": "principal"})
+    r = client.delete(f"/api/loans/{lid}/payments/{tid}", headers=h)
+    assert r.status_code == 400
+    assert client.get("/api/loans", headers=h).json()
+    row = next(x for x in client.get("/api/loans", headers=h).json()["loans"] if x["id"] == lid)
+    assert row["balance"] == 300_000                      # юу ч устаагүй
+
+
+# ---------- Төлөвлөсөн сарын төлөлт ----------
+
+def test_monthly_payment_persists_from_post_patch_and_get(client, as_role):
+    h = as_role("sanhuu")
+    r = client.post("/api/loans", headers=h, json={
+        "name": "Төлөвлөгөөт", "kind": "bank", "principal": 10_000_000,
+        "monthly_rate": 1.5, "start_date": iso(20), "monthly_payment": 900_000})
+    assert r.status_code == 200, r.text
+    lid = r.json()["id"]
+    assert r.json()["monthly_payment"] == 900_000
+    r2 = client.patch(f"/api/loans/{lid}", headers=h, json={"monthly_payment": 1_250_000})
+    assert r2.status_code == 200
+    assert r2.json()["monthly_payment"] == 1_250_000
+    row = next(x for x in client.get("/api/loans", headers=h).json()["loans"] if x["id"] == lid)
+    assert row["monthly_payment"] == 1_250_000
+    assert row["monthly_due"] == 150_000                  # хүү нь ХЭВЭЭР (10 сая × 1.5%)
+    assert client.patch(f"/api/loans/{lid}", headers=h,
+                        json={"monthly_payment": -5}).status_code == 400
+
+
+def test_upcoming_uses_monthly_payment_when_set(client, as_role):
+    """Дашбоардын «Зээлийн ойрын төлөлт» — төлөвлөсөн дүн байвал түүгээр,
+    байхгүй бол хуучин конвенцоор (сарын хүү)."""
+    h = as_role("sanhuu")
+    # Дашбоард ойрын 5-ыг л харуулдаг тул өнөөдөр төлөгдөх зээл үүсгэнэ (жагсаалтын эхэнд).
+    lid = client.post("/api/loans", headers=h, json={
+        "name": "Ойрын төлөлт тест", "kind": "private", "principal": 20_000_000,
+        "monthly_rate": 3.0, "start_date": iso(0)}).json()["id"]
+    d = client.get("/api/dashboard", headers=h).json()
+    row = next(u for u in d["loans_upcoming"] if u["loan_id"] == lid)
+    assert row["amount"] == 600_000                       # 20 сая × 3% — хуучин зан төлөв
+    client.patch(f"/api/loans/{lid}", headers=h, json={"monthly_payment": 2_500_000})
+    d2 = client.get("/api/dashboard", headers=h).json()
+    row2 = next(u for u in d2["loans_upcoming"] if u["loan_id"] == lid)
+    assert row2["amount"] == 2_500_000
+    assert row2["planned"] is True
+
+
+def test_forecast_uses_monthly_payment_when_set(client, as_role):
+    h = as_role("sanhuu")
+    f0 = client.get("/api/reports/forecast", headers=h).json()["monthly_loan_due"]
+    lid = client.post("/api/loans", headers=h, json={
+        "name": "Прогноз тест", "kind": "bank", "principal": 1_000_000,
+        "monthly_rate": 1.0, "start_date": iso(2)}).json()["id"]
+    client.patch(f"/api/loans/{lid}", headers=h, json={"monthly_payment": 500_000})
+    f1 = client.get("/api/reports/forecast", headers=h).json()["monthly_loan_due"]
+    assert round(f1 - f0) == 500_000                      # 10,000₮ хүү биш, 500,000₮ төлөлт
