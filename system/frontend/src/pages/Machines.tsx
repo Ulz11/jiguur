@@ -3,6 +3,7 @@ import { api, money, sayaFmt, user } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty, InlineEdit, ConfirmModal, Receipt } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
+import { rowClickProps } from "../lib/rowClick";
 import { usePdf } from "../lib/docs";
 import { billableJobs, billTotal, type MachineLogRow } from "../lib/machine";
 
@@ -75,16 +76,32 @@ export default function Machines() {
 
       <div className="grid grid-cols-3 gap-4 mb-4 max-sm:grid-cols-1">
         {d.machines.map((m: any) => (
-          <button key={m.id} onClick={async () => setSel(await api(`/api/machines/${m.id}/logs`))}
-            className={`card p-5 text-left transition hover:-translate-y-0.5 hover:shadow-lg ${
+          <div key={m.id}
+            {...rowClickProps(async () => setSel(await api(`/api/machines/${m.id}/logs`)),
+                              `${m.name} — бичилтүүдийг нээх`)}
+            className={`card p-5 text-left transition cursor-pointer hover:-translate-y-0.5 hover:shadow-lg ${
               sel?.id === m.id ? "!border-brand ring-4 ring-brand-50" : ""} ${m.active ? "" : "opacity-75"}`}>
-            <div className="flex items-center justify-between mb-2 gap-2">
+            <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
               <b className="text-ink text-[15px]">{m.name}</b>
-              {/* Зогссон машин жагсаалтын сүүлд ирдэг (сервер эрэмбэлнэ) ба
-                  тэмдэглэгээтэй — тоо нь хэвээр харагдана, шинэ бичилт л хаагдана. */}
-              <span className={m.active ? "pill-grey" : "pill-amber"}>
-                {m.active ? `${m.log_count} бичилт` : "Зогссон"}
-              </span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* Нэхэмжлэл гаргах зам нүд дотроо ч бий — доод «Нэхэмжлэлүүд»
+                    хэсэг рүү гүйлгэлгүйгээр шууд. Зогссон машины өнгөрсөн ажлыг
+                    нэхэмжлэх нь хэвийн тул идэвхгүй үед ч харагдана. */}
+                <button className="btn-ghost btn-row"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const s = await api(`/api/machines/${m.id}/logs`);
+                          setSel(s);
+                          setModal({ kind: "invoice", machine: s });
+                        }}>
+                  Нэхэмжлэл үүсгэх
+                </button>
+                {/* Зогссон машин жагсаалтын сүүлд ирдэг (сервер эрэмбэлнэ) ба
+                    тэмдэглэгээтэй — тоо нь хэвээр харагдана, шинэ бичилт л хаагдана. */}
+                <span className={m.active ? "pill-grey" : "pill-amber"}>
+                  {m.active ? `${m.log_count} бичилт` : "Зогссон"}
+                </span>
+              </div>
             </div>
             <div className="flex gap-5">
               <div><div className="text-[12px] text-t3 font-bold uppercase">Орлого</div>
@@ -95,7 +112,7 @@ export default function Machines() {
                 <div className={`font-extrabold tabular-nums ${m.net >= 0 ? "text-ink" : "text-danger"}`}
                      title={money(m.net)}>{sayaFmt(m.net)}₮</div></div>
             </div>
-          </button>
+          </div>
         ))}
         {d.machines.length === 0 && <div className="col-span-3"><Empty title="Машин бүртгэгдээгүй" /></div>}
       </div>
