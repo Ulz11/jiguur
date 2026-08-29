@@ -7,8 +7,11 @@ import { formDirty } from "../lib/dirty";
 import { useLive } from "../lib/live";
 import { nextSort, ariaSort, sortByNumber, type SortState } from "../lib/sort";
 import { clientHref } from "../lib/links";
+import { todayIso } from "../lib/schedule";
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
+// хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
+const today = () => todayIso();
 /** «9911-2233» → «tel:99112233» — зай, зураас утасны програмыг төөрөгдүүлнэ. */
 const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;
 const KINDS: [string, string][] = [["call", "Утсаар"], ["visit", "Уулзсан"],

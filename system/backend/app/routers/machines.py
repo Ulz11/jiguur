@@ -14,9 +14,16 @@ from ..services import audit, pdfmachine
 
 router = APIRouter(prefix="/api")
 
-# Log бичих, засах, нэхэмжлэх гаргах — гурван рольд адилхан нээлттэй (машин
-# ӨӨРӨӨ үүсгэх/зогсоох нь менежерийнх).
+# Log БИЧИХ — гурван рольд нээлттэй. Дарга өдрийн ажлаа өөрөө бүртгэдэг
+# (Системийн зураглал: ачилт/буцаалт/агуулах/механизм нь түүний талбай) ба
+# ажлын дүнг бүртгэх нь МЭДЭЭЛЭЛ ОРУУЛАХ үйлдэл.
 guard = auth.require_roles("manager", "factory", "finance")
+
+# Бичигдсэнийг ЭРГҮҮЛЭН засах, устгах, нэхэмжлэх баримт гаргах — МӨНГӨНИЙ
+# шийдвэр тул менежер + санхүүчийнх. Гэрээний дэлгэрэнгүй дээр татсан зураас
+# (`seesMoney`) энд ч ижилхэн: дарга машины P&L-ийг хардаггүй, тэгэхээр түүнийг
+# өөрчилдөг товч ч түүнд байх учиргүй. Машин ӨӨРӨӨ үүсгэх/зогсоох нь менежерийнх.
+money_guard = auth.require_roles("manager", "finance")
 
 
 class MachineIn(BaseModel):
@@ -60,11 +67,26 @@ def _safe(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z._-]+", "-", name).strip("-") or "file"
 
 
+def _internal(l: models.MachineLog) -> bool:
+    return l.entry == "job" and l.method == "INTERNAL"
+
+
 def machine_ser(m: models.Machine):
-    income = sum(l.amount for l in m.logs if l.entry == "job")
+    """Машины P&L. ДОТООД ажил ОРЛОГО БИШ.
+
+    Нэхэмжлэх нь дотоод ажлыг хасдаг (`billable_jobs` — өөрийн агуулах руу
+    нэхэмжлэл явдаггүй) байхад картын «Орлого» түүнийг нэмсээр байв: нэг
+    машины ижил ажил хоёр дэлгэц дээр хоёр өөр дүнтэй харагдана. Дотоод
+    ажил алга болох ёсгүй тул ӨӨРИЙН тоогоор тусад нь гарна — кран өөрийн
+    барилга дээр хэдэн өдөр зогссоныг мэдэх нь ч мэдээлэл.
+    """
+    income = sum(l.amount for l in m.logs if l.entry == "job" and not _internal(l))
+    internal = [l for l in m.logs if _internal(l)]
     expense = sum(l.amount for l in m.logs if l.entry == "expense")
     return {"id": m.id, "name": m.name, "note": m.note, "active": m.active,
             "income": round(income), "expense": round(expense),
+            "internal": round(sum(l.amount for l in internal)),
+            "internal_count": len(internal),
             "net": round(income - expense), "log_count": len(m.logs)}
 
 
@@ -130,11 +152,15 @@ def _machine(db: Session, mid: int) -> models.Machine:
 def list_machines(db: Session = Depends(get_db), user=Depends(auth.current_user)):
     # Зогссон машин жагсаалтын СҮҮЛД — өдөр тутмын ажил идэвхтэйгээрээ эхэлнэ.
     machines = sorted(db.query(models.Machine).all(), key=lambda m: (-m.active, m.id))
-    total_in = sum(l.amount for m in machines for l in m.logs if l.entry == "job")
-    total_ex = sum(l.amount for m in machines for l in m.logs if l.entry == "expense")
-    return {"machines": [machine_ser(m) for m in machines],
-            "summary": {"income": round(total_in), "expense": round(total_ex),
-                        "net": round(total_in - total_ex)}}
+    rows = [machine_ser(m) for m in machines]
+    # Хураангуй нь мөр бүрийн НИЙЛБЭР — тусад нь бодвол хоёр дүрэм үүсч,
+    # дотоод ажил нэг газраас хасагдаж нөгөө газраа үлддэг.
+    total_in = sum(r["income"] for r in rows)
+    total_ex = sum(r["expense"] for r in rows)
+    return {"machines": rows,
+            "summary": {"income": total_in, "expense": total_ex,
+                        "internal": sum(r["internal"] for r in rows),
+                        "net": total_in - total_ex}}
 
 
 @router.get("/machines/{mid}/logs")
@@ -202,7 +228,7 @@ def _log(db: Session, lid: int) -> models.MachineLog:
 
 
 @router.patch("/machine-logs/{lid}")
-def patch_log(lid: int, body: LogPatch, db: Session = Depends(get_db), user=Depends(guard)):
+def patch_log(lid: int, body: LogPatch, db: Session = Depends(get_db), user=Depends(money_guard)):
     """Inline засвар — огноо, ажил, харилцагч, дүн, хэлбэр, тэмдэглэл."""
     l = _log(db, lid)
     data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
@@ -220,7 +246,7 @@ def patch_log(lid: int, body: LogPatch, db: Session = Depends(get_db), user=Depe
 
 
 @router.delete("/machine-logs/{lid}")
-def delete_log(lid: int, db: Session = Depends(get_db), user=Depends(guard)):
+def delete_log(lid: int, db: Session = Depends(get_db), user=Depends(money_guard)):
     l = _log(db, lid)
     detail = (f"{l.machine.name} · {l.date} · {l.label or l.entry} · "
               f"{l.client or '—'} · {l.amount:,.0f}₮")
@@ -234,7 +260,7 @@ def delete_log(lid: int, db: Session = Depends(get_db), user=Depends(guard)):
 
 @router.post("/machines/{mid}/invoices")
 def create_invoice(mid: int, body: InvoiceIn, db: Session = Depends(get_db),
-                   user=Depends(guard)):
+                   user=Depends(money_guard)):
     m = _machine(db, mid)
     if body.d_from > body.d_to:
         raise HTTPException(400, "Эхлэх огноо дуусах огнооноос хойш байж болохгүй")
@@ -274,7 +300,7 @@ def invoice_pdf(iid: int, db: Session = Depends(get_db), user=Depends(auth.curre
 
 
 @router.delete("/machine-invoices/{iid}")
-def delete_invoice(iid: int, db: Session = Depends(get_db), user=Depends(guard)):
+def delete_invoice(iid: int, db: Session = Depends(get_db), user=Depends(money_guard)):
     """Баримт устгана — ЛЕДЖЕР биш тул үлдэгдэлд юу ч хөдлөхгүй (log мөрүүд хэвээр)."""
     inv = _invoice(db, iid)
     detail = f"№{inv.no} · {inv.client} · {inv.grand_total:,.0f}₮"

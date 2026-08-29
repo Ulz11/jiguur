@@ -36,3 +36,29 @@ export function formatMoneyInput(s: string | number | null | undefined): string 
   const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return sign + grouped + frac;
 }
+
+/* ---------- Тоо ХАРУУЛАХ (дээрх нь тоо УНШИХ) ---------- */
+
+/** Мянгатыг бүлэглэсэн бүтэн тоо: 1234.6 → "1,235". */
+export const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
+
+/** Товч мөнгө — KPI карт, диаграмын шошго дээр бүтэн ₮ багтдаггүй.
+ *
+ * ГУРВАН ШАТ: бүтэн → сая → ТЭРБУМ. Тэрбумын шат байхгүй байхад компанийн
+ * нийт өглөг «5,130 сая₮» гэж гарч байв — бизнес өөрөө «5.1 тэрбум» гэж
+ * ярьдаг, төслийн баримт бичиг ч тэгж бичдэг. Хүн толгойдоо мянгад хувааж
+ * байж уншдаг тоо нь богино байснаас ямар ч ашиггүй.
+ *
+ * Тэрбум дээр ХОЁР орон (5.13) — нэг орон бол 100 сая тутам үсэрч,
+ * «5.1 тэрбум» гэсэн тоо 50 саяын зөрүүг нууна. Сая дээр НЭГ орон хангалттай.
+ * ЯГ дүнг хаана ч алддаггүй: дуудагч талууд `title={money(n)}`-оор бүтнээр нь
+ * барьдаг (hover дээр бүтэн ₮ гарна).
+ */
+export function sayaFmt(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000_000)
+    return (n / 1_000_000_000).toLocaleString("en-US", { maximumFractionDigits: 2 }) + " тэрбум";
+  if (abs >= 1_000_000)
+    return (n / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 1 }) + " сая";
+  return fmt(n);
+}

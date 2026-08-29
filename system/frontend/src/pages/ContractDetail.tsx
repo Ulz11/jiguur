@@ -12,8 +12,11 @@ import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import { materialSections, MaterialSection } from "../lib/lots";
 import { clientHref, materialHref } from "../lib/links";
+import { todayIso } from "../lib/schedule";
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
+// хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
+const today = () => todayIso();
 /** Хөдөлгөөний нэр — мөрөн дээр ч, дуудагдах нэрэнд ч НЭГ эх сурвалж. */
 const mvName = (t: string) => (t === "ISSUE" ? "Ачилт" : t === "RETURN" ? "Буцаалт" : "Акт");
 

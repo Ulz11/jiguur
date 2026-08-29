@@ -5,6 +5,7 @@ import { user, clearAuth } from "./api";
 import { ToastProvider } from "./ui";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { pageTitle } from "./lib/titles";
+import { todayIso } from "./lib/schedule";
 import ChangePassword from "./components/ChangePassword";
 import brandLogo from "./assets/jiguur-logo.png";
 import brandMark from "./assets/jiguur-mark.png";
@@ -143,7 +144,10 @@ function Shell({ children }: { children: ReactNode }) {
             {collapsed ? "»" : "«"}
           </button>
           <span className="jz-location">
-            ЖИГҮҮР ЗАМ ХХК <i /> {pageTitle(loc.pathname).toUpperCase()} <i /> {new Date().toISOString().slice(0, 10)}
+            {/* `toISOString()` нь UTC — Улаанбаатар (UTC+8) дээр орой 8 цагаас
+                хойш МАРГААШИЙН огноог бичдэг байв. Топбарын огноо бол «өнөөдөр
+                хэд вэ» гэсэн ганц хариу тул ЛОКАЛ хуанлигаар унших ёстой. */}
+            ЖИГҮҮР ЗАМ ХХК <i /> {pageTitle(loc.pathname).toUpperCase()} <i /> {todayIso()}
           </span>
           <div className="jz-topbar-actions">
             {showScope && (

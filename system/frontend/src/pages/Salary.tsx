@@ -5,8 +5,11 @@ import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { empBody, type EmployeeBody } from "../lib/employee";
 import { rowClickProps } from "../lib/rowClick";
+import { todayIso } from "../lib/schedule";
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
+// хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
+const today = () => todayIso();
 const TYPE_LABEL: Record<string, string> = { main: "Үндсэн", contract: "Гэрээт", daily: "Өдрийн" };
 const TYPE_OPTIONS = Object.entries(TYPE_LABEL) as [string, string][];
 

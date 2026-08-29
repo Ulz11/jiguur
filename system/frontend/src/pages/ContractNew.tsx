@@ -4,8 +4,11 @@ import { api, fmt, money } from "../api";
 import { Spinner, useToast, Receipt, ConfirmModal, SubmitButton } from "../ui";
 import { parseMoney, formatMoneyInput } from "../lib/num";
 import { contractDraftDirty } from "../lib/dirty";
+import { todayIso } from "../lib/schedule";
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
+// хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
+const today = () => todayIso();
 
 type Item = { material_id: number; grade_id: number; qty: number; daily_rate: number; unit_price: number };
 

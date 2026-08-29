@@ -3,8 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { api, fmt, user } from "../api";
 import { Spinner, useToast, Receipt } from "../ui";
 import { parseMoney } from "../lib/num";
+import { todayIso } from "../lib/schedule";
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
+// хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
+const today = () => todayIso();
 
 type Row = { material_id: number; grade_id: number; material: string; category: string;
              grade: string; system: number; counted: string };

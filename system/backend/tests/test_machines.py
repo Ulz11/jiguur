@@ -28,9 +28,12 @@ def test_machine_pnl_from_jobs_and_expenses(client, as_role):
     assert r.status_code == 200
     lst = client.get("/api/machines", headers=h).json()
     row = next(x for x in lst["machines"] if x["id"] == m["id"])
-    assert row["income"] == 2_100_000
+    # ДОТООД ажил (300к) ОРЛОГОД ОРОХГҮЙ — өөрийн агуулах руу нэхэмжлэл
+    # явдаггүй тул тэр мөнгө гаднаас ирээгүй. Тусдаа тоогоор харагдана.
+    assert row["income"] == 1_800_000
+    assert row["internal"] == 300_000 and row["internal_count"] == 1
     assert row["expense"] == 200_000
-    assert row["net"] == 1_900_000
+    assert row["net"] == 1_600_000
 
 
 def test_machine_log_validation(client, as_role):
@@ -49,6 +52,61 @@ def test_factory_can_log_but_not_create_machine(client, as_role):
         "date": iso(0), "entry": "expense", "label": "Түлш", "amount": 150_000})
     assert r.status_code == 200
     assert client.post("/api/machines", headers=hd, json={"name": "X"}).status_code == 403
+
+
+def test_factory_cannot_edit_delete_logs_or_touch_invoices(client, as_role):
+    """Дарга БИЧНЭ, гэхдээ БҮРТГЭЛИЙГ ЗАСАХГҮЙ, УСТГАХГҮЙ, НЭХЭМЖЛЭХГҮЙ.
+
+    Өнөөдрийн ажлаа бүртгэх нь түүний ажил (Системийн зураглал: ачилт/буцаалт/
+    агуулах/механизм). Харин бичигдсэн дүнг эргүүлэн засах, устгах, түүнээс
+    нэхэмжлэх баримт гаргах нь МӨНГӨНИЙ шийдвэр — гэрээний дэлгэрэнгүй дээр
+    аль хэдийн татсан зураас (`seesMoney`) энд ч татагдана."""
+    hm, hd = as_role("otgoo"), as_role("darga")
+    m, l = _machine_with_job(client, hm, "Эрхийн кран")
+
+    bad = client.patch(f"/api/machine-logs/{l['id']}", headers=hd, json={"amount": 1})
+    assert bad.status_code == 403 and "эрх байхгүй" in bad.json()["detail"]
+    assert client.delete(f"/api/machine-logs/{l['id']}", headers=hd).status_code == 403
+
+    bad_inv = client.post(f"/api/machines/{m['id']}/invoices", headers=hd, json={
+        "client": "Бат Бүтээц", "d_from": iso(30), "d_to": iso(0)})
+    assert bad_inv.status_code == 403 and "эрх байхгүй" in bad_inv.json()["detail"]
+
+    inv = client.post(f"/api/machines/{m['id']}/invoices", headers=hm, json={
+        "client": "Бат Бүтээц", "d_from": iso(30), "d_to": iso(0)}).json()
+    assert client.delete(f"/api/machine-invoices/{inv['id']}", headers=hd).status_code == 403
+    # Санхүүч нь мөнгөний хүн — түүнд эдгээр хаалттай биш
+    assert client.delete(f"/api/machine-invoices/{inv['id']}",
+                         headers=as_role("sanhuu")).status_code == 200
+
+
+def test_internal_work_is_not_machine_income(client, as_role):
+    """ДОТООД ажил бол ОРЛОГО БИШ — өөрийн агуулах руу нэхэмжлэл явдаггүй.
+
+    Нэхэмжлэх нь дотоодыг хасдаг байхад машины картын «Орлого» түүнийг
+    нэмсээр байв: нэг машины ажил хоёр өөр дүнтэй харагдана. Дотоод ажил
+    алга болох ёсгүй тул ӨӨРИЙН тоогоор тусад нь гарна."""
+    h = as_role("otgoo")
+    m = client.post("/api/machines", headers=h, json={"name": "Дотоодын кран"}).json()
+    for job in [
+        {"date": iso(3), "entry": "job", "label": "Бүтэн өдөр", "client": "Түмэн Хийц",
+         "amount": 1_200_000, "method": "BANK"},
+        {"date": iso(1), "entry": "job", "label": "Дотоод ажил", "client": "Жигүүр Зам",
+         "amount": 300_000, "method": "INTERNAL"},
+    ]:
+        assert client.post(f"/api/machines/{m['id']}/logs", headers=h, json=job).status_code == 200
+
+    row = next(x for x in client.get("/api/machines", headers=h).json()["machines"]
+               if x["id"] == m["id"])
+    assert row["income"] == 1_200_000, "дотоод ажил орлогод орох ёсгүй"
+    assert row["internal"] == 300_000
+    assert row["internal_count"] == 1
+    assert row["net"] == 1_200_000
+
+    # Нэхэмжлэхийн дүрэмтэй ЯГ таарна — хоёр газар нэг тоо
+    inv = client.post(f"/api/machines/{m['id']}/invoices", headers=h, json={
+        "client": "Түмэн Хийц", "d_from": iso(30), "d_to": iso(0)}).json()
+    assert inv["total"] == row["income"]
 
 
 # ---------- Машины насжилт: нэр/тэмдэглэл засах, зогсоох, сэргээх ----------

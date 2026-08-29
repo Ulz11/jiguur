@@ -5,8 +5,11 @@ import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { rowClickProps } from "../lib/rowClick";
 import { partLabel, partSign, balanceAfterRemoving } from "../lib/loan";
+import { todayIso } from "../lib/schedule";
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
+// хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
+const today = () => todayIso();
 const kindLabel = (k: string) => (k === "bank" ? "Банк" : k === "private" ? "Хувь" : "Кредит");
 
 export default function Loans() {

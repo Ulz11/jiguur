@@ -6,8 +6,11 @@ import { formDirty } from "../lib/dirty";
 import { rowClickProps } from "../lib/rowClick";
 import { usePdf } from "../lib/docs";
 import { billableJobs, billTotal, type MachineLogRow } from "../lib/machine";
+import { todayIso } from "../lib/schedule";
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
+// хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
+const today = () => todayIso();
 const monthStart = () => today().slice(0, 8) + "01";
 const JOB_LABELS = ["Бүтэн өдөр", "Хагас өдөр", "Дотоод ажил"];
 const EXP_LABELS = ["Түлш", "Сэлбэг", "Жолоочийн цалин", "Бусад"];
@@ -25,6 +28,19 @@ export default function Machines() {
   const pdf = usePdf();
   const u = user();
   const isManager = u?.role === "manager";
+  /* Үйлдвэрийн дарга нь МЕХАНИЗМЫН хүн — компанийн МӨНГӨНИЙ хүн биш.
+     Гэрээний дэлгэрэнгүй дээр энэ зураас аль хэдийн татагдсан (ContractDetail
+     `seesMoney`) байхад Механизмын хуудас нээлттэй үлдсэн байв: машин бүрийн
+     орлого/зарлага/цэвэр ашиг, бичилт бүрийн дүн («Жолоочийн цалин −1,500,000₮»
+     хүртэл), нэхэмжлэлүүд бүгд харагдана.
+
+     ЗААГ: ӨӨРИЙН ажлыг бүртгэх (огноо, ажлын төрөл, харилцагч, ДҮН) нь
+     МЭДЭЭЛЭЛ ОРУУЛАХ үйлдэл — дарга ажлынхаа үнийг бодит амьдрал дээр өөрөө
+     бичдэг тул нэмэх цонхны дүнгийн талбар ХЭВЭЭР. Харин ХУРИМТЛАГДСАН тоо
+     (P&L, түүхэн бичилтийн дүн, нэхэмжлэл) нь компанийн санхүү — түүнд
+     харагдахгүй. Сервер ч мөн адил: log БИЧИХ нээлттэй, засах/устгах/
+     нэхэмжлэх нь менежер+санхүүчийнх (routers/machines.py `money_guard`). */
+  const seesMoney = u?.role !== "factory";
 
   const load = async () => {
     const lst = await api("/api/machines");
@@ -66,7 +82,11 @@ export default function Machines() {
         <div>
           <div className="dashboard-kicker">МЕХАНИЗМ <span>•</span> {d.machines.length} МАШИН</div>
           <h1 className="dashboard-title">Механизм</h1>
-          <p className="dashboard-subtitle">Автокран г.м. — өдрийн ажил, зарлага, машин бүрийн ашиг.</p>
+          <p className="dashboard-subtitle">
+            {seesMoney
+              ? "Автокран г.м. — өдрийн ажил, зарлага, машин бүрийн ашиг."
+              : "Автокран г.м. — өдрийн ажил, зарлагаа бүртгэнэ."}
+          </p>
         </div>
         {isManager && (
           <button className="btn-secondary command-action"
@@ -87,15 +107,17 @@ export default function Machines() {
                 {/* Нэхэмжлэл гаргах зам нүд дотроо ч бий — доод «Нэхэмжлэлүүд»
                     хэсэг рүү гүйлгэлгүйгээр шууд. Зогссон машины өнгөрсөн ажлыг
                     нэхэмжлэх нь хэвийн тул идэвхгүй үед ч харагдана. */}
-                <button className="btn-ghost btn-row"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const s = await api(`/api/machines/${m.id}/logs`);
-                          setSel(s);
-                          setModal({ kind: "invoice", machine: s });
-                        }}>
-                  Нэхэмжлэл үүсгэх
-                </button>
+                {seesMoney && (
+                  <button className="btn-ghost btn-row"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            const s = await api(`/api/machines/${m.id}/logs`);
+                            setSel(s);
+                            setModal({ kind: "invoice", machine: s });
+                          }}>
+                    Нэхэмжлэл үүсгэх
+                  </button>
+                )}
                 {/* Зогссон машин жагсаалтын сүүлд ирдэг (сервер эрэмбэлнэ) ба
                     тэмдэглэгээтэй — тоо нь хэвээр харагдана, шинэ бичилт л хаагдана. */}
                 <span className={m.active ? "pill-grey" : "pill-amber"}>
@@ -103,15 +125,29 @@ export default function Machines() {
                 </span>
               </div>
             </div>
-            <div className="flex gap-5">
-              <div><div className="text-[12px] text-t3 font-bold uppercase">Орлого</div>
-                <div className="font-extrabold tabular-nums text-money" title={money(m.income)}>{sayaFmt(m.income)}₮</div></div>
-              <div><div className="text-[12px] text-t3 font-bold uppercase">Зарлага</div>
-                <div className="font-extrabold tabular-nums text-danger" title={money(m.expense)}>{sayaFmt(m.expense)}₮</div></div>
-              <div><div className="text-[12px] text-t3 font-bold uppercase">Цэвэр</div>
-                <div className={`font-extrabold tabular-nums ${m.net >= 0 ? "text-ink" : "text-danger"}`}
-                     title={money(m.net)}>{sayaFmt(m.net)}₮</div></div>
-            </div>
+            {seesMoney ? (
+              <>
+                <div className="flex gap-5">
+                  <div><div className="text-[12px] text-t3 font-bold uppercase">Орлого</div>
+                    <div className="font-extrabold tabular-nums text-money" title={money(m.income)}>{sayaFmt(m.income)}₮</div></div>
+                  <div><div className="text-[12px] text-t3 font-bold uppercase">Зарлага</div>
+                    <div className="font-extrabold tabular-nums text-danger" title={money(m.expense)}>{sayaFmt(m.expense)}₮</div></div>
+                  <div><div className="text-[12px] text-t3 font-bold uppercase">Цэвэр</div>
+                    <div className={`font-extrabold tabular-nums ${m.net >= 0 ? "text-ink" : "text-danger"}`}
+                         title={money(m.net)}>{sayaFmt(m.net)}₮</div></div>
+                </div>
+                {/* Дотоод ажил ОРЛОГОД ОРООГҮЙ (нэхэмжлэх ч түүнийг хасдаг) —
+                    гэхдээ алга болох ёсгүй: кран өөрийн барилга дээр хэдэн
+                    өдөр зогссон нь ч мэдээлэл. Тиймээс бүдэг, тусдаа мөр. */}
+                {m.internal_count > 0 && (
+                  <div className="text-[12px] text-t3 mt-2" title={money(m.internal)}>
+                    Дотоод ажил {m.internal_count}ш · {sayaFmt(m.internal)}₮ — орлогод ороогүй
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-[12.5px] text-t2">Өдрийн ажил, зарлагаа энд бүртгэнэ.</div>
+            )}
           </div>
         ))}
         {d.machines.length === 0 && <div className="col-span-3"><Empty title="Машин бүртгэгдээгүй" /></div>}
@@ -154,50 +190,69 @@ export default function Machines() {
               )}
             </div>
           </div>
-          <table className="w-full min-w-[820px]">
+          {/* Даргад: мөр бүр ХЭВЭЭР харагдана (өөрийн бүртгэсэн ажлаа шалгах
+              ёстой) ч ДҮНГИЙН багана огт байхгүй — багана нь хоосон нүд болж
+              «энд ямар нэг тоо байгаа» гэж заадаггүй. Засварын ✎, устгалын ✕
+              ч алга: сервер тэднийг 403-оор хаадаг тул үргэлж унадаг товч
+              харуулах нь худал амлалт. */}
+          <table className={`w-full ${seesMoney ? "min-w-[820px]" : "min-w-[620px]"}`}>
             <thead><tr>
               <th className="th">Огноо</th><th className="th">Юу</th><th className="th">Хэн / Хаана</th>
-              <th className="th text-right">Дүн</th><th className="th">Хэлбэр</th><th className="th"></th>
+              {seesMoney && <th className="th text-right">Дүн</th>}
+              <th className="th">Хэлбэр</th>
+              {seesMoney && <th className="th"></th>}
             </tr></thead>
             <tbody>
               {sel.logs.map((l: any) => (
                 <tr key={l.id}>
                   <td className="td">
-                    <InlineEdit type="date" label="Бүртгэлийн огноо" value={l.date} display={l.date} width="w-36"
-                      confirmText="Огноо солих уу?"
-                      onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { date: v }, "Огноо шинэчлэгдлээ")} />
+                    {seesMoney ? (
+                      <InlineEdit type="date" label="Бүртгэлийн огноо" value={l.date} display={l.date} width="w-36"
+                        confirmText="Огноо солих уу?"
+                        onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { date: v }, "Огноо шинэчлэгдлээ")} />
+                    ) : <span className="tabular-nums">{l.date}</span>}
                   </td>
                   <td className="td">
                     {/* Шошго нь ЧӨЛӨӨТ текст (seed дээр «Сэлбэг — краны гинж» гэх мэт)
                         тул сонголтын жагсаалт болговол бичсэн зүйл нь алдагдана. */}
-                    <InlineEdit label={l.entry === "job" ? "Ажлын төрөл" : "Зарлагын ангилал"}
-                      value={l.label} width="w-40" confirmText="Хадгалах уу?"
-                      display={l.label || "—"}
-                      onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { label: v }, "Бичилт шинэчлэгдлээ")} />
+                    {seesMoney ? (
+                      <InlineEdit label={l.entry === "job" ? "Ажлын төрөл" : "Зарлагын ангилал"}
+                        value={l.label} width="w-40" confirmText="Хадгалах уу?"
+                        display={l.label || "—"}
+                        onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { label: v }, "Бичилт шинэчлэгдлээ")} />
+                    ) : <span>{l.label || "—"}</span>}
                   </td>
                   <td className="td text-t2">
-                    <InlineEdit label="Хэн / хаана" value={l.client} display={l.client || "—"} width="w-48"
-                      confirmText="Хадгалах уу?"
-                      onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { client: v }, "Харилцагч шинэчлэгдлээ")} />
+                    {seesMoney ? (
+                      <InlineEdit label="Хэн / хаана" value={l.client} display={l.client || "—"} width="w-48"
+                        confirmText="Хадгалах уу?"
+                        onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { client: v }, "Харилцагч шинэчлэгдлээ")} />
+                    ) : <span>{l.client || "—"}</span>}
                   </td>
-                  <td className="td text-right tabular-nums" title={money(l.amount)}>
-                    <InlineEdit type="number" right label="Бүртгэлийн дүн" value={l.amount} width="w-28"
-                      confirmText="Дүн солих уу?"
-                      display={(l.entry === "job" ? "+" : "−") + money(l.amount)}
-                      onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { amount: parseMoney(v) }, "Дүн шинэчлэгдлээ")} />
-                  </td>
+                  {seesMoney && (
+                    <td className="td text-right tabular-nums" title={money(l.amount)}>
+                      <InlineEdit type="number" right label="Бүртгэлийн дүн" value={l.amount} width="w-28"
+                        confirmText="Дүн солих уу?"
+                        display={(l.entry === "job" ? "+" : "−") + money(l.amount)}
+                        onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { amount: parseMoney(v) }, "Дүн шинэчлэгдлээ")} />
+                    </td>
+                  )}
                   <td className="td">
-                    {l.entry === "job"
-                      ? <InlineEdit label="Төлбөрийн хэлбэр" value={l.method} display={methodLabel(l.method)}
-                          options={METHODS} width="w-28" confirmText="Хэлбэр солих уу?"
-                          onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { method: v }, "Төлбөрийн хэлбэр шинэчлэгдлээ")} />
-                      : <span className="pill-red">зарлага</span>}
+                    {l.entry !== "job"
+                      ? <span className="pill-red">зарлага</span>
+                      : seesMoney
+                        ? <InlineEdit label="Төлбөрийн хэлбэр" value={l.method} display={methodLabel(l.method)}
+                            options={METHODS} width="w-28" confirmText="Хэлбэр солих уу?"
+                            onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { method: v }, "Төлбөрийн хэлбэр шинэчлэгдлээ")} />
+                        : <span className="text-t2">{methodLabel(l.method)}</span>}
                   </td>
-                  <td className="td text-right">
-                    <button className="w-7 h-7 rounded-lg bg-danger-50 text-danger shrink-0"
-                            title="Бичилт устгах" aria-label={`${l.date} · ${l.label || l.entry} — бичилт устгах`}
-                            onClick={() => setAsk({ kind: "delLog", log: l })}>✕</button>
-                  </td>
+                  {seesMoney && (
+                    <td className="td text-right">
+                      <button className="w-7 h-7 rounded-lg bg-danger-50 text-danger shrink-0"
+                              title="Бичилт устгах" aria-label={`${l.date} · ${l.label || l.entry} — бичилт устгах`}
+                              onClick={() => setAsk({ kind: "delLog", log: l })}>✕</button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -206,7 +261,9 @@ export default function Machines() {
         </div>
       )}
 
-      {sel && (
+      {/* Нэхэмжлэл бол МӨНГӨНИЙ баримт — даргад бүхэл хэсгээрээ хаалттай
+          (сервер ч POST/DELETE-ийг 403-оор буцаана). */}
+      {sel && seesMoney && (
         <div className="card mt-4 overflow-x-auto">
           <div className="flex items-center justify-between px-4 pt-4 pb-1 flex-wrap gap-2">
             <div>

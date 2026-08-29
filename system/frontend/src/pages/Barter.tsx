@@ -5,8 +5,11 @@ import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt } from "../u
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { clientHref } from "../lib/links";
+import { todayIso } from "../lib/schedule";
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
+// хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
+const today = () => todayIso();
 const TYPES = ["Машин", "Байр", "Материал", "Бусад"];
 
 export default function Barter() {

@@ -74,7 +74,9 @@ export async function downloadFile(path: string, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
-export const money = (n: number) => fmt(n) + "₮";
-export const sayaFmt = (n: number) =>
-  Math.abs(n) >= 1_000_000 ? (n / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 1 }) + " сая" : fmt(n);
+/* Тоо форматлах ГАНЦ эх сурвалж нь `lib/num.ts` (тестээр барьцаалагдсан,
+   сүлжээ/localStorage-гүй тул шууд гүйдэг). Энд зөвхөн дахин экспортлоно —
+   хуудсууд өмнөх шигээ `../api`-аас авна. */
+export { fmt, sayaFmt } from "./lib/num";
+import { fmt as _fmt } from "./lib/num";
+export const money = (n: number) => _fmt(n) + "₮";
