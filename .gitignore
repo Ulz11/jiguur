@@ -24,3 +24,6 @@ graphify-out/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Claude Code-ийн түр worktree (бүтэн репогийн хуулбар + .secret агуулдаг)
+.claude/worktrees/

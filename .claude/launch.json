@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "jiguur",
+      "runtimeExecutable": "system/backend/.venv/bin/python",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000", "--app-dir", "system/backend", "--reload", "--reload-dir", "system/backend/app"],
+      "port": 8000
+    },
+    {
+      "name": "jiguur-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "system/frontend", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}
