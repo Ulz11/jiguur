@@ -14,6 +14,7 @@ export const TITLES: Record<string, string> = {
 const DYNAMIC: [RegExp, string][] = [
   [/^\/contracts\/\d+$/, "Гэрээний дэлгэрэнгүй"],
   [/^\/clients\/\d+$/, "Харилцагчийн хуудас"],
+  [/^\/warehouse\/materials\/\d+$/, "Материалын дэлгэрэнгүй"],
 ];
 
 /** Замын гарчиг. Танихгүй бол хоосон — дуудагч тал нөөц нэрээ өөрөө тавина. */

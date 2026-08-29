@@ -1,4 +1,5 @@
 """Auth, каталог, зэрэглэл, агуулах, тохиргоо."""
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
@@ -68,6 +69,32 @@ def materials(db: Session = Depends(get_db), user=Depends(auth.current_user)):
     stocks = db.query(models.Stock).all()
     return [serializers.material(m, stocks)
             for m in db.query(models.Material).filter_by(active=1).order_by(models.Material.category, models.Material.name).all()]
+
+
+@router.get("/materials/{mid}")
+def material_page(mid: int, db: Session = Depends(get_db), user=Depends(auth.current_user)):
+    """Нэг материалын дэлгэрэнгүй — агуулахад хэд, гадаа хэн дээр хэд байна.
+
+    ЭРХ: бүх ролид нээлттэй (`/api/stock`, `/api/contracts/{id}`-тэй ижил).
+    Агуулах бол ҮЙЛДВЭРИЙН ДАРГЫН талбай — тэр өдөр бүр энэ хуудсыг унших хүн.
+    Тариф нь мөрөн дээрээ үлдэнэ: гэрээний дэлгэрэнгүйн материалын хүснэгт ч
+    даргад тарифаа харуулдаг (нуудаг нь нэхэмжлэл, төлбөр, барьцаа, авлага).
+    """
+    m = db.get(models.Material, mid)
+    if not m:
+        raise HTTPException(404, "Материал олдсонгүй")
+    # Зөвхөн ЭНЭ материалыг хөдөлгөсөн гэрээнүүд — падангийн алхалт гэрээ бүрийн
+    # бүх хөдөлгөөнийг уншдаг тул хамааралгүй гэрээг оруулах шалтгаангүй.
+    cids = {r[0] for r in db.query(models.Movement.contract_id)
+            .join(models.MovementLine, models.MovementLine.movement_id == models.Movement.id)
+            .filter(models.MovementLine.material_id == mid).distinct().all()}
+    contracts = (db.query(models.Contract).filter(models.Contract.id.in_(cids))
+                 .order_by(models.Contract.start_date).all() if cids else [])
+    return serializers.material_detail(
+        m, contracts,
+        db.query(models.Stock).filter_by(material_id=mid).all(),
+        db.query(models.Grade).order_by(models.Grade.sort).all(),
+        date.today())
 
 
 @router.post("/materials")

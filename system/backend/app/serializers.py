@@ -25,6 +25,116 @@ def material(m: models.Material, stocks: list[models.Stock] | None = None):
     return d
 
 
+MOVEMENT_LIMIT = 20
+
+
+def material_detail(m: models.Material, contracts: list[models.Contract],
+                    stocks: list[models.Stock], grades: list[models.Grade],
+                    today: date, limit: int = MOVEMENT_LIMIT):
+    """Нэг материалын ХУВААРИЛАЛТ — «энэ хэв ХААНА байна вэ?» гэсэн ганц хариу.
+
+    Отгоо агуулахын жагсаалтаас нэг мөр дарахад: агуулахад хэд үлдсэн, гадаа
+    хэд байгаа, гадаа байгаа нь ХЭНД (харилцагч, гэрээ, зэрэглэл, тариф,
+    хэзээнээс) байгааг нэг дэлгэцээс уншина. Өмнө нь энэ хариуг гаргахын тулд
+    гэрээ бүрийг ээлжлэн нээж, толгойдоо нэмдэг байв.
+
+    ХОЁР ӨӨР ЭХ СУРВАЛЖ, ЗӨРӨХ ЁСГҮЙ:
+      · агуулахад — нөөцийн хүснэгт (`Stock.on_hand`);
+      · гадаа     — гэрээ бүр дээрх ПАДАНГИЙН алхалт (`billing.lot_qty_on`),
+                    өөрөөр хэлбэл гэрээний дэлгэрэнгүйн материалын мөр өөрөө.
+    Тиймээс энд ШИНЭ тооцоо байхгүй — байгаа хоёр тоог нэг дор эвлүүлж байна.
+    Худалдсан бараа «гадаа» БИШ (буцаж ирэхгүй) — `contract_row.qty_out`-ийн
+    дүрэмтэй ижил. Баталгаажаагүй ачилт үлдэгдэл хөдөлгөхгүй (падан болоогүй)
+    ч сүүлийн хөдөлгөөнд ХАРАГДАНА — дарга юу хүлээгдэж байгаагаа мэдэх ёстой.
+    """
+    gname = {g.id: g.code for g in grades}
+    gorder = {g.id: (g.sort, g.code) for g in grades}
+    rows = {s.grade_id: s for s in stocks if s.material_id == m.id}
+
+    # ---- ГАДАА: гэрээ бүрийн падангийн үлдэгдэл ----
+    holdings: list[dict] = []
+    out_by_grade: dict[int, float] = {}
+    for c in contracts:
+        if c.type != "rent":
+            continue
+        per: dict[int, dict] = {}
+        for lot in billing.lot_qty_on(c, today):
+            if lot["material_id"] != m.id or lot["qty_left"] <= 0:
+                continue
+            h = per.get(lot["grade_id"])
+            if h is None:
+                h = per[lot["grade_id"]] = {"qty": 0.0, "rates": set(),
+                                            "since": lot["date"], "lots": 0}
+            h["qty"] += lot["qty_left"]
+            h["rates"].add(lot["rate"])
+            h["since"] = min(h["since"], lot["date"])
+            h["lots"] += 1
+        for gid, h in per.items():
+            out_by_grade[gid] = out_by_grade.get(gid, 0.0) + h["qty"]
+            holdings.append({
+                "contract_id": c.id, "contract_no": c.no, "status": c.status,
+                "client_id": c.client_id, "client": c.client.name,
+                "grade_id": gid, "grade": gname.get(gid, "?"),
+                "qty": round(h["qty"], 3),
+                # Нэг гэрээ нэг материалыг ХОЁР өөр тарифаар барьж болно
+                # (дундуур нь үнэ солигдвол) — тариф бүр нь өөрийн падантай.
+                "rates": sorted(h["rates"]), "lots": h["lots"],
+                "since": str(h["since"]), "days": (today - h["since"]).days})
+    holdings.sort(key=lambda h: (gorder.get(h["grade_id"], (99, "")), -h["qty"], h["client"]))
+
+    # ---- ЗЭРЭГЛЭЛ бүрийн эзэмшил ----
+    per_grade = []
+    for gid in sorted(set(rows) | set(out_by_grade), key=lambda g: gorder.get(g, (99, ""))):
+        st = rows.get(gid)
+        on_hand = st.on_hand if st else 0.0
+        out = round(out_by_grade.get(gid, 0.0), 3)
+        per_grade.append({"grade_id": gid, "grade": gname.get(gid, "?"),
+                          "on_hand": on_hand, "out": out,
+                          "in_repair": st.in_repair if st else 0.0,
+                          "written_off": st.written_off if st else 0.0,
+                          "total": round(on_hand + out, 3)})
+
+    # ---- Сүүлийн хөдөлгөөн (бүх гэрээг дамнасан) ----
+    moves = []
+    for c in contracts:
+        for mv in c.movements:
+            for ln in mv.lines:
+                if ln.material_id != m.id:
+                    continue
+                sign = 1 if mv.type == "ISSUE" else -1
+                moves.append({
+                    "id": ln.id, "movement_id": mv.id, "type": mv.type,
+                    "date": str(mv.date), "status": mv.status,
+                    "counted": mv.status == "done", "note": mv.note,
+                    "contract_id": c.id, "contract_no": c.no, "contract_type": c.type,
+                    "client_id": c.client_id, "client": c.client.name,
+                    "grade_id": ln.grade_id, "grade": gname.get(ln.grade_id, "?"),
+                    "qty": ln.qty, "delta": sign * ln.qty,
+                    "return_grade": gname.get(ln.return_grade_id) if ln.return_grade_id else None,
+                    "repair_qty": ln.repair_qty, "writeoff_qty": ln.writeoff_qty,
+                    "_key": (mv.date, mv.id, ln.id or 0)})
+    moves.sort(key=lambda r: r["_key"], reverse=True)
+    total_moves = len(moves)
+    moves = moves[:limit]
+    for r in moves:
+        r.pop("_key")
+
+    on_hand_total = sum(g["on_hand"] for g in per_grade)
+    out_total = sum(g["out"] for g in per_grade)
+    return {"id": m.id, "name": m.name, "category": m.category, "code": m.code,
+            "unit": m.unit, "base_rate": m.base_rate, "repair_fee": m.repair_fee,
+            "active": m.active,
+            "grades": per_grade,
+            "totals": {"on_hand": round(on_hand_total, 3), "out": round(out_total, 3),
+                       "in_repair": sum(g["in_repair"] for g in per_grade),
+                       "written_off": sum(g["written_off"] for g in per_grade),
+                       "total": round(on_hand_total + out_total, 3),
+                       "contracts": len({h["contract_id"] for h in holdings}),
+                       "clients": len({h["client_id"] for h in holdings})},
+            "holdings": holdings,
+            "movements": moves, "movements_total": total_moves}
+
+
 def client_row(c: models.Client, today: date):
     outstanding = penalty = deposit = 0.0
     active = 0

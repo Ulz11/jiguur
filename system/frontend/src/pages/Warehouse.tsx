@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api, fmt, user } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Prog, Receipt, Empty } from "../ui";
 import { parseMoney } from "../lib/num";
+import { rowClickProps } from "../lib/rowClick";
 
 export default function Warehouse() {
   const [d, setD] = useState<any>(null);
@@ -61,10 +62,17 @@ export default function Warehouse() {
               const repair = (m.stock || []).reduce((s: number, x: any) => s + x.in_repair, 0);
               const util = hand + rent ? (rent / (hand + rent)) * 100 : 0;
               return (
-                <tr key={m.id}>
+                /* Мөр бүхэлдээ материалын дэлгэрэнгүй рүү — «энэ хэв хэнд
+                   байна» гэдгийг Отгоо гэрээ бүрийг нээлгүйгээр уншина.
+                   Зэрэглэлийн товч, «Засвар дуусгах» нь мөрөн ДОТРОО өөрийн
+                   үйлдлээ хийсэн хэвээр (товшилтоо мөрөнд өгөхгүй). */
+                <tr key={m.id} className="cursor-pointer hover:bg-canvas transition group"
+                    {...rowClickProps(() => nav(`/warehouse/materials/${m.id}`),
+                      `${m.name} — агуулахад ${fmt(hand)}ш, түрээсэнд ${fmt(rent)}ш, дэлгэрэнгүй нээх`,
+                      "row")}>
                   <td className="td"><b className="text-ink">{m.name}</b>
                     <span className="block text-xs text-t3">{m.category} · тариф {fmt(m.base_rate)}₮ · засвар {fmt(m.repair_fee)}₮/ш</span></td>
-                  <td className="td">
+                  <td className="td" onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-1.5 flex-wrap">
                       {(m.stock || []).map((s: any) => (canAdjust ? (
                         <button key={s.grade_id} title="Тооллогын залруулга"
@@ -90,14 +98,21 @@ export default function Warehouse() {
                   {/* Энэ нүдэнд зураасаас өөр юу ч байхгүй — хувийг нэрлэж өгнө */}
                   <td className="td"><Prog pct={util} label={`Ашиглалт ${Math.round(util)}%`}
                                            color={util > 85 ? "#EF4444" : util > 70 ? "#F5A524" : undefined} /></td>
+                  {/* Мөр дарагддаг гэдгийг ЗӨВХӨН хулгана дээр нь ирэхэд
+                      хэлдэг байвал планшет дээр огт харагдахгүй — тайван
+                      боловч ил сум (Гэрээнүүдийн жагсаалттай ижил). */}
                   <td className="td">
-                    {repair > 0 && canAdjust && (
-                      <button className="btn-ghost btn-row text-money"
-                        onClick={() => {
-                          const s = (m.stock || []).find((x: any) => x.in_repair > 0);
-                          if (s) setRepair({ m, s });
-                        }}>Засвар дуусгах</button>
-                    )}
+                    <div className="flex items-center justify-end gap-2">
+                      {repair > 0 && canAdjust && (
+                        <button className="btn-ghost btn-row text-money"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const s = (m.stock || []).find((x: any) => x.in_repair > 0);
+                            if (s) setRepair({ m, s });
+                          }}>Засвар дуусгах</button>
+                      )}
+                      <span className="text-t3 group-hover:text-ink transition" aria-hidden="true">→</span>
+                    </div>
                   </td>
                 </tr>
               );

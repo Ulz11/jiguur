@@ -20,6 +20,12 @@ describe("pageTitle", () => {
     expect(pageTitle("/clients/7")).toBe("Харилцагчийн хуудас");
   });
 
+  it("материалын дэлгэрэнгүйг дугаараар нь танина", () => {
+    expect(pageTitle("/warehouse/materials/1")).toBe("Материалын дэлгэрэнгүй");
+    // Тооллого нь дугааргүй тул тогтмол гарчигаа хэвээр барина
+    expect(pageTitle("/warehouse/stocktake")).toBe("Тооллого");
+  });
+
   it("«Шинэ гэрээ» нь дугаартай зам биш — тогтмол гарчигаа хадгална", () => {
     expect(pageTitle("/contracts/new")).toBe("Шинэ гэрээ");
   });

@@ -24,6 +24,7 @@ import Reports from "./pages/Reports";
 import Collections from "./pages/Collections";
 import Analytics from "./pages/Analytics";
 import Stocktake from "./pages/Stocktake";
+import MaterialDetail from "./pages/MaterialDetail";
 import Audit from "./pages/Audit";
 import SettingsPage from "./pages/SettingsPage";
 
@@ -194,6 +195,7 @@ const router = createBrowserRouter(
       <Route path="/audit" element={<Shell><Audit /></Shell>} />
       <Route path="/warehouse" element={<Shell><Warehouse /></Shell>} />
       <Route path="/warehouse/stocktake" element={<Shell><Stocktake /></Shell>} />
+      <Route path="/warehouse/materials/:id" element={<Shell><MaterialDetail /></Shell>} />
       <Route path="/barter" element={<Shell><Barter /></Shell>} />
       <Route path="/machines" element={<Shell><Machines /></Shell>} />
       <Route path="/loans" element={<Shell><Loans /></Shell>} />
