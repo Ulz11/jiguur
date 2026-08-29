@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useLayoutEffect, useRef, useId } from "react";
 import { tabbablesIn, trapNext } from "./lib/focus";
+import { editKeyAction } from "./lib/edit";
 
 /* ---------- Toast ---------- */
 const ToastCtx = createContext<(msg: string, kind?: "ok" | "err") => void>(() => {});
@@ -354,7 +355,15 @@ export function Refreshing({ busy, children }: { busy: boolean; children: ReactN
    Хөвөгч талбар нь баруун ирмэгээс давбал зүүн тийшээ эргэж ургана — эс
    бөгөөс гүйлгэх талбай (scrollWidth) өсөж, яг ижил алдаа дахин үүснэ.
    Өндөр нь 46px: мөрийн 14px дүүргэлт дотор багтаж, картын босоо гүйлгэлт
-   үүсгэхгүй. */
+   үүсгэхгүй.
+
+   ГАРЫН ЗАМ (`lib/edit.ts` — DOM-гүй шалгагдана):
+     · Enter (засвар)       → «…солих уу?» гарч ирнэ  — АСУУНА, хадгалахгүй
+     · Enter (баталгаажуулах) → ЯГ тэр чипийг дарна   — хоёр дахь Enter хадгална
+     · Escape (хоёул)       → цуцална
+     · Tab                  → ✓ / ✕ чип рүү (өмнөх зам ХЭВЭЭР)
+   Гараар цуцалсан/хадгалсан үед фокус нүднийхээ товч дээр БУЦАЖ ирнэ (хулганы
+   товшилт үүнийг хөдөлгөхгүй — Отгоо дарсан газраа үлдэнэ). */
 export function InlineEdit({ value, display, onSave, type = "text", suffix = "", confirmText = "Хадгалах уу?", width = "w-24", right, options, label }: {
   value: string | number | null | undefined;
   display?: string;
@@ -377,6 +386,10 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   const [flip, setFlip] = useState(false);
   const anchorRef = useRef<HTMLSpanElement | null>(null);
   const popRef = useRef<HTMLSpanElement | null>(null);
+  const viewRef = useRef<HTMLButtonElement | null>(null);
+  /* ГАРААР гарсан үед л фокусыг товч дээрээ буцаана. Хулганаар ✓ дарсан
+     хүнийг татахгүй — тэр хаана байгаагаа нүдээрээ мэднэ. */
+  const backToView = useRef(false);
   const start = (e: React.MouseEvent) => {
     e.stopPropagation(); setVal(String(value ?? "")); setFlip(false); setMode("edit");
   };
@@ -386,6 +399,21 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
     catch { /* toast нь дуудагч талд */ }
     finally { setBusy(false); }
   };
+  const onKey = (e: { key: string; preventDefault: () => void }) => {
+    const act = editKeyAction(e.key, mode, busy);
+    if (act === "none") return;
+    e.preventDefault();
+    backToView.current = true;             // гарын зам — фокус буцна
+    if (act === "cancel") setMode("view");
+    else if (act === "ask") setMode("confirm");
+    else void commit();
+  };
+  // Засвар хаагдмагц фокус хуудасны эхэнд унах ёсгүй: дарсан нүдэн дээрээ үлдэнэ
+  useEffect(() => {
+    if (mode !== "view" || !backToView.current) return;
+    backToView.current = false;
+    viewRef.current?.focus();
+  }, [mode]);
   const shown = display ?? (value === null || value === undefined || value === "" ? "—" : String(value));
 
   /* Хөвөгч талбар багтах уу? Ойрын гүйлгэдэг өвөг (card.overflow-x-auto) —
@@ -412,7 +440,7 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   // ✎ нь чимэг тул нуугдана — эс бөгөөс уншигч «харандаа» гэж дуудна.
   if (mode === "view") {
     return (
-      <button className="inline-val" onClick={start} title="Дарж засна">
+      <button className="inline-val" ref={viewRef} onClick={start} title="Дарж засна">
         {label && <span className="sr-only">{label}: </span>}
         <span>{shown}{suffix}</span>
         <span className="pen" aria-hidden="true">✎</span>
@@ -432,15 +460,13 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
         {options ? (
           <select autoFocus aria-label={label ? `${label} — шинэ утга` : "Шинэ утга"}
             className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width}`}
-            value={val} onChange={(e) => setVal(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }}>
+            value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={onKey}>
             {options.map(([v, lb]) => <option key={v} value={v}>{lb}</option>)}
           </select>
         ) : (
           <input autoFocus type={type} aria-label={label ? `${label} — шинэ утга` : "Шинэ утга"}
             className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width} ${right ? "text-right" : ""}`}
-            value={val} onChange={(e) => setVal(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }} />
+            value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={onKey} />
         )}
         {/* Баталгаажуулах/цуцлах товчнууд target-sm (36px) — хуруугаар ч оносон дарагдана */}
         {mode === "edit" ? (

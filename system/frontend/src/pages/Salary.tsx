@@ -92,24 +92,27 @@ export default function Salary() {
           бүтэн өргөнд, хэвтээ гүйлгэлтгүй. */}
       <div className="flex flex-col gap-4">
         <div className="card overflow-x-auto">
-          <h3 className="font-bold text-ink text-[15.5px] px-4 pt-4 pb-1">Ажилчид</h3>
+          <h2 className="font-bold text-ink text-[15.5px] px-4 pt-4 pb-1">Ажилчид</h2>
           <table className="w-full min-w-[420px]">
             <thead><tr><th className="th">Нэр</th><th className="th">Төрөл</th>
               <th className="th text-right">Цалин / Өдрийн хөлс</th><th className="th">НДШ</th><th className="th"></th></tr></thead>
             <tbody>
               {emps.map((e) => (
+                /* Мөр бүрийн зогсоол ХЭНИЙХ болохоо өөрөө хэлнэ: «Сарын цалин:
+                   1,500,000₮ · засах» гэж зургаан удаа ижилхэн дуудагдвал
+                   уншигчаар ажилладаг хүн ХЭНИЙ цалинг заасныг мэдэхгүй. */
                 <tr key={e.id}>
                   <td className="td">
-                    <InlineEdit label="Ажилтны нэр" value={e.name} width="w-40" confirmText="Нэр солих уу?"
+                    <InlineEdit label={`${e.name} — нэр`} value={e.name} width="w-40" confirmText="Нэр солих уу?"
                       onSave={(v) => saveEmp(e, { name: v }, "Нэр шинэчлэгдлээ")} />
                     <span className="block text-xs text-t3 mt-0.5">
-                      <InlineEdit label="Албан тушаал" value={e.role_title}
+                      <InlineEdit label={`${e.name} — албан тушаал`} value={e.role_title}
                         display={e.role_title || "албан тушаал…"} width="w-36" confirmText="Хадгалах уу?"
                         onSave={(v) => saveEmp(e, { role_title: v }, "Албан тушаал шинэчлэгдлээ")} />
                     </span>
                   </td>
                   <td className="td">
-                    <InlineEdit label="Ажлын төрөл" value={e.type} display={TYPE_LABEL[e.type]}
+                    <InlineEdit label={`${e.name} — ажлын төрөл`} value={e.type} display={TYPE_LABEL[e.type]}
                       width="w-28" options={TYPE_OPTIONS} confirmText="Төрөл солих уу?"
                       onSave={(v) => saveEmp(e, { type: v },
                         "Төрөл шинэчлэгдлээ — дараагийн бодолт үүгээр бодогдоно")} />
@@ -117,25 +120,28 @@ export default function Salary() {
                   {/* Төрөлдөө тохирох ГАНЦ тоог засна: өдрийнх нь хөлс, бусад нь сарын цалин */}
                   <td className="td text-right tabular-nums font-bold">
                     {e.type === "daily" ? (
-                      <InlineEdit type="number" right label="Өдрийн хөлс" value={e.daily_rate}
+                      <InlineEdit type="number" right label={`${e.name} — өдрийн хөлс`} value={e.daily_rate}
                         display={`${money(e.daily_rate)}/өдөр`} width="w-28" confirmText="Өдрийн хөлс солих уу?"
                         onSave={(v) => saveEmp(e, { daily_rate: parseMoney(v) },
                           "Өдрийн хөлс шинэчлэгдлээ — дараагийн бодолтод тусна")} />
                     ) : (
-                      <InlineEdit type="number" right label="Сарын цалин" value={e.monthly_salary}
+                      <InlineEdit type="number" right label={`${e.name} — сарын цалин`} value={e.monthly_salary}
                         display={money(e.monthly_salary)} width="w-32" confirmText="Цалин солих уу?"
                         onSave={(v) => saveEmp(e, { monthly_salary: parseMoney(v) },
                           "Цалин шинэчлэгдлээ — дараагийн бодолтод тусна")} />
                     )}
                   </td>
                   <td className="td">
-                    <InlineEdit label="НДШ суутгах эсэх" value={e.ndsh ? "1" : "0"}
+                    <InlineEdit label={`${e.name} — НДШ суутгах эсэх`} value={e.ndsh ? "1" : "0"}
                       display={e.ndsh ? "Тийм" : "Үгүй"} width="w-24"
                       options={[["1", "Тийм"], ["0", "Үгүй"]]} confirmText="НДШ солих уу?"
                       onSave={(v) => saveEmp(e, { ndsh: v === "1" },
                         v === "1" ? "НДШ суутгана" : "НДШ суутгахгүй боллоо")} />
                   </td>
+                  {/* Зургаан «Хасах» товч нэг ижил нэртэй байв — уншигч аль
+                      ажилтныг хасах гэж байгааг мэдэхгүй (Механизмын ✕-ийн журам). */}
                   <td className="td"><button className="btn-ghost btn-row"
+                    aria-label={`${e.name} — ажилтныг жагсаалтаас хасах`}
                     onClick={() => setDrop(e)}>Хасах</button></td>
                 </tr>
               ))}
@@ -145,7 +151,7 @@ export default function Salary() {
         </div>
 
         <div className="card overflow-x-auto">
-          <h3 className="font-bold text-ink text-[15.5px] px-4 pt-4 pb-1">Бодолтууд</h3>
+          <h2 className="font-bold text-ink text-[15.5px] px-4 pt-4 pb-1">Бодолтууд</h2>
           <table className="w-full min-w-[480px]">
             <thead><tr><th className="th">Үе</th><th className="th text-right">Нийт</th>
               <th className="th text-right">НДШ</th><th className="th text-right">Гарт олгох</th>

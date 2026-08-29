@@ -124,7 +124,7 @@ export default function ClientProfile() {
         {tab === "overview" && (
           <div className="grid grid-cols-[1.6fr_1fr] gap-6 max-lg:grid-cols-1">
             <div>
-              <h3 className="font-bold text-[14.5px] mb-3.5">Сүүлийн үйл явдлууд</h3>
+              <h2 className="font-bold text-[14.5px] mb-3.5">Сүүлийн үйл явдлууд</h2>
               {d.timeline.length === 0
                 ? <p className="text-t3 text-sm">Түүх хоосон байна.</p>
                 : <TimelineCalendar events={d.timeline} />}
@@ -136,7 +136,7 @@ export default function ClientProfile() {
               {u?.role !== "factory" && (
                 <div className="mb-6">
                   <div className="flex items-center justify-between gap-2 mb-2.5 flex-wrap">
-                    <h3 className="font-bold text-[14.5px]">Хүлээгдэж буй төлбөр</h3>
+                    <h2 className="font-bold text-[14.5px]">Хүлээгдэж буй төлбөр</h2>
                     <span className="pill-amber">төсөөлөл</span>
                   </div>
                   {upcoming.length === 0 ? (
@@ -166,7 +166,7 @@ export default function ClientProfile() {
                   </div>
                 </div>
               )}
-              <h3 className="font-bold text-[14.5px] mb-3.5">Нэхэмжлэлийн байдал</h3>
+              <h2 className="font-bold text-[14.5px] mb-3.5">Нэхэмжлэлийн байдал</h2>
               {d.invoices.slice(0, 6).map((inv: any) => (
                 <div key={inv.id} className="flex items-center justify-between gap-3 py-2.5 border-b border-sunken last:border-0">
                   <div>

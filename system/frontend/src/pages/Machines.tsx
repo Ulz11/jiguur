@@ -3,7 +3,6 @@ import { api, money, sayaFmt, user } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty, InlineEdit, ConfirmModal, Receipt } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
-import { rowClickProps } from "../lib/rowClick";
 import { usePdf } from "../lib/docs";
 import { billableJobs, billTotal, type MachineLogRow } from "../lib/machine";
 import { todayIso } from "../lib/schedule";
@@ -24,6 +23,9 @@ export default function Machines() {
   const [modal, setModal] = useState<any>(null);     // {kind:'job'|'expense'|'add'|'invoice', machine}
   // Уугуул confirm() биш — системийн бусад устгал/төлөв солихтой ижил Modal
   const [ask, setAsk] = useState<any>(null);         // {kind:'delLog'|'retire'|'delInv', …}
+  // Нэхэмжлэлийн товч сервер рүү явж байх хоромд өөрийгөө түгжинэ — хоёр дарвал
+  // хоёр цонх (эсвэл хоёр баримт) төрдөг байв (SubmitButton-ийн журам).
+  const [invBusy, setInvBusy] = useState<number | null>(null);
   const toast = useToast();
   const pdf = usePdf();
   const u = user();
@@ -51,6 +53,12 @@ export default function Machines() {
     }
   };
   useEffect(() => { load(); }, []);
+
+  /** Машины бичилтүүдийг доор задлах — карт ч, нэр ч ЭНЭ ганц замаар очно. */
+  const openLogs = async (id: number) => {
+    try { setSel(await api(`/api/machines/${id}/logs`)); }
+    catch (e: any) { toast(e.message, "err"); }
+  };
 
   // Inline засвар: амжилтгүй бол алдааг toast-оор гаргаж, InlineEdit-д дахин
   // throw хийнэ (тэгснээр засварын горимоос гарахгүй, бичсэн зүйл нь үлдэнэ).
@@ -98,26 +106,41 @@ export default function Machines() {
           «1.4 сая₮» гэсэн тоонууд нугалдаг байв. Хоёр багана = 358px. */}
       <div className="grid grid-cols-3 gap-4 mb-4 max-lg:grid-cols-2 max-sm:grid-cols-1">
         {d.machines.map((m: any) => (
+          /* Карт БҮТНЭЭРЭЭ дарагдсан хэвээр (хулганы хялбар зам) ч ГАРЫН
+             зогсоол нь МАШИНЫ НЭР дээр: `role="button"` хайрцаг өөрийн доторх
+             жинхэнэ товчийг (Нэхэмжлэл үүсгэх) уншигчийн хувьд ЗАЛГИДАГ —
+             нэрлэгдсэн үйлдэл нь нэрээ өөрөө үүрч, товч нь ах дүү болж үлдэнэ. */
           <div key={m.id}
-            {...rowClickProps(async () => setSel(await api(`/api/machines/${m.id}/logs`)),
-                              `${m.name} — бичилтүүдийг нээх`)}
+            onClick={() => openLogs(m.id)}
             className={`card p-5 text-left transition cursor-pointer hover:-translate-y-0.5 hover:shadow-lg ${
               sel?.id === m.id ? "!border-brand ring-4 ring-brand-50" : ""} ${m.active ? "" : "opacity-75"}`}>
             <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-              <b className="text-ink text-[15px]">{m.name}</b>
+              {/* Сонгогдсон карт нь хүрээгээрээ хэлдэг — `aria-pressed` нь ЯГ
+                  тэр төлөвийг уншигчид хэлнэ (хүрээ нь өнгө, энэ нь үг). */}
+              <button type="button" className="text-left text-ink text-[15px] font-bold rounded-[4px] hover:underline"
+                      aria-label={`${m.name} — бичилтүүдийг нээх`}
+                      aria-pressed={sel?.id === m.id}
+                      onClick={(e) => { e.stopPropagation(); openLogs(m.id); }}>
+                {m.name}
+              </button>
               <div className="flex items-center gap-1.5 flex-wrap">
                 {/* Нэхэмжлэл гаргах зам нүд дотроо ч бий — доод «Нэхэмжлэлүүд»
                     хэсэг рүү гүйлгэлгүйгээр шууд. Зогссон машины өнгөрсөн ажлыг
                     нэхэмжлэх нь хэвийн тул идэвхгүй үед ч харагдана. */}
                 {seesMoney && (
-                  <button className="btn-ghost btn-row"
+                  <button className="btn-ghost btn-row" disabled={invBusy !== null}
+                          aria-busy={invBusy === m.id || undefined}
                           onClick={async (e) => {
                             e.stopPropagation();
-                            const s = await api(`/api/machines/${m.id}/logs`);
-                            setSel(s);
-                            setModal({ kind: "invoice", machine: s });
+                            setInvBusy(m.id);
+                            try {
+                              const s = await api(`/api/machines/${m.id}/logs`);
+                              setSel(s);
+                              setModal({ kind: "invoice", machine: s });
+                            } catch (er: any) { toast(er.message, "err"); }
+                            finally { setInvBusy(null); }
                           }}>
-                    Нэхэмжлэл үүсгэх
+                    {invBusy === m.id ? "…" : "Нэхэмжлэл үүсгэх"}
                   </button>
                 )}
                 {/* Зогссон машин жагсаалтын сүүлд ирдэг (сервер эрэмбэлнэ) ба
@@ -159,16 +182,18 @@ export default function Machines() {
         <div className="card overflow-x-auto">
           <div className="flex items-start justify-between px-4 pt-4 pb-1 flex-wrap gap-2">
             <div className="min-w-0">
-              <h3 className="font-bold text-ink text-[15.5px] flex items-center gap-2 flex-wrap">
+              <h2 className="font-bold text-ink text-[15.5px] flex items-center gap-2 flex-wrap">
                 {isManager
                   ? <InlineEdit label="Машины нэр" value={sel.name} width="w-52" confirmText="Нэр солих уу?"
                       onSave={(v) => doPatch(`/api/machines/${sel.id}`, { name: v }, "Нэр шинэчлэгдлээ")} />
                   : <span>{sel.name}</span>}
                 <span className="text-t3 font-medium">— бичилтүүд</span>
                 {!sel.active && <span className="pill-amber">Зогссон</span>}
-              </h3>
+              </h2>
               <div className="flex items-center gap-1.5 text-[12.5px] text-t3 mt-0.5">
-                <span>Тэмдэглэл:</span>
+                {/* Талбарын нэр нь InlineEdit-ийн `label` дээр аль хэдийн бий —
+                    харагдах бичиг нь ХАРЦНЫХ, дахин уншуулбал давхар зарлагдана. */}
+                <span aria-hidden="true">Тэмдэглэл:</span>
                 {isManager
                   ? <InlineEdit label="Машины тэмдэглэл" value={sel.note} display={sel.note || "нэмэх…"}
                       width="w-64" confirmText="Хадгалах уу?"
@@ -210,11 +235,17 @@ export default function Machines() {
               {seesMoney && <th className="th"></th>}
             </tr></thead>
             <tbody>
-              {sel.logs.map((l: any) => (
+              {sel.logs.map((l: any) => {
+                /* Мөр бүр ХЭНИЙХ болохоо өөрөө үүрнэ. Дараалсан зургаан
+                   зогсоол «Бүртгэлийн дүн: 1,500,000₮ · засах» гэж ижилхэн
+                   дуудагдвал уншигчаар ажилладаг хүн АЛЬ бичилтийг заасныг
+                   мэдэхгүй (MaterialLedger-ийн журам: огноо · юу). */
+                const row = `${l.date} · ${l.label || (l.entry === "job" ? "Ажил" : "Зарлага")}`;
+                return (
                 <tr key={l.id}>
                   <td className="td">
                     {seesMoney ? (
-                      <InlineEdit type="date" label="Бүртгэлийн огноо" value={l.date} display={l.date} width="w-36"
+                      <InlineEdit type="date" label={`${row} — огноо`} value={l.date} display={l.date} width="w-36"
                         confirmText="Огноо солих уу?"
                         onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { date: v }, "Огноо шинэчлэгдлээ")} />
                     ) : <span className="tabular-nums">{l.date}</span>}
@@ -223,7 +254,7 @@ export default function Machines() {
                     {/* Шошго нь ЧӨЛӨӨТ текст (seed дээр «Сэлбэг — краны гинж» гэх мэт)
                         тул сонголтын жагсаалт болговол бичсэн зүйл нь алдагдана. */}
                     {seesMoney ? (
-                      <InlineEdit label={l.entry === "job" ? "Ажлын төрөл" : "Зарлагын ангилал"}
+                      <InlineEdit label={`${row} — ${l.entry === "job" ? "ажлын төрөл" : "зарлагын ангилал"}`}
                         value={l.label} width="w-40" confirmText="Хадгалах уу?"
                         display={l.label || "—"}
                         onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { label: v }, "Бичилт шинэчлэгдлээ")} />
@@ -231,14 +262,14 @@ export default function Machines() {
                   </td>
                   <td className="td text-t2">
                     {seesMoney ? (
-                      <InlineEdit label="Хэн / хаана" value={l.client} display={l.client || "—"} width="w-48"
+                      <InlineEdit label={`${row} — хэн / хаана`} value={l.client} display={l.client || "—"} width="w-48"
                         confirmText="Хадгалах уу?"
                         onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { client: v }, "Харилцагч шинэчлэгдлээ")} />
                     ) : <span>{l.client || "—"}</span>}
                   </td>
                   {seesMoney && (
                     <td className="td text-right tabular-nums" title={money(l.amount)}>
-                      <InlineEdit type="number" right label="Бүртгэлийн дүн" value={l.amount} width="w-28"
+                      <InlineEdit type="number" right label={`${row} — дүн`} value={l.amount} width="w-28"
                         confirmText="Дүн солих уу?"
                         display={(l.entry === "job" ? "+" : "−") + money(l.amount)}
                         onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { amount: parseMoney(v) }, "Дүн шинэчлэгдлээ")} />
@@ -248,7 +279,7 @@ export default function Machines() {
                     {l.entry !== "job"
                       ? <span className="pill-red">зарлага</span>
                       : seesMoney
-                        ? <InlineEdit label="Төлбөрийн хэлбэр" value={l.method} display={methodLabel(l.method)}
+                        ? <InlineEdit label={`${row} — төлбөрийн хэлбэр`} value={l.method} display={methodLabel(l.method)}
                             options={METHODS} width="w-28" confirmText="Хэлбэр солих уу?"
                             onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { method: v }, "Төлбөрийн хэлбэр шинэчлэгдлээ")} />
                         : <span className="text-t2">{methodLabel(l.method)}</span>}
@@ -257,12 +288,13 @@ export default function Machines() {
                     <td className="td text-right">
                       {/* 28px байсан — docs/UI-ЗАРЧИМ.md §4: дарагддаг юм 36px-ээс намхан БАЙХГҮЙ */}
                       <button className="w-9 h-9 rounded-lg bg-danger-50 text-danger shrink-0"
-                              title="Бичилт устгах" aria-label={`${l.date} · ${l.label || l.entry} — бичилт устгах`}
+                              title="Бичилт устгах" aria-label={`${row} — бичилт устгах`}
                               onClick={() => setAsk({ kind: "delLog", log: l })}>✕</button>
                     </td>
                   )}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
           {sel.logs.length === 0 && <Empty title="Бичилт алга" sub="Ажил эсвэл зарлага бүртгэвэл энд харагдана." />}
@@ -275,7 +307,7 @@ export default function Machines() {
         <div className="card mt-4 overflow-x-auto">
           <div className="flex items-center justify-between px-4 pt-4 pb-1 flex-wrap gap-2">
             <div>
-              <h3 className="font-bold text-ink text-[15.5px]">Нэхэмжлэлүүд</h3>
+              <h2 className="font-bold text-ink text-[15.5px]">Нэхэмжлэлүүд</h2>
               {/* Энэ бол ТУСДАА баримт: авлагын жагсаалтад ордоггүй, төлбөрийн
                   бодит байдал нь бичилтийн «Хэлбэр» талбар дээр бүртгэгддэг. */}
               <p className="text-[12.5px] text-t3 mt-0.5">Краны ажлын мөрүүдээс гаргасан баримт — авлагын тооцоонд ордоггүй.</p>

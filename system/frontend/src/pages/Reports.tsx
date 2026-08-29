@@ -99,7 +99,7 @@ export default function Reports() {
       <div className="grid grid-cols-12 gap-4 items-start">
         {/* P&L statement */}
         <div className="card p-6 col-span-5 max-lg:col-span-12">
-          <h3 className="font-bold text-ink text-[14px] mb-4 flex items-center gap-2"><span className="cdot" />Ашиг, алдагдлын тайлан</h3>
+          <h2 className="font-bold text-ink text-[14px] mb-4 flex items-center gap-2"><span className="cdot" />Ашиг, алдагдлын тайлан</h2>
           <Sect label="Орлого" />
           <Row label="Түрээсийн орлого" val={p.rent_income} />
           <Row label="Худалдааны орлого" val={p.sale_income} />
@@ -138,7 +138,7 @@ export default function Reports() {
         {/* Cashflow */}
         <div className="card p-6 col-span-7 max-lg:col-span-12">
           <div className="flex items-center justify-between mb-1">
-            <h3 className="font-bold text-ink text-[14px] flex items-center gap-2"><span className="cdot" />Мөнгөн урсгал — сүүлийн 6 сар</h3>
+            <h2 className="font-bold text-ink text-[14px] flex items-center gap-2"><span className="cdot" />Мөнгөн урсгал — сүүлийн 6 сар</h2>
           </div>
           <p className="text-[12px] text-t3 mb-3">Орсон: харилцагчийн төлбөр + механизм · Гарсан: зарлага + хүү + цалин</p>
           <CashBars s={d.series} />

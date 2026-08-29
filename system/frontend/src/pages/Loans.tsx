@@ -131,7 +131,9 @@ export default function Loans() {
                   </td>
                   <td className="td text-right tabular-nums whitespace-nowrap" title={money(l.principal)}
                       onClick={(e) => e.stopPropagation()}>
-                    <InlineEdit type="number" label="Үндсэн дүн" value={l.principal} display={sayaFmt(l.principal) + "₮"}
+                    {/* Мөрийн зогсоол бүр ЯМАР зээлийнх болохоо өөрөө үүрнэ —
+                        «Үндсэн дүн: 250 сая₮ · засах» олон мөрөнд ижилхэн дуудагдана. */}
+                    <InlineEdit type="number" label={`${l.name} — үндсэн дүн`} value={l.principal} display={sayaFmt(l.principal) + "₮"}
                       width="w-28" right confirmText="Үндсэн дүн солих уу?"
                       onSave={(v) => doPatch(`/api/loans/${l.id}`,
                         { principal: parseMoney(v) },
@@ -155,7 +157,7 @@ export default function Loans() {
                     <span className="inline-flex items-center gap-2">
                       <b className="font-bold text-danger">{sayaFmt(l.monthly_due)}₮</b>
                       <span className="text-[12px] text-t3 font-medium">
-                        <InlineEdit type="number" label="Хүүгийн хувь" value={l.monthly_rate} suffix="%/сар"
+                        <InlineEdit type="number" label={`${l.name} — хүүгийн хувь`} value={l.monthly_rate} suffix="%/сар"
                           width="w-16" right confirmText="Хүү солих уу?"
                           onSave={(v) => doPatch(`/api/loans/${l.id}`, { monthly_rate: parseMoney(v) },
                             "Хүү шинэчлэгдлээ — сарын хүү дагаж өөрчлөгдөнө")} />
@@ -166,7 +168,7 @@ export default function Loans() {
                   <td className="td text-right tabular-nums whitespace-nowrap"
                       title={l.monthly_payment ? money(l.monthly_payment) : "Гэрээгээр тохирсон сарын төлөлт"}
                       onClick={(e) => e.stopPropagation()}>
-                    <InlineEdit type="number" label="Сарын төлөлт" value={l.monthly_payment || ""}
+                    <InlineEdit type="number" label={`${l.name} — сарын төлөлт`} value={l.monthly_payment || ""}
                       display={l.monthly_payment ? sayaFmt(l.monthly_payment) + "₮" : "тохироогүй"}
                       width="w-28" right confirmText="Сарын төлөлт хадгалах уу?"
                       onSave={(v) => doPatch(`/api/loans/${l.id}`, { monthly_payment: parseMoney(v) },
@@ -177,8 +179,10 @@ export default function Loans() {
                     {l.status === "active" && (
                       <span className="flex items-center gap-1 justify-end">
                         <button className="btn-ghost btn-row text-money"
+                                aria-label={`${l.name} — төлөлт бүртгэх`}
                                 onClick={(e) => { e.stopPropagation(); setModal({ kind: "pay", loan: l }); }}>Төлөлт</button>
                         <button className="btn-ghost btn-row"
+                                aria-label={`${l.name} — нэмэлт олголт бүртгэх`}
                                 onClick={(e) => { e.stopPropagation(); setModal({ kind: "topup", loan: l }); }}>+ Олголт</button>
                       </span>
                     )}
@@ -193,16 +197,19 @@ export default function Loans() {
                             хэлдэг), хэзээ эхэлсэн, хүүд өнөөдрийг хүртэл хэдийг
                             өгсөн. Гурвуулаа засагдах хэвээр. */}
                         <div className="flex items-center gap-x-5 gap-y-1 flex-wrap text-[13px]">
+                          {/* Харагдах нэр нь ХАРЦНЫХ; уншигчид талбарын нэрийг
+                              InlineEdit-ийн `label` аль хэдийн хэлж байгаа тул
+                              давхар зарлахгүй (aria-hidden). */}
                           <span className="flex items-center gap-1.5">
-                            <span className="text-t3">Төрөл:</span>
-                            <InlineEdit label="Төрөл" value={l.kind} display={kindLabel(l.kind)} width="w-24"
+                            <span className="text-t3" aria-hidden="true">Төрөл:</span>
+                            <InlineEdit label={`${l.name} — төрөл`} value={l.kind} display={kindLabel(l.kind)} width="w-24"
                               options={[["bank", "Банк"], ["private", "Хувь"], ["credit", "Кредит"]]}
                               confirmText="Төрөл солих уу?"
                               onSave={(v) => doPatch(`/api/loans/${l.id}`, { kind: v }, "Төрөл шинэчлэгдлээ")} />
                           </span>
                           <span className="flex items-center gap-1.5">
-                            <span className="text-t3">Эхэлсэн:</span>
-                            <InlineEdit type="date" label="Эхэлсэн огноо" value={l.start_date}
+                            <span className="text-t3" aria-hidden="true">Эхэлсэн:</span>
+                            <InlineEdit type="date" label={`${l.name} — эхэлсэн огноо`} value={l.start_date}
                               display={l.start_date} width="w-36" confirmText="Огноо солих уу?"
                               onSave={(v) => doPatch(`/api/loans/${l.id}`, { start_date: v }, "Эхэлсэн огноо шинэчлэгдлээ")} />
                           </span>
@@ -213,43 +220,47 @@ export default function Loans() {
                             </b>
                           </span>
                           <span className="flex items-center gap-1.5">
-                            <span className="text-t3">Тэмдэглэл:</span>
-                            <InlineEdit label="Тэмдэглэл" value={l.note} display={l.note || "нэмэх…"} width="w-72"
+                            <span className="text-t3" aria-hidden="true">Тэмдэглэл:</span>
+                            <InlineEdit label={`${l.name} — тэмдэглэл`} value={l.note} display={l.note || "нэмэх…"} width="w-72"
                               confirmText="Хадгалах уу?"
                               onSave={(v) => doPatch(`/api/loans/${l.id}`, { note: v }, "Тэмдэглэл шинэчлэгдлээ")} />
                           </span>
                         </div>
                         <button className="btn-ghost btn-row"
+                                aria-label={`${l.name} — зээлийг ${l.status === "active" ? "хаах" : "сэргээх"}`}
                                 onClick={() => setAsk({ kind: "status", loan: l })}>
                           {l.status === "active" ? "Хаах" : "Сэргээх"}
                         </button>
                       </div>
                       {l.payments.length === 0 ? <span className="text-t3 text-[13px]">Төлөлт бүртгэгдээгүй.</span> : (
                         <div className="flex flex-col gap-1.5">
-                          {l.payments.map((p: any) => (
+                          {l.payments.map((p: any) => {
+                            /* Дөрвөн зогсоол дараалан «2026-03-01 · засах»,
+                               «450,000₮ · засах» гэж дуудагдвал уншигчаар
+                               ажилладаг хүн ЮУГ, ХААНААС засаж байгаагаа
+                               мэдэхгүй — мөр бүр зээлээ ба огноогоо үүрнэ. */
+                            const row = `${l.name} · ${p.date}`;
+                            return (
                             <div key={p.id} className="flex items-center gap-3 text-[13px]"
                                  onClick={(e) => e.stopPropagation()}>
-                              {/* Дөрвөн зогсоол дараалан «2026-03-01 · засах»,
-                                  «450,000₮ · засах» гэж дуудагдвал уншигчаар
-                                  ажилладаг хүн ЮУГ засаж байгаагаа мэдэхгүй. */}
-                              <InlineEdit type="date" label="Мөрийн огноо" value={p.date} display={p.date} width="w-32"
+                              <InlineEdit type="date" label={`${row} — огноо`} value={p.date} display={p.date} width="w-32"
                                 confirmText="Огноо солих уу?"
                                 onSave={(v) => savePay(l, p, { date: v })} />
                               {/* Олголт нь ТӨЛӨЛТ БИШ — тэмдэг ба өнгөөр нь тусад нь ялгана */}
                               <span className={p.part === "topup" ? "text-warn font-semibold" : ""}>
                                 <InlineEdit type="number" right
-                                  label={p.part === "topup" ? "Олголтын дүн" : "Төлөлтийн дүн"} value={p.amount}
+                                  label={`${row} — ${p.part === "topup" ? "олголтын дүн" : "төлөлтийн дүн"}`} value={p.amount}
                                   display={partSign(p.part) + money(p.amount)} width="w-28"
                                   confirmText="Дүн солих уу?"
                                   onSave={(v) => savePay(l, p, { amount: parseMoney(v) })} />
                               </span>
-                              <InlineEdit label="Мөрийн төрөл" value={p.part}
+                              <InlineEdit label={`${row} — мөрийн төрөл`} value={p.part}
                                 display={partLabel(p.part)}
                                 options={[["interest", "Хүү"], ["principal", "Үндсэн"], ["topup", "Нэмэлт олголт"]]}
                                 width="w-32"
                                 confirmText="Төрөл солих уу?"
                                 onSave={(v) => savePay(l, p, { part: v })} />
-                              <InlineEdit label={p.part === "topup" ? "Олголтын тэмдэглэл" : "Төлөлтийн тэмдэглэл"}
+                              <InlineEdit label={`${row} — ${p.part === "topup" ? "олголтын тэмдэглэл" : "төлөлтийн тэмдэглэл"}`}
                                 value={p.note}
                                 display={p.note || "тэмдэглэл…"} width="w-40"
                                 confirmText="Хадгалах уу?"
@@ -258,10 +269,11 @@ export default function Loans() {
                                   36px-ээс намхан БАЙХГҮЙ (--target-sm) */}
                               <button className="w-9 h-9 rounded-lg bg-danger-50 text-danger shrink-0 ml-auto"
                                       title="Устгах"
-                                      aria-label={`${p.date} · ${partLabel(p.part)} — устгах`}
+                                      aria-label={`${row} · ${partLabel(p.part)} — устгах`}
                                       onClick={() => setAsk({ kind: "del", loan: l, payment: p })}>✕</button>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>

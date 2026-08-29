@@ -35,7 +35,7 @@ export default function SettingsPage() {
           {/* Зэрэглэл — динамик */}
           <div className="card p-5">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-bold text-ink text-[15.5px]">Зэрэглэл</h3>
+              <h2 className="font-bold text-ink text-[15.5px]">Зэрэглэл</h2>
               <button className="btn-ghost text-brand-ink btn-row" onClick={() => setGradeModal({})}>+ Нэмэх</button>
             </div>
             <p className="text-[12px] text-t3 mb-3">Шинэ, А, В, С… — дуртай хэдэн зэрэглэл нэмнэ. Бараа хүлээж авахдаа дарга сонгоно.</p>
@@ -51,7 +51,7 @@ export default function SettingsPage() {
 
           {/* Суурь тохиргоо */}
           <div className="card p-5">
-            <h3 className="font-bold text-ink text-[15.5px] mb-3.5">Суурь утгууд</h3>
+            <h2 className="font-bold text-ink text-[15.5px] mb-3.5">Суурь утгууд</h2>
             <label className="lbl" htmlFor={`${uid}-company`}>Компанийн нэр</label>
             <input id={`${uid}-company`} className="inp mb-3.5" value={settings.company_name || ""}
                    onChange={(e) => setSettings({ ...settings, company_name: e.target.value })} />
@@ -81,7 +81,7 @@ export default function SettingsPage() {
         {/* Каталог */}
         <div className="card overflow-x-auto">
           <div className="flex items-center justify-between px-4 pt-4 pb-1">
-            <h3 className="font-bold text-ink text-[15.5px]">Материалын каталог</h3>
+            <h2 className="font-bold text-ink text-[15.5px]">Материалын каталог</h2>
             <button className="btn-ghost text-brand-ink btn-row" onClick={() => setMatModal({})}>+ Материал нэмэх</button>
           </div>
           <table className="w-full min-w-[560px]">
