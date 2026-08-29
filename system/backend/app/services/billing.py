@@ -725,13 +725,36 @@ def unapply_movement_stock(db: Session, mv: models.Movement):
 
 # ---------- мэдэгдэл (амьд тооцоолол) ----------
 
-def build_notifications(db: Session, today: date | None = None):
+def pending_shipments(db: Session, scope: str = "all") -> list[models.Movement]:
+    """Баталгаажаагүй ачилтууд — `scope` төрлийн гэрээнийх. Мэдэгдэл ба
+    дашбоардын самбар ХОЁУЛАА эндээс уншина: нэг жагсаалт хоёр газар өөр
+    байвал «3 ачилт хүлээгдэж байна» гэсэн мэдэгдлийн доор 5 мөр гарна."""
+    rows = db.query(models.Movement).filter_by(status="pending", type="ISSUE").all()
+    if scope == "all":
+        return rows
+    return [mv for mv in rows if mv.contract.type == scope]
+
+
+def build_notifications(db: Session, today: date | None = None, scope: str = "all"):
+    """Мэдэгдэл — ЗӨВХӨН `scope` төрлийн гэрээнүүдээс.
+
+    Топбарын Түрээс/Худалдаа шүүлтүүр KPI, хэтэрсэн жагсаалт, насжилтыг
+    шүүдэг байхад мэдэгдэл нь бүх гэрээг зөөсөөр байв: «Худалдаа» гэж шүүсэн
+    хүн худалдаанд огт хамаагүй түрээсийн нэхэмжлэлүүдийг мэдэгдлээс уншдаг.
+    Шүүлтүүр хагас үйлчилбэл шүүлтүүрт итгэхээ болино.
+
+    Энд бүх мэдэгдэл ГЭРЭЭТЭЙ (`contract_id`) тул бүгд шүүгдэнэ. Гэрээний
+    төрөлгүй мэдэгдлүүд (зээл, бартер, амлалт) нь дашбоард дээр нэмэгддэг ба
+    scope-оос хамаардаггүй — тэдэнд түрээс/худалдаа гэсэн харьяалал байхгүй.
+    """
     today = today or date.today()
     notes = []
     contracts = db.query(models.Contract).filter(models.Contract.status == "active").all()
     for c in contracts:
         ensure_invoices(db, c, today)
     for c in contracts:
+        if scope != "all" and c.type != scope:
+            continue
         if c.end_date and c.type == "rent":
             left = (c.end_date - today).days
             if 0 <= left <= 7:
@@ -753,7 +776,7 @@ def build_notifications(db: Session, today: date | None = None):
                               "title": f"{c.client.name} — нэхэмжлэл {inv.no} {days} хоног хэтэрлээ",
                               "sub": f"Үлдэгдэл {invoice_outstanding(inv):,.0f}₮ · алданги {pen:,.0f}₮",
                               "contract_id": c.id, "invoice_id": inv.id})
-    pending = db.query(models.Movement).filter_by(status="pending", type="ISSUE").all()
+    pending = pending_shipments(db, scope)
     for mv in pending:
         notes.append({"kind": "shipment", "level": "info",
                       "title": f"{mv.contract.client.name} — №{mv.contract.no} ачилт хүлээгдэж байна",

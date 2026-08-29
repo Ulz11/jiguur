@@ -706,6 +706,78 @@ def test_dashboard_overdue_list_respects_scope(client, as_role):
                client.get("/api/dashboard?scope=rent", headers=h).json()["overdue_list"])
 
 
+def _contract_type(client, h) -> dict[int, str]:
+    return {c["id"]: c["type"] for c in client.get("/api/contracts", headers=h).json()}
+
+
+def test_dashboard_notifications_respect_scope(client, as_role):
+    """Топбарын шүүлтүүр ХАГАС үйлчилдэг байв: KPI, хэтэрсэн жагсаалт,
+    насжилт нь шүүгдэж байхад Мэдэгдэл нь бүх гэрээг зөөсөөр байлаа. «Худалдаа»
+    гэж шүүсэн Отгоо худалдаанд огт хамаагүй түрээсийн нэхэмжлэл, түрээсийн
+    ачилтыг мэдэгдлээс уншдаг — шүүлтүүрт итгэхээ болино.
+
+    ГЭРЭЭТЭЙ мэдэгдэл (хэтэрсэн, дуусах, хугацаа өнгөрсөн, ачилт) нь шүүгдэнэ;
+    ГЭРЭЭНИЙ ТӨРӨЛГҮЙ нь (зээл, бартер, амлалт) БҮХ scope дээр хэвээр — тэдэнд
+    түрээс/худалдаа гэсэн харьяалал байхгүй тул шүүх зүйл ч алга."""
+    h = as_role("otgoo")
+    types = _contract_type(client, h)
+
+    for scope in ("rent", "sale"):
+        d = client.get(f"/api/dashboard?scope={scope}", headers=h).json()
+        tied = [n for n in d["notifications"] if n.get("contract_id")]
+        assert tied, f"{scope}: гэрээтэй мэдэгдэл огт үлдээгүй бол тест хоосон"
+        assert all(types[n["contract_id"]] == scope for n in tied), \
+            f"{scope}: өөр төрлийн гэрээний мэдэгдэл нэвчлээ"
+
+    # Гэрээний ТӨРӨЛГҮЙ мэдэгдэл — амлалтаа биелүүлээгүй харилцагч. Амлалт нь
+    # ХАРИЛЦАГЧТАЙ холбоотой, гэрээтэй биш: тэр харилцагч түрээс ба худалдаа
+    # хоёуланг нь авдаг байж болно. Тиймээс аль ч шүүлтүүр дээр харагдана.
+    hf = as_role("sanhuu")
+    cid = client.get("/api/collections", headers=hf).json()["rows"][0]["client_id"]
+    assert client.post(f"/api/clients/{cid}/notes", headers=hf, json={
+        "date": iso(5), "kind": "call", "note": "Амлалт",
+        "promise_date": iso(2), "promise_amount": 1_000_000}).status_code == 200
+
+    free = {(n["kind"], n["title"]) for n in
+            client.get("/api/dashboard?scope=all", headers=h).json()["notifications"]
+            if not n.get("contract_id")}
+    assert any(k == "promise_late" for k, _ in free), "гэрээгүй мэдэгдэл үүсээгүй бол тест хоосон"
+    for scope in ("rent", "sale"):
+        got = {(n["kind"], n["title"]) for n in
+               client.get(f"/api/dashboard?scope={scope}", headers=h).json()["notifications"]
+               if not n.get("contract_id")}
+        assert free <= got, f"{scope}: гэрээгүй мэдэгдэл алга болжээ"
+
+
+def test_dashboard_pending_shipments_respect_scope(client, as_role):
+    """Ачилт хүлээгдэж буй самбар нь бүх гэрээний ачилтыг харуулсаар байв.
+    Худалдааны шүүлтүүрт түрээсийн ачилт гарч ирэх нь шүүлтүүрийг худал болгоно."""
+    h = as_role("otgoo")
+    types = _contract_type(client, h)
+
+    all_ = client.get("/api/dashboard?scope=all", headers=h).json()["pending_shipments"]
+    rent = client.get("/api/dashboard?scope=rent", headers=h).json()["pending_shipments"]
+    sale = client.get("/api/dashboard?scope=sale", headers=h).json()["pending_shipments"]
+
+    assert all_, "seed-д хүлээгдэж буй ачилт байх ёстой"
+    assert all(types[p["contract_id"]] == "rent" for p in rent)
+    assert all(types[p["contract_id"]] == "sale" for p in sale)
+    assert {p["id"] for p in rent} | {p["id"] for p in sale} == {p["id"] for p in all_}
+
+
+def test_dashboard_revenue_covers_every_type_at_any_scope(client, as_role):
+    """Орлогын график нь ТӨЛБӨРӨӨС бодогддог ба төлбөр нь гэрээгүй байж болно
+    (`contract_id` nullable — харилцагчийн түвшний төлбөр). Тийм төлбөрийг
+    «түрээс» гэж таамаглаж шүүх нь ЗОХИОМОЛ хариу төрүүлнэ. Тиймээс график
+    scope-ээс үл хамааран БҮХ ТӨРЛИЙГ хамарна — дэлгэц дээр тэрийгээ хэлнэ."""
+    h = as_role("otgoo")
+    base = client.get("/api/dashboard?scope=all", headers=h).json()["revenue"]
+    for scope in ("rent", "sale"):
+        assert client.get(f"/api/dashboard?scope={scope}",
+                          headers=h).json()["revenue"] == base
+    assert sum(base["rent"]) > 0 and sum(base["sale"]) > 0
+
+
 def test_dashboard_payment_schedule_only_active_rent_sorted_by_date(client, as_role):
     """Хүлээгдэж буй төлбөр = ИДЭВХТЭЙ ТҮРЭЭСийн гэрээнүүдийн одоогийн цикл.
     Худалдаанд цикл байхгүй тул scope=sale дээр хоосон."""

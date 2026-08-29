@@ -96,13 +96,17 @@ def test_ndsh_setting_applies_to_new_run(client, as_role):
 
 
 def test_dashboard_revenue_split_by_type(client, as_role):
-    """Орлогын chart: Түрээс / Худалдаа / Бартер гэж задарна."""
+    """Орлогын chart: Түрээс / Худалдаа / Бартер гэж задарна.
+
+    Өмнө нь энэ тест «scope=sale үед rent цуврал хоосон» гэдгийг барьцаалж
+    байв. Тэр шүүлт нь ЗОХИОМОЛ: төлбөр гэрээгүй байж болох ба (nullable
+    `contract_id`) код түүнийг «түрээс» гэж таамаглаж хуваадаг байсан тул
+    шүүлтүүр мөнгийг чимээгүй алга болгож эсвэл буруу цувралд нэмдэг. Одоо
+    график БҮХ ТӨРЛИЙГ хамарч, өөрийгөө `all_types` гэж зарлана."""
     h = as_role("otgoo")
     rev = client.get("/api/dashboard", headers=h).json()["revenue"]
     assert {"months", "rent", "sale", "barter"} <= set(rev.keys())
     # seed: худалдааны гэрээн дээр бэлэн/данс төлбөр бий → sale тэгээс их
     assert sum(rev["sale"]) > 0
     assert sum(rev["barter"]) > 0
-    # scope=sale үед rent цуврал хоосон
-    rev_s = client.get("/api/dashboard?scope=sale", headers=h).json()["revenue"]
-    assert sum(rev_s["rent"]) == 0
+    assert rev["all_types"] is True

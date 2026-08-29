@@ -95,21 +95,28 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
     utilization = round(tot_rent / (tot_hand + tot_rent) * 100, 1) if (tot_hand + tot_rent) else 0
 
     # ---- Орлого сараар: Түрээс / Худалдаа / Бартер ----
+    # Энэ график ТӨЛБӨРӨӨС бодогддог, төлбөр нь гэрээгүй байж БОЛНО
+    # (`Payment.contract_id` nullable — харилцагч гэрээгээ заалгүй мөнгө
+    # тавьдаг). Тийм төлбөрийг «түрээс» гэж таамаглаад scope-оор шүүж байв:
+    # худалдааны шүүлтүүр дээр тэр мөнгө чимээгүй алга болж, түрээсийнх дээр
+    # худал нэмэгддэг. Таамаглалыг ЗАСАХГҮЙ, зөгнөхөө БОЛИЛОО: график үргэлж
+    # БҮХ ТӨРЛИЙГ хамарна, дэлгэц дээр тэрийгээ ил хэлнэ (Dashboard.tsx).
     keys = month_keys(today)
     series = {"rent": [0.0] * 6, "sale": [0.0] * 6, "barter": [0.0] * 6}
     for p in db.query(models.Payment).all():
-        ctype = p.contract.type if p.contract else "rent"
-        if scope != "all" and ctype != scope:
-            continue
         k = (p.date.year, p.date.month)
         if k not in keys:
             continue
+        ctype = p.contract.type if p.contract else "rent"
         bucket = "barter" if p.method == "BARTER" else ctype
         series[bucket][keys.index(k)] += p.amount
     revenue = {"months": [MN_MONTH[m] for _, m in keys],
                "rent": [round(v) for v in series["rent"]],
                "sale": [round(v) for v in series["sale"]],
-               "barter": [round(v) for v in series["barter"]]}
+               "barter": [round(v) for v in series["barter"]],
+               # Шүүлтүүрээс ҮЛ ХАМААРНА гэдгээ хариу өөрөө хэлнэ — дэлгэц
+               # таамаглахгүй, шошго нь серверийн үнэнээс гарна.
+               "all_types": True}
 
     # ---- Насжилт ----
     buckets = [["0–30 хоног", 0.0], ["31–60", 0.0], ["61–90", 0.0], ["90+", 0.0]]
@@ -125,7 +132,11 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
             buckets[i][1] += out
     aging = [{"label": l, "amount": round(v)} for l, v in buckets]
 
-    notifications = billing.build_notifications(db, today)
+    # Мэдэгдэл нь ГЭРЭЭТЭЙ тул шүүлтүүрийг дагана. Доор нэмэгдэх зээл, бартер,
+    # амлалтын мэдэгдэл нь гэрээний ТӨРӨЛГҮЙ (зээл банкнаас, амлалт
+    # харилцагчаас) — тэднийг «түрээс» эсвэл «худалдаа» гэж хуваах үндэс алга
+    # тул scope бүр дээр хэвээр харагдана.
+    notifications = billing.build_notifications(db, today, scope)
 
     # Зээлийн ойрын төлөлтүүд (бодит дата) + 3 хоногийн дотор бол мэдэгдэл
     loan_sum = loans_svc.summary(db, today)
@@ -168,7 +179,7 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
                 "contract_no": mv.contract.no, "client": mv.contract.client.name,
                 "date": str(mv.date),
                 "summary": serializers.shipment_summary(mv)}
-               for mv in db.query(models.Movement).filter_by(status="pending", type="ISSUE").all()]
+               for mv in billing.pending_shipments(db, scope)]
 
     # энэ сарын худалдаа (sale scope-ийн KPI)
     month_sale = 0.0

@@ -412,9 +412,21 @@ export default function Dashboard() {
       {/* Chart + aging */}
       <div className="dashboard-analysis">
         <div className="card p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
             <h3 className="font-bold text-ink text-[15.5px] flex items-center gap-2"><span className="cdot" />Орлого — Түрээс · Худалдаа · Бартер</h3>
-            <span className="pill-grey">сүүлийн 6 сар</span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {/* Төлбөр нь гэрээгүй байж болдог тул түрээс/худалдаагаар шүүх
+                  нь ЗОХИОМОЛ хариу төрүүлнэ. Тиймээс энэ график шүүлтүүрийг
+                  ДАГАДАГГҮЙ — үүнийгээ чимээгүй өнгөрөөхгүй, ил хэлнэ.
+                  Хуудсан дээрх бусад бүх тоо шүүгдсэн байхад энэ нэг нь
+                  шүүгдээгүйг мэдэхгүй хүн хоёр тоог андуурч харьцуулна. */}
+              {scope !== "all" && d.revenue.all_types && (
+                <span className="pill-amber" title="Гэрээгүй төлбөрийг төрлөөр нь хуваах боломжгүй тул график шүүгддэггүй">
+                  БҮХ ТӨРӨЛ — шүүлтүүрээс хамаарахгүй
+                </span>
+              )}
+              <span className="pill-grey">сүүлийн 6 сар</span>
+            </div>
           </div>
           <RevChart months={d.revenue.months} rent={d.revenue.rent} sale={d.revenue.sale} barter={d.revenue.barter} />
         </div>
