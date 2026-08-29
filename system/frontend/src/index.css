@@ -222,6 +222,25 @@ body::before {
   .inline-val .pen { @apply opacity-80 transition text-t3 text-[12px]; }
   .inline-val:hover .pen,
   .inline-val:focus-visible .pen { @apply opacity-100 text-brand-ink; }
+
+  /* ---- Засварын ХӨВӨГЧ талбар (ui.tsx InlineEdit) ----
+     Засвар нь нүдээ өргөсгөж хүснэгтийг гулсуулдаг байв. Одоо нүдэнд
+     харагдаж байсан утга сүүдэр болж өргөнөө барьж, талбар нь дээр нь хөвнө.
+     Өндөр 46px = 36px товч + 4px дүүргэлт + 1px хүрээ ×2. Мөрийн босоо
+     дүүргэлт (`.td` 14px) үүнийг шингээх тул карт босоо гүйлгэлт үүсгэхгүй. */
+  .inline-edit-live { position: relative; display: inline-block; vertical-align: middle; }
+  .inline-edit-pop {
+    position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    z-index: 20;                    /* sticky topbar (25) ба модалын (40) ДООГУУР */
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 5px; border-radius: 10px; white-space: nowrap;
+    border: 1px solid var(--color-line-strong);
+    background: var(--color-cardbg);
+    box-shadow: 0 12px 28px rgba(25, 41, 107, .22);
+  }
+  /* Баруун ирмэгт наалдвал зүүн тийш ургана — LTR-д зүүн тийш халих нь
+     гүйлгэх талбайг (scrollWidth) өсгөхгүй. */
+  .inline-edit-pop.is-flip { left: auto; right: 0; }
 }
 
 /* Navy calc-receipt (live тооцооны хайрцаг).

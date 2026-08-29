@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef, useId } from "react";
+import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useLayoutEffect, useRef, useId } from "react";
 import { tabbablesIn, trapNext } from "./lib/focus";
 
 /* ---------- Toast ---------- */
@@ -118,7 +118,10 @@ export function Modal({ title, onClose, children, wide, dirty }: {
            style={{ background: "var(--color-cardbg)" }}>
         <div className="flex items-center justify-between mb-5 pb-4 border-b border-line">
           <h3 id={titleId} className="text-[17px] font-bold text-ink tracking-tight">{title}</h3>
-          <button className="btn-ghost !min-h-0 !p-2 text-xl leading-none" onClick={attemptClose} aria-label="Хаах">×</button>
+          {/* 28×36 байв — өндөр нь шатандаа хүрсэн ч ӨРГӨН нь дутуу. Бүх 23
+              модалын хаах товч тул нэг мөрөөр 36×36 (--target-sm) болов. */}
+          <button className="btn-ghost !min-h-9 !w-9 !px-0 justify-center text-xl leading-none"
+                  onClick={attemptClose} aria-label="Хаах">×</button>
         </div>
         {askClose && (
           <div ref={guardRef}
@@ -338,7 +341,20 @@ export function Refreshing({ busy, children }: { busy: boolean; children: ReactN
   );
 }
 
-/* ---------- Inline editor (2 алхамт баталгаажуулалттай) ---------- */
+/* ---------- Inline editor (2 алхамт баталгаажуулалттай) ----------
+   Засварын горим нь нүдээ ӨРГӨСГӨДӨГ байв. Зээлийн хуудсанд нэг нэр дээр
+   дарахад хүснэгт 1020 → 1178px, ✓ дарахад дахин 1245px болж, хажуугийн
+   баганууд хулганы доогуур гулсдаг: Отгоо эхний товшилтоо нэг нүдэн дээр,
+   хоёр дахийг нь ӨӨР нүдэн дээр хийнэ.
+
+   Одоо: харагдаж байсан утга нүдэндээ СҮҮДЭР (ghost) болж үлдэж, ЯГ тэр
+   өргөнийг барина; засварын талбар нь түүн дээр ХӨВЖ гарна. Хүснэгт бүх
+   алхам дээр огт хөдлөхгүй (view = edit = confirm өргөн).
+
+   Хөвөгч талбар нь баруун ирмэгээс давбал зүүн тийшээ эргэж ургана — эс
+   бөгөөс гүйлгэх талбай (scrollWidth) өсөж, яг ижил алдаа дахин үүснэ.
+   Өндөр нь 46px: мөрийн 14px дүүргэлт дотор багтаж, картын босоо гүйлгэлт
+   үүсгэхгүй. */
 export function InlineEdit({ value, display, onSave, type = "text", suffix = "", confirmText = "Хадгалах уу?", width = "w-24", right, options, label }: {
   value: string | number | null | undefined;
   display?: string;
@@ -358,56 +374,91 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
   const [val, setVal] = useState("");
   const [busy, setBusy] = useState(false);
-  const start = (e: React.MouseEvent) => { e.stopPropagation(); setVal(String(value ?? "")); setMode("edit"); };
+  const [flip, setFlip] = useState(false);
+  const anchorRef = useRef<HTMLSpanElement | null>(null);
+  const popRef = useRef<HTMLSpanElement | null>(null);
+  const start = (e: React.MouseEvent) => {
+    e.stopPropagation(); setVal(String(value ?? "")); setFlip(false); setMode("edit");
+  };
   const commit = async () => {
     setBusy(true);
     try { await onSave(val); setMode("view"); }
     catch { /* toast нь дуудагч талд */ }
     finally { setBusy(false); }
   };
+  const shown = display ?? (value === null || value === undefined || value === "" ? "—" : String(value));
+
+  /* Хөвөгч талбар багтах уу? Ойрын гүйлгэдэг өвөг (card.overflow-x-auto) —
+     байхгүй бол цонх — түүний БАРУУН ирмэгээр хэмжинэ. Багтахгүй бол баруун
+     ирмэгээрээ тогтоно (зүүн тийш ургах нь LTR-д scrollWidth-ыг өсгөхгүй).
+     Товчны бичиг edit → confirm дээр өөрчлөгддөг тул мод бүрд дахин хэмжинэ. */
+  useLayoutEffect(() => {
+    if (mode === "view") return;
+    const a = anchorRef.current, p = popRef.current;
+    if (!a || !p) return;
+    let sc: HTMLElement | null = a.parentElement;
+    while (sc && sc !== document.body) {
+      const ox = getComputedStyle(sc).overflowX;
+      if (ox === "auto" || ox === "scroll" || ox === "hidden") break;
+      sc = sc.parentElement;
+    }
+    const edge = sc && sc !== document.body
+      ? Math.min(sc.getBoundingClientRect().right, window.innerWidth)
+      : window.innerWidth;
+    setFlip(a.getBoundingClientRect().left + p.offsetWidth > edge - 6);
+  }, [mode]);
+
   // Товчны нэр нь УТГАА + үйлдлээ хоёуланг агуулна: «12345678 · засах».
   // ✎ нь чимэг тул нуугдана — эс бөгөөс уншигч «харандаа» гэж дуудна.
   if (mode === "view") {
     return (
       <button className="inline-val" onClick={start} title="Дарж засна">
         {label && <span className="sr-only">{label}: </span>}
-        <span>{display ?? (value === null || value === undefined || value === "" ? "—" : String(value))}{suffix}</span>
+        <span>{shown}{suffix}</span>
         <span className="pen" aria-hidden="true">✎</span>
         <span className="sr-only"> · засах</span>
       </button>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-      {options ? (
-        <select autoFocus aria-label={label ? `${label} — шинэ утга` : "Шинэ утга"}
-          className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width}`}
-          value={val} onChange={(e) => setVal(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }}>
-          {options.map(([v, lb]) => <option key={v} value={v}>{lb}</option>)}
-        </select>
-      ) : (
-        <input autoFocus type={type} aria-label={label ? `${label} — шинэ утга` : "Шинэ утга"}
-          className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width} ${right ? "text-right" : ""}`}
-          value={val} onChange={(e) => setVal(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }} />
-      )}
-      {/* Баталгаажуулах/цуцлах товчнууд target-sm (36px) — хуруугаар ч оносон дарагдана */}
-      {mode === "edit" ? (
-        <>
-          <button className="w-9 h-9 rounded-lg bg-brand-50 text-brand-ink font-bold shrink-0"
-                  aria-label="Хадгалахаар үргэлжлүүлэх" onClick={() => setMode("confirm")}>✓</button>
-          <button className="w-9 h-9 rounded-lg bg-sunken text-t2 shrink-0"
-                  aria-label="Болих" onClick={() => setMode("view")}>✕</button>
-        </>
-      ) : (
-        <>
-          <button className="h-9 px-3 rounded-lg bg-money text-white text-[12px] font-bold whitespace-nowrap shrink-0"
-                  disabled={busy} onClick={commit}>{busy ? "…" : confirmText}</button>
-          <button className="w-9 h-9 rounded-lg bg-sunken text-t2 shrink-0"
-                  aria-label="Болих" onClick={() => setMode("view")}>✕</button>
-        </>
-      )}
+    <span className="inline-edit-live" ref={anchorRef} onClick={(e) => e.stopPropagation()}>
+      {/* Сүүдэр: нүдний өргөнийг харагдаж байсан хэвээр нь барина. Уншигчид
+          хуучин утгыг давхар уншуулахгүй тул aria-hidden. */}
+      <span className="inline-val invisible" aria-hidden="true">
+        <span>{shown}{suffix}</span>
+        <span className="pen">✎</span>
+      </span>
+      <span className={`inline-edit-pop${flip ? " is-flip" : ""}`} ref={popRef}>
+        {options ? (
+          <select autoFocus aria-label={label ? `${label} — шинэ утга` : "Шинэ утга"}
+            className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width}`}
+            value={val} onChange={(e) => setVal(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }}>
+            {options.map(([v, lb]) => <option key={v} value={v}>{lb}</option>)}
+          </select>
+        ) : (
+          <input autoFocus type={type} aria-label={label ? `${label} — шинэ утга` : "Шинэ утга"}
+            className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width} ${right ? "text-right" : ""}`}
+            value={val} onChange={(e) => setVal(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") setMode("confirm"); if (e.key === "Escape") setMode("view"); }} />
+        )}
+        {/* Баталгаажуулах/цуцлах товчнууд target-sm (36px) — хуруугаар ч оносон дарагдана */}
+        {mode === "edit" ? (
+          <>
+            <button className="w-9 h-9 rounded-lg bg-brand-50 text-brand-ink font-bold shrink-0"
+                    aria-label="Хадгалахаар үргэлжлүүлэх" onClick={() => setMode("confirm")}>✓</button>
+            <button className="w-9 h-9 rounded-lg bg-sunken text-t2 shrink-0"
+                    aria-label="Болих" onClick={() => setMode("view")}>✕</button>
+          </>
+        ) : (
+          <>
+            <button className="h-9 px-3 rounded-lg bg-money text-white text-[12px] font-bold whitespace-nowrap shrink-0"
+                    disabled={busy} onClick={commit}>{busy ? "…" : confirmText}</button>
+            <button className="w-9 h-9 rounded-lg bg-sunken text-t2 shrink-0"
+                    aria-label="Болих" onClick={() => setMode("view")}>✕</button>
+          </>
+        )}
+      </span>
     </span>
   );
 }
