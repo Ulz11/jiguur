@@ -94,7 +94,9 @@ export default function Machines() {
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-4 max-sm:grid-cols-1">
+      {/* Планшет (дарга талбай дээр 768px-ээр орно): гурав нь 233px болж
+          «1.4 сая₮» гэсэн тоонууд нугалдаг байв. Хоёр багана = 358px. */}
+      <div className="grid grid-cols-3 gap-4 mb-4 max-lg:grid-cols-2 max-sm:grid-cols-1">
         {d.machines.map((m: any) => (
           <div key={m.id}
             {...rowClickProps(async () => setSel(await api(`/api/machines/${m.id}/logs`)),
@@ -150,7 +152,7 @@ export default function Machines() {
             )}
           </div>
         ))}
-        {d.machines.length === 0 && <div className="col-span-3"><Empty title="Машин бүртгэгдээгүй" /></div>}
+        {d.machines.length === 0 && <div className="col-span-full"><Empty title="Машин бүртгэгдээгүй" /></div>}
       </div>
 
       {sel && (
@@ -195,7 +197,12 @@ export default function Machines() {
               «энд ямар нэг тоо байгаа» гэж заадаггүй. Засварын ✎, устгалын ✕
               ч алга: сервер тэднийг 403-оор хаадаг тул үргэлж унадаг товч
               харуулах нь худал амлалт. */}
-          <table className={`w-full ${seesMoney ? "min-w-[820px]" : "min-w-[620px]"}`}>
+          {/* 820px-ийн шал нь 768px планшет дээр (агуулга 730px) хүснэгтийг
+              90px-ээр халиулж, мөр дээрх засварууд хэвтээ гүйлгэлтийн ард
+              үлддэг байв. Шалыг буулгав: планшет дээр чөлөөт текстийн багана
+              нугалж мөр 65 → 80px болно — тоо БҮГД харагдана гэдэг нь нүднээс
+              далд үлдсэн 90px-ээс дээр. */}
+          <table className={`w-full ${seesMoney ? "min-w-[680px]" : "min-w-[560px]"}`}>
             <thead><tr>
               <th className="th">Огноо</th><th className="th">Юу</th><th className="th">Хэн / Хаана</th>
               {seesMoney && <th className="th text-right">Дүн</th>}
@@ -248,7 +255,8 @@ export default function Machines() {
                   </td>
                   {seesMoney && (
                     <td className="td text-right">
-                      <button className="w-7 h-7 rounded-lg bg-danger-50 text-danger shrink-0"
+                      {/* 28px байсан — docs/UI-ЗАРЧИМ.md §4: дарагддаг юм 36px-ээс намхан БАЙХГҮЙ */}
+                      <button className="w-9 h-9 rounded-lg bg-danger-50 text-danger shrink-0"
                               title="Бичилт устгах" aria-label={`${l.date} · ${l.label || l.entry} — бичилт устгах`}
                               onClick={() => setAsk({ kind: "delLog", log: l })}>✕</button>
                     </td>
@@ -300,7 +308,7 @@ export default function Machines() {
                                 onClick={() => pdf.open(path)}>
                           {pdf.busyPath === path ? "…" : "PDF"}
                         </button>
-                        <button className="w-7 h-7 rounded-lg bg-danger-50 text-danger shrink-0 ml-1.5 align-middle"
+                        <button className="w-9 h-9 rounded-lg bg-danger-50 text-danger shrink-0 ml-1.5 align-middle"
                                 title="Нэхэмжлэл устгах" aria-label={`№${inv.no} — нэхэмжлэл устгах`}
                                 onClick={() => setAsk({ kind: "delInv", inv })}>✕</button>
                       </td>

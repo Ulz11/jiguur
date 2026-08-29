@@ -69,7 +69,10 @@ export default function Salary() {
           <div className="text-[12.5px] text-t2 font-medium mb-2">Сүүлийн бодолт</div>
           {runs[0] ? (
             <>
-              <div className="text-[26px] font-extrabold text-ink tabular-nums" title={money(runs[0].total_net)}>{sayaFmt(runs[0].total_net)}₮</div>
+              {/* Дугуйлсан «6 сая₮» нь доорх хүснэгтийн «5,950,000₮»-той ЯГ
+                  зэрэгцэж, нэг бодолт хоёр өөр тоогоор харагддаг байв. Энэ бол
+                  ойролцоо биш, БАРИМТ — hover-ийн title хангалттай биш. */}
+              <div className="text-[26px] font-extrabold text-ink tabular-nums">{money(runs[0].total_net)}</div>
               <span className={`mt-1 ${runs[0].paid ? "pill-green" : "pill-amber"}`}>
                 {runs[0].period} · {runs[0].half}-р хагас · {runs[0].paid ? "олгосон" : "олгоогүй"}
               </span>
@@ -78,7 +81,16 @@ export default function Salary() {
         </div>
       </div>
 
-      <div className="grid grid-cols-[1fr_1.4fr] gap-4 max-lg:grid-cols-1 items-start">
+      {/* ЗАСАГДДАГ ХҮСНЭГТ НЬ НАРИЙН ЗАМД БАЙВ.
+          `1fr_1.4fr` нь таван баганатай, мөр дээрээ засагддаг «Ажилчид»-д
+          416px, зөвхөн уншдаг «Бодолтууд»-д 584px өгдөг байв. Ажилчид хүснэгт
+          548px өргөн тул 132px нь картын ДОТООД хэвтээ гүйлгэлтийн ард үлдэж,
+          НДШ багана ба «Хасах» товч огт олдохгүй байв — Excel-ээс ирсэн хүн
+          картын дотор хажуу тийш гүйлгэх зуршилгүй.
+          Хоёр хүснэгт хоёулаа хагас замдаа багтахгүй (548 ба 584 > 494) тул
+          зэрэгцүүлэх нь ГАНЦ шийдэлгүй: доошоо давхарлав — хоёулаа 1018px-ийн
+          бүтэн өргөнд, хэвтээ гүйлгэлтгүй. */}
+      <div className="flex flex-col gap-4">
         <div className="card overflow-x-auto">
           <h3 className="font-bold text-ink text-[15.5px] px-4 pt-4 pb-1">Ажилчид</h3>
           <table className="w-full min-w-[420px]">

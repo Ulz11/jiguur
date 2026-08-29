@@ -96,14 +96,23 @@ export default function Loans() {
         </div>
       </div>
 
+      {/* ХОЁР ЖИЛИЙН ЗЭРЭГЦЭЭ ТОО НЭГ МӨРӨНД БАГТАНА.
+          Өмнө нь есөн багана (1020px) байсны дөрөв нь ойролцоо утгатай:
+          «Хүү %/сар · Сарын хүү · Сарын төлөлт · Төлсөн хүү». Мөр бүр 124–160px
+          өндөр болж (нэр гурван мөр, огноо гурван мөр нугалаад) Отгоогийн
+          1366×768 дэлгэцэнд хоёр хагас зээл багтдаг байв.
+            · Хүүгийн ХУВЬ нь бодогдсон Сарын хүүгийнхээ дэргэд нэг нүдэнд орлоо
+              («4.8 сая₮ 1.6%/сар») — тоо ба түүнийг гаргасан хувь зэрэгцэнэ.
+            · Төлсөн хүү, Эхэлсэн огноо нь ХУРИМТЛАЛ/ЛАВЛАГАА болохоос өдөр
+              тутмын шийдвэрийн тоо биш — мөрөө задлахад доор гарна.
+          Мөр бүр НЭГ мөр өндөртэй: 36px (хүрэх талбайн доод шат) + 2×14px. */}
       <div className="card overflow-x-auto">
-        <table className="w-full min-w-[980px]">
+        <table className="w-full min-w-[880px]">
           <thead><tr>
             <th className="th">Зээлдүүлэгч</th><th className="th text-right">Үндсэн дүн</th>
-            <th className="th text-right">Үлдэгдэл</th><th className="th text-right">Хүү %/сар</th>
+            <th className="th text-right">Үлдэгдэл</th>
             <th className="th text-right">Сарын хүү</th><th className="th text-right">Сарын төлөлт</th>
-            <th className="th">Дараагийн</th>
-            <th className="th text-right">Төлсөн хүү</th><th className="th"></th>
+            <th className="th">Дараагийн</th><th className="th"></th>
           </tr></thead>
           <tbody>
             {d.loans.map((l: any) => (
@@ -113,25 +122,14 @@ export default function Loans() {
                     {...rowClickProps(() => setOpen(open === l.id ? null : l.id),
                                       `${l.name} — төлөлтийн түүхийг ${open === l.id ? "хаах" : "нээх"}`,
                                       "row")}>
-                  <td className="td" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1.5">
+                  <td className="td whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <span className="flex items-center gap-1.5">
                       <InlineEdit label="Зээлдүүлэгч" value={l.name} width="w-44" confirmText="Нэр солих уу?"
                         onSave={(v) => doPatch(`/api/loans/${l.id}`, { name: v }, "Нэр шинэчлэгдлээ")} />
                       {l.status === "closed" && <span className="pill-grey">хаагдсан</span>}
-                    </div>
-                    <span className="flex items-center gap-1 text-xs text-t3 mt-0.5">
-                      <InlineEdit label="Төрөл" value={l.kind} display={kindLabel(l.kind)} width="w-24"
-                        options={[["bank", "Банк"], ["private", "Хувь"], ["credit", "Кредит"]]}
-                        confirmText="Төрөл солих уу?"
-                        onSave={(v) => doPatch(`/api/loans/${l.id}`, { kind: v }, "Төрөл шинэчлэгдлээ")} />
-                      <span>·</span>
-                      <InlineEdit type="date" label="Эхэлсэн огноо" value={l.start_date}
-                        display={`${l.start_date}-с`} width="w-36"
-                        confirmText="Огноо солих уу?"
-                        onSave={(v) => doPatch(`/api/loans/${l.id}`, { start_date: v }, "Эхэлсэн огноо шинэчлэгдлээ")} />
                     </span>
                   </td>
-                  <td className="td text-right tabular-nums" title={money(l.principal)}
+                  <td className="td text-right tabular-nums whitespace-nowrap" title={money(l.principal)}
                       onClick={(e) => e.stopPropagation()}>
                     <InlineEdit type="number" label="Үндсэн дүн" value={l.principal} display={sayaFmt(l.principal) + "₮"}
                       width="w-28" right confirmText="Үндсэн дүн солих уу?"
@@ -139,7 +137,7 @@ export default function Loans() {
                         { principal: parseMoney(v) },
                         "Үндсэн дүн шинэчлэгдлээ — үлдэгдэл, сарын төлбөр дагаж өөрчлөгдөнө")} />
                   </td>
-                  <td className="td text-right tabular-nums font-bold text-ink" title={money(l.balance)}>
+                  <td className="td text-right tabular-nums font-bold text-ink whitespace-nowrap" title={money(l.balance)}>
                     {sayaFmt(l.balance)}₮
                     {/* Үлдэгдэл нь үндсэн дүнгээс их байвал ЯАГААД гэдгийг мөр дээрээ хэлнэ */}
                     {l.topup_total > 0 && (
@@ -149,15 +147,23 @@ export default function Loans() {
                       </span>
                     )}
                   </td>
-                  <td className="td text-right tabular-nums" onClick={(e) => e.stopPropagation()}>
-                    <InlineEdit type="number" label="Сарын хүү" value={l.monthly_rate} suffix="%" width="w-16" right
-                      confirmText="Хүү солих уу?"
-                      onSave={(v) => doPatch(`/api/loans/${l.id}`, { monthly_rate: parseMoney(v) },
-                        "Хүү шинэчлэгдлээ — сарын төлбөр дагаж өөрчлөгдөнө")} />
+                  {/* Бодогдсон сарын хүү + түүнийг гаргасан ХУВЬ — нэг нүдэнд.
+                      Тоо нь бодогддог, хувь нь засагдана: аль нь аль болохыг
+                      хэмжээ, өнгө хоёр хэлнэ. */}
+                  <td className="td text-right tabular-nums whitespace-nowrap" title={money(l.monthly_due)}
+                      onClick={(e) => e.stopPropagation()}>
+                    <span className="inline-flex items-center gap-2">
+                      <b className="font-bold text-danger">{sayaFmt(l.monthly_due)}₮</b>
+                      <span className="text-[12px] text-t3 font-medium">
+                        <InlineEdit type="number" label="Хүүгийн хувь" value={l.monthly_rate} suffix="%/сар"
+                          width="w-16" right confirmText="Хүү солих уу?"
+                          onSave={(v) => doPatch(`/api/loans/${l.id}`, { monthly_rate: parseMoney(v) },
+                            "Хүү шинэчлэгдлээ — сарын хүү дагаж өөрчлөгдөнө")} />
+                      </span>
+                    </span>
                   </td>
-                  <td className="td text-right tabular-nums font-bold text-danger" title={money(l.monthly_due)}>{sayaFmt(l.monthly_due)}₮</td>
                   {/* Гэрээгээр тохирсон сарын төлөлт — бодогддог хүүгээс ТУСДАА тоо */}
-                  <td className="td text-right tabular-nums"
+                  <td className="td text-right tabular-nums whitespace-nowrap"
                       title={l.monthly_payment ? money(l.monthly_payment) : "Гэрээгээр тохирсон сарын төлөлт"}
                       onClick={(e) => e.stopPropagation()}>
                     <InlineEdit type="number" label="Сарын төлөлт" value={l.monthly_payment || ""}
@@ -167,8 +173,7 @@ export default function Loans() {
                         "Сарын төлөлт шинэчлэгдлээ — ойрын төлөлт үүгээр харагдана")} />
                   </td>
                   <td className="td">{l.status === "active" ? <span className="pill-amber">{l.next_due}</span> : <span className="pill-grey">—</span>}</td>
-                  <td className="td text-right tabular-nums text-t2" title={money(l.interest_paid)}>{sayaFmt(l.interest_paid)}₮</td>
-                  <td className="td">
+                  <td className="td whitespace-nowrap">
                     {l.status === "active" && (
                       <span className="flex items-center gap-1 justify-end">
                         <button className="btn-ghost btn-row text-money"
@@ -180,15 +185,39 @@ export default function Loans() {
                   </td>
                 </tr>
                 {open === l.id && (
-                  <tr><td colSpan={9} className="td !bg-canvas">
+                  <tr><td colSpan={7} className="td !bg-canvas">
                     <div className="flex flex-col gap-3">
                       <div className="flex items-center justify-between gap-4 flex-wrap"
                            onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center gap-2 text-[13px]">
-                          <span className="text-t3">Тэмдэглэл:</span>
-                          <InlineEdit label="Тэмдэглэл" value={l.note} display={l.note || "нэмэх…"} width="w-72"
-                            confirmText="Хадгалах уу?"
-                            onSave={(v) => doPatch(`/api/loans/${l.id}`, { note: v }, "Тэмдэглэл шинэчлэгдлээ")} />
+                        {/* Мөрөөс буусан лавлагаа: төрөл (нэр нь ихэвчлэн өөрөө
+                            хэлдэг), хэзээ эхэлсэн, хүүд өнөөдрийг хүртэл хэдийг
+                            өгсөн. Гурвуулаа засагдах хэвээр. */}
+                        <div className="flex items-center gap-x-5 gap-y-1 flex-wrap text-[13px]">
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-t3">Төрөл:</span>
+                            <InlineEdit label="Төрөл" value={l.kind} display={kindLabel(l.kind)} width="w-24"
+                              options={[["bank", "Банк"], ["private", "Хувь"], ["credit", "Кредит"]]}
+                              confirmText="Төрөл солих уу?"
+                              onSave={(v) => doPatch(`/api/loans/${l.id}`, { kind: v }, "Төрөл шинэчлэгдлээ")} />
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-t3">Эхэлсэн:</span>
+                            <InlineEdit type="date" label="Эхэлсэн огноо" value={l.start_date}
+                              display={l.start_date} width="w-36" confirmText="Огноо солих уу?"
+                              onSave={(v) => doPatch(`/api/loans/${l.id}`, { start_date: v }, "Эхэлсэн огноо шинэчлэгдлээ")} />
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-t3">Төлсөн хүү:</span>
+                            <b className="tabular-nums text-ink" title={money(l.interest_paid)}>
+                              {sayaFmt(l.interest_paid)}₮
+                            </b>
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-t3">Тэмдэглэл:</span>
+                            <InlineEdit label="Тэмдэглэл" value={l.note} display={l.note || "нэмэх…"} width="w-72"
+                              confirmText="Хадгалах уу?"
+                              onSave={(v) => doPatch(`/api/loans/${l.id}`, { note: v }, "Тэмдэглэл шинэчлэгдлээ")} />
+                          </span>
                         </div>
                         <button className="btn-ghost btn-row"
                                 onClick={() => setAsk({ kind: "status", loan: l })}>
@@ -225,8 +254,11 @@ export default function Loans() {
                                 display={p.note || "тэмдэглэл…"} width="w-40"
                                 confirmText="Хадгалах уу?"
                                 onSave={(v) => savePay(l, p, { note: v })} />
-                              <button className="w-7 h-7 rounded-lg bg-danger-50 text-danger shrink-0 ml-auto"
+                              {/* 28px байсан — docs/UI-ЗАРЧИМ.md §4: дарагддаг юм
+                                  36px-ээс намхан БАЙХГҮЙ (--target-sm) */}
+                              <button className="w-9 h-9 rounded-lg bg-danger-50 text-danger shrink-0 ml-auto"
                                       title="Устгах"
+                                      aria-label={`${p.date} · ${partLabel(p.part)} — устгах`}
                                       onClick={() => setAsk({ kind: "del", loan: l, payment: p })}>✕</button>
                             </div>
                           ))}
