@@ -306,6 +306,32 @@ class MachineLog(Base):
     machine: Mapped["Machine"] = relationship(back_populates="logs")
 
 
+class MachineInvoice(Base):
+    """Механизмын нэхэмжлэх — ТУСДАА БАРИМТ, авлагын хөдөлгүүрт ОРОХГҮЙ.
+
+    `Invoice` нь гэрээтэй заавал холбогддог (`contract_id` NOT NULL) ба
+    төлбөр хуваарилах хөдөлгүүр (services/billing) түүн дээр ажилладаг.
+    Механизм нь гэрээгүй, тусдаа орлогын урсгал: төлбөрийн бодит байдал нь
+    log мөрийн `method` талбар дээр аль хэдийн бүртгэгддэг. Тиймээс энэ нь
+    ХЭВЛЭХИЙН тулд хадгалагдсан баримт — авлага үүсгэхгүй, устгаж болно.
+
+    Дугаар: `M-YY/MM-N` — N нь тухайн он/сар дотор нэмэгдэнэ.
+    """
+    __tablename__ = "machine_invoices"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id"))
+    no: Mapped[str] = mapped_column(String(30), unique=True)
+    client: Mapped[str] = mapped_column(String(150), default="")
+    d_from: Mapped[date] = mapped_column(Date)
+    d_to: Mapped[date] = mapped_column(Date)      # цонх [d_from, d_to] — ХОЁР ирмэг ОРНО
+    total: Mapped[float] = mapped_column(Float, default=0)        # дэд дүн (НӨАТ-гүй)
+    vat: Mapped[float] = mapped_column(Float, default=0)
+    grand_total: Mapped[float] = mapped_column(Float, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    machine: Mapped["Machine"] = relationship()
+
+
 # ---------- Цалин ----------
 class Employee(Base):
     __tablename__ = "employees"
