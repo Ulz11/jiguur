@@ -3,7 +3,7 @@ import { rateLabel, holdingSections, daysLabel, type Holding } from "./material"
 
 const hold = (over: Partial<Holding>): Holding => ({
   contract_id: 1, contract_no: "24/03", client_id: 1, client: "Алтан Гадас",
-  grade_id: 2, grade: "А", qty: 100, rates: [330], since: "2026-03-22", days: 160,
+  grade_id: 2, grade: "А", qty: 100, pending: 0, rates: [330], since: "2026-03-22", days: 160,
   ...over,
 });
 

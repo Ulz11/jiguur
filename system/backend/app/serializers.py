@@ -51,10 +51,38 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
     Худалдсан бараа «гадаа» БИШ (буцаж ирэхгүй) — `contract_row.qty_out`-ийн
     дүрэмтэй ижил. Баталгаажаагүй ачилт үлдэгдэл хөдөлгөхгүй (падан болоогүй)
     ч сүүлийн хөдөлгөөнд ХАРАГДАНА — дарга юу хүлээгдэж байгаагаа мэдэх ёстой.
+
+    ХҮЛЭЭГДЭЖ БУЙ АЧИЛТ ХУВААРИЛАЛТААС Ч НУУГДАХГҮЙ. «Хэнд хэд байна» гэсэн
+    хуудас нь баталгаажаагүй ачилтыг бүтнээр нь хасдаг байв: 450ш явахаар
+    бэлэн байхад мөр нь зөвхөн доод жагсаалтад (`counted: false`) үлдэж,
+    хуваарилалтаас алга болно — тэр барааг агуулахад байгаа гэж уншина.
+    Мөр бүр `pending` авч явна; баталгаажсан үлдэгдэлгүй ч ирж буй ачилттай
+    гэрээ өөрийн мөртэй (`qty: 0`, `pending > 0`) гарна. Тоо нь ХОЁР ТУСДАА
+    талбар: `qty` бол падан, `pending` бол амлалт — нийлүүлбэл аль нь ч
+    итгэл хүлээхээ болино (гэрээний дэлгэрэнгүйн «+Nш хүлээгдэж буй» журам).
     """
     gname = {g.id: g.code for g in grades}
     gorder = {g.id: (g.sort, g.code) for g in grades}
     rows = {s.grade_id: s for s in stocks if s.material_id == m.id}
+
+    # ---- ХҮЛЭЭГДЭЖ БУЙ: баталгаажаагүй ачилтууд (гэрээ+зэрэглэлээр) ----
+    # Падан болоогүй тул үлдэгдэлд ОРОХГҮЙ — гэхдээ хаашаа явж байгаа нь
+    # мэдэгдэх ёстой. Худалдаа энд ч ордоггүй: зарагдсан бараа «гадаа» биш.
+    pending_by: dict[tuple[int, int], float] = {}
+    pending_since: dict[tuple[int, int], date] = {}
+    for c in contracts:
+        if c.type != "rent":
+            continue
+        for mv in c.movements:
+            if mv.type != "ISSUE" or mv.status == "done":
+                continue
+            for ln in mv.lines:
+                if ln.material_id != m.id:
+                    continue
+                key = (c.id, ln.grade_id)
+                pending_by[key] = pending_by.get(key, 0.0) + ln.qty
+                prev = pending_since.get(key)
+                pending_since[key] = mv.date if prev is None else min(prev, mv.date)
 
     # ---- ГАДАА: гэрээ бүрийн падангийн үлдэгдэл ----
     holdings: list[dict] = []
@@ -81,10 +109,27 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
                 "client_id": c.client_id, "client": c.client.name,
                 "grade_id": gid, "grade": gname.get(gid, "?"),
                 "qty": round(h["qty"], 3),
+                # Хүлээгдэж буй ачилт нь ТУСДАА тоо — `qty`-д хэзээ ч нийлэхгүй
+                "pending": round(pending_by.pop((c.id, gid), 0.0), 3),
                 # Нэг гэрээ нэг материалыг ХОЁР өөр тарифаар барьж болно
                 # (дундуур нь үнэ солигдвол) — тариф бүр нь өөрийн падантай.
                 "rates": sorted(h["rates"]), "lots": h["lots"],
                 "since": str(h["since"]), "days": (today - h["since"]).days})
+
+    # Баталгаажсан үлдэгдэлгүй ч ирж буй ачилттай гэрээ — мөрөө АВНА.
+    # (`pop` дээрх мөрүүдэд хуваарилагдсан тул энд зөвхөн үлдэгдэлгүй нь үлдэнэ.)
+    cmap = {c.id: c for c in contracts}
+    for (cid, gid), qty in pending_by.items():
+        c = cmap[cid]
+        since = pending_since[(cid, gid)]
+        holdings.append({
+            "contract_id": c.id, "contract_no": c.no, "status": c.status,
+            "client_id": c.client_id, "client": c.client.name,
+            "grade_id": gid, "grade": gname.get(gid, "?"),
+            "qty": 0.0, "pending": round(qty, 3),
+            # Тариф нь падан үүсэх ҮЕДЭЭ тогтдог — хараахан падан алга
+            "rates": [], "lots": 0,
+            "since": str(since), "days": (today - since).days})
     holdings.sort(key=lambda h: (gorder.get(h["grade_id"], (99, "")), -h["qty"], h["client"]))
 
     # ---- ЗЭРЭГЛЭЛ бүрийн эзэмшил ----
@@ -142,6 +187,8 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
                        "in_repair": repair_total,
                        "written_off": sum(g["written_off"] for g in per_grade),
                        "total": round(on_hand_total + out_total + repair_total, 3),
+                       # Хуваалтаас ГАДНА: хараахан хөдлөөгүй, зөвхөн ирж байгаа
+                       "pending": round(sum(h["pending"] for h in holdings), 3),
                        "contracts": len({h["contract_id"] for h in holdings}),
                        "clients": len({h["client_id"] for h in holdings})},
             "holdings": holdings,

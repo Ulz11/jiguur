@@ -95,11 +95,69 @@ def test_pending_shipment_is_not_out_but_is_visible_in_movements(client, as_role
     """Баталгаажаагүй ачилт үлдэгдэлд ОРОХГҮЙ ч түүхэнд ХАРАГДАНА."""
     h = as_role("otgoo")
     d = _detail(client, h, _mat(client, h)["id"])
-    assert all(hold["contract_no"] != "26/14" for hold in d["holdings"])
     pend = [mv for mv in d["movements"] if mv["contract_no"] == "26/14"]
     assert pend, "хүлээгдэж буй ачилт түүхээс алга болох ёсгүй"
     assert pend[0]["counted"] is False
     assert pend[0]["status"] == "pending"
+    # Тэр 450 нь ХААНА Ч байгаа гэж тоологдохгүй: «түрээсэнд» гэсэн тоог хөдөлгөхгүй
+    assert all(hold["qty"] == 0 for hold in d["holdings"] if hold["contract_no"] == "26/14")
+
+
+def test_pending_shipment_has_its_own_row_in_the_distribution(client, as_role):
+    """«Хэнд хэд байна» гэсэн хуудас ИРЖ БУЙ барааг ЧИМЭЭГҮЙ орхиж болохгүй.
+
+    Өмнө нь баталгаажаагүй ачилтыг хуваарилалтын хүснэгтээс БҮТНЭЭР нь
+    хасдаг байв: 450ш Түмэн Хийц рүү явахаар бэлэн байхад «хэнд хэд байна»
+    гэсэн ганц хуудас тэр тухай юу ч хэлэхгүй — доорх хөдөлгөөний жагсаалтад
+    л мөр байна (`counted: false`). Отгоо тэр 450-г агуулахад байгаа гэж
+    уншина. Одоо мөр нь өөрийн эгнээтэй: тоо нь 0 (үлдэгдэл хөдлөөгүй),
+    хажууд нь хүлээгдэж буй ширхэг — гэрээний дэлгэрэнгүй дээрх «+Nш
+    хүлээгдэж буй» тэмдэгтэй ЯГ нэг журам.
+    """
+    h = as_role("otgoo")
+    d = _detail(client, h, _mat(client, h)["id"])
+    row = _by_no(d)[("26/14", "А")]
+    assert row["qty"] == 0                       # падан болоогүй
+    assert row["pending"] == pytest.approx(450)  # гэхдээ ирж байна
+    assert row["client"] == "Түмэн Хийц ХХК" and row["contract_id"] > 0
+    # Баталгаажсан мөрүүд хүлээгдэж буй тоогүй — хоёр төлөв хольцолдохгүй
+    assert _by_no(d)[("24/03", "А")]["pending"] == 0
+    # Толгойн «N гэрээ · N харилцагч» нь мөрүүдээсээ гарна: ирж буй ачилттай
+    # гэрээ жагсаалтад байгаа тул тоололтод ч байна (мөрөн дээрх тэмдэг нь
+    # түүнийг «гадаа байгаа» гэж уншихаас сэргийлнэ).
+    assert d["totals"]["contracts"] == len({x["contract_id"] for x in d["holdings"]})
+    assert d["totals"]["clients"] == len({x["client_id"] for x in d["holdings"]})
+
+
+def test_pending_never_leaks_into_the_out_totals(client, as_role):
+    """ТЭНЦЭЛ хэвээр: хүлээгдэж буй ширхэг «түрээсэнд» гэсэн тоонд орохгүй."""
+    h = as_role("otgoo")
+    d = _detail(client, h, _mat(client, h)["id"])
+    out_by_grade: dict[int, float] = {}
+    for hold in d["holdings"]:
+        out_by_grade[hold["grade_id"]] = out_by_grade.get(hold["grade_id"], 0.0) + hold["qty"]
+    for g in d["grades"]:
+        assert g["out"] == pytest.approx(out_by_grade.get(g["grade_id"], 0.0)), g["grade"]
+    t = d["totals"]
+    assert t["pending"] == pytest.approx(sum(x["pending"] for x in d["holdings"]))
+    assert t["pending"] > 0, "seed-д хүлээгдэж буй ачилт байх ёстой — эс бөгөөс тест хоосон"
+    assert t["total"] == pytest.approx(t["on_hand"] + t["out"] + t["in_repair"])
+
+
+def test_confirming_the_shipment_turns_pending_into_held(client, as_role):
+    """Дарга «Ачсан ✓» дармагц тэр 450 нь хүлээгдэж буйгаас ТҮРЭЭСЭНД шилжинэ."""
+    h = as_role("otgoo")
+    m = _mat(client, h)
+    before = _detail(client, h, m["id"])
+    row = _by_no(before)[("26/14", "А")]
+    mv_id = next(mv["movement_id"] for mv in before["movements"] if mv["contract_no"] == "26/14")
+
+    r = client.post(f"/api/movements/{mv_id}/confirm", headers=h)
+    assert r.status_code == 200, r.text
+
+    after = _by_no(_detail(client, h, m["id"]))[("26/14", "А")]
+    assert after["qty"] == pytest.approx(row["pending"])
+    assert after["pending"] == 0
 
 
 # ---------- Тэнцэл ----------

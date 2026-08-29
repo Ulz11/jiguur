@@ -101,7 +101,11 @@ export default function MaterialDetail() {
       <div className="card overflow-x-auto mb-4">
         <div className="flex items-center justify-between gap-3 px-4 pt-4 pb-1 flex-wrap">
           <h2 className="font-bold text-ink text-[15.5px]">Хуваарилалт — хэнд хэд байна</h2>
-          {t.out > 0 && <span className="pill-grey">{fmt(t.out)} {unit} түрээсэнд</span>}
+          <span className="flex items-center gap-1.5 flex-wrap">
+            {t.out > 0 && <span className="pill-grey">{fmt(t.out)} {unit} түрээсэнд</span>}
+            {/* Ирж буй бараа нь «түрээсэнд» гэсэн тоонд ОРООГҮЙ — тусдаа зогсоно */}
+            {t.pending > 0 && <span className="pill-amber">+{fmt(t.pending)} {unit} ачилт хүлээгдэж буй</span>}
+          </span>
         </div>
         <table className="w-full min-w-[860px]">
           <thead><tr>
@@ -116,7 +120,9 @@ export default function MaterialDetail() {
                 {sec.rows.map((h: any) => (
                   <tr key={`${h.contract_id}-${h.grade_id}`} className="cursor-pointer hover:bg-canvas transition group"
                       {...rowClickProps(() => nav(contractHref(h.contract_id)),
-                        `Гэрээ №${h.contract_no} · ${h.client} — ${h.grade} зэрэглэлийн ${fmt(h.qty)}${unit} түрээсэнд, нээх`,
+                        `Гэрээ №${h.contract_no} · ${h.client} — ${h.grade} зэрэглэлийн ${
+                          h.qty > 0 ? `${fmt(h.qty)}${unit} түрээсэнд` : "мөр"}${
+                          h.pending > 0 ? `, ${fmt(h.pending)}${unit} хүлээгдэж буй` : ""}, нээх`,
                         "row")}>
                     {/* Харилцагчийн нэр нь ПРОФАЙЛ руу — мөр өөрөө гэрээ рүү.
                         Хоёр өөр газар очих тул холбоос дарсан товшилтыг мөр
@@ -133,7 +139,17 @@ export default function MaterialDetail() {
                       {h.status === "closed" && <span className="pill-grey ml-1.5">хаагдсан</span>}
                     </td>
                     <td className="td"><span className="pill-blue">{h.grade}</span></td>
-                    <td className="td text-right tabular-nums font-bold text-ink">{fmt(h.qty)}</td>
+                    {/* Хоёр ТУСДАА тоо: падан болсон нь (түрээсэнд) ба хараахан
+                        баталгаажаагүй нь. Нийлүүлбэл аль нь ч итгэл хүлээхээ
+                        болино — гэрээний дэлгэрэнгүйн «+Nш хүлээгдэж буй» журам. */}
+                    <td className="td text-right tabular-nums font-bold text-ink">
+                      {h.qty > 0 ? fmt(h.qty) : <span className="text-t3 font-normal">—</span>}
+                      {h.pending > 0 && (
+                        <span className="block mt-1">
+                          <span className="pill-amber">+{fmt(h.pending)}{unit} хүлээгдэж буй</span>
+                        </span>
+                      )}
+                    </td>
                     <td className="td text-right tabular-nums">
                       {rateLabel(h.rates, fmt)}
                       {/* Хоёроос дээш падан = дундуур нь нэмэлт олголт явсан */}
@@ -141,7 +157,11 @@ export default function MaterialDetail() {
                     </td>
                     <td className="td whitespace-nowrap">
                       <span className="tabular-nums text-t1">{h.since}</span>
-                      <span className="block text-[12px] text-t3">{daysLabel(h.days)}</span>
+                      {/* Падангүй мөрийн огноо нь «хэзээнээс гадаа» БИШ —
+                          ачилтын огноо. «155 хоног» гэж уншуулбал худал. */}
+                      <span className="block text-[12px] text-t3">
+                        {h.qty > 0 ? daysLabel(h.days) : "ачилт хүлээгдэж буй"}
+                      </span>
                     </td>
                     <td className="td text-t3 group-hover:text-ink transition" aria-hidden="true">→</td>
                   </tr>

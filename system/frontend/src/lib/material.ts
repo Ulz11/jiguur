@@ -18,6 +18,9 @@ export type Holding = {
   grade_id: number;
   grade: string;
   qty: number;
+  /** Баталгаажаагүй ачилтын ширхэг — `qty`-д ХЭЗЭЭ Ч нийлэхгүй тусдаа тоо.
+   *  Падан болоогүй бараа «гадаа байгаа» биш, гэхдээ ирж байгаа нь мэдэгдэнэ. */
+  pending: number;
   rates: number[];
   since: string;
   days: number;
