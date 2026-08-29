@@ -5,6 +5,8 @@ import { Spinner, Prog, useToast, ConfirmModal, Refreshing } from "../ui";
 import { useScope } from "../App";
 import { useLive } from "../lib/live";
 import { rowClickProps } from "../lib/rowClick";
+import { invoiceLabel } from "../lib/invoice";
+import { dueLabel, todayIso } from "../lib/schedule";
 import RevChart from "../components/RevChart";
 
 /** Даргад хамаарах мэдэгдлүүд — ачилт, гэрээний хугацаа. Нэхэмжлэлийн
@@ -17,6 +19,7 @@ export default function Dashboard() {
   const [busyScope, setBusyScope] = useState(false);
   const [outQueue, setOutQueue] = useState<any[] | null>(null); // гадаа материалтай гэрээнүүд
   const [busy, setBusy] = useState<number | null>(null);
+  const [overdueOpen, setOverdueOpen] = useState(false); // хэтэрсэн нэхэмжлэлийн задаргаа
   const [ask, setAsk] = useState<any>(null);          // баталгаажуулах гэж буй ачилт
   const [lines, setLines] = useState<any[] | null>(null); // тухайн ачилтын мөрүүд
   const toast = useToast();
@@ -55,6 +58,12 @@ export default function Dashboard() {
   const k = d.kpi;
   const agingMax = Math.max(...d.aging.map((a: any) => a.amount), 1);
   const agingColors = ["#1F8B69", "#253886", "#F88712", "#C9363B"];
+  /* Хуучин сервер (кэшлэгдсэн хуудас) эдгээр талбаргүй хариу буцаавал самбар
+     нурах ёсгүй — хоосон жагсаалт руу унана. */
+  const overdueList = d.overdue_list || [];
+  const schedule = d.payment_schedule || [];
+  const scheduleTotal = schedule.reduce((s: number, r: any) => s + r.projected_amount, 0);
+  const today = todayIso();
 
   /** Баталгаажуулах өмнө юу хөдлөхийг харуулна. Хяналтын самбарын мөр нь
    *  зөвхөн тоо ширхэгийн хураангуйтай тул мөрийн задаргааг гэрээнээс татна;
@@ -244,14 +253,27 @@ export default function Dashboard() {
           <div className="mt-2"><span className="pill bg-white/10 text-white/80"
                                       title={money(k.penalty)}>алданги +{sayaFmt(k.penalty)}₮</span></div>
         </div>
-        <div className="command-metric">
+        {/* «3 нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг
+            хэлдэггүй байв — Отгоо тоог хараад хэнд залгахаа мэдэхгүй үлддэг.
+            Карт нь бүтнээрээ дарагдаж задарна (Tab-аар ч очно). */}
+        <button type="button" className="command-metric w-full text-left"
+                aria-expanded={overdueOpen} aria-controls="overdue-panel"
+                onClick={() => setOverdueOpen(!overdueOpen)}>
           <div className="text-[12.5px] text-t2 font-medium mb-2">Хугацаа хэтэрсэн</div>
           <div className="text-[28px] font-extrabold text-danger tabular-nums leading-tight"
                title={money(k.overdue)}>
             {sayaFmt(k.overdue)} <span className="text-sm text-t2 font-semibold">₮</span>
           </div>
-          <div className="mt-2"><span className="pill-red">{k.overdue_count} нэхэмжлэл</span></div>
-        </div>
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <span className="pill-red">{k.overdue_count} нэхэмжлэл</span>
+            {/* 12.5px биш 13px — картын бусад шошгыг ЗОРИУДААР том үсэг, mono
+                болгодог дүрэм (index.css `.command-metric`) энэ дээр унахгүй:
+                энэ бол шошго биш, ҮЙЛДЭЛ. */}
+            <span className="text-[13px] text-brand-ink font-semibold">
+              <span className="text-t3 mr-1">{overdueOpen ? "▾" : "›"}</span>Дэлгэрэнгүй
+            </span>
+          </div>
+        </button>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Идэвхтэй гэрээ</div>
           <div className="text-[28px] font-extrabold text-ink tabular-nums leading-tight">{k.active_contracts}</div>
@@ -270,6 +292,99 @@ export default function Dashboard() {
             <div className="text-[12.5px] text-t2 font-medium mb-2">Нөөц түрээсэнд</div>
             <div className="text-[28px] font-extrabold text-ink tabular-nums leading-tight">{k.utilization}<span className="text-sm text-t2 font-semibold"> %</span></div>
             <div className="mt-3"><Prog pct={k.utilization} label={`Нөөц түрээсэнд ${k.utilization}%`} color="#22C55E" /></div>
+          </div>
+        )}
+      </div>
+
+      {/* Хэтэрсэн нэхэмжлэлийн задаргаа — KPI картын ЯГ доор задарна */}
+      {overdueOpen && (
+        <div id="overdue-panel" className="card p-5 mb-3">
+          <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+            <h3 className="font-bold text-ink text-[15.5px]">Хугацаа хэтэрсэн нэхэмжлэлүүд</h3>
+            <span className="pill-red" title={money(k.overdue)}>
+              {overdueList.length} нэхэмжлэл · {sayaFmt(k.overdue)}₮
+            </span>
+          </div>
+          {overdueList.length === 0 ? (
+            <p className="text-t3 text-sm py-4">Хэтэрсэн нэхэмжлэл алга 🎉</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px]">
+                <thead><tr>
+                  <th className="th">Нэхэмжлэл</th><th className="th">Харилцагч</th>
+                  <th className="th text-right">Үлдэгдэл</th><th className="th text-right">Хэтэрсэн</th>
+                </tr></thead>
+                <tbody>
+                  {overdueList.map((o: any) => (
+                    <tr key={o.id} className="cursor-pointer hover:bg-canvas"
+                        {...rowClickProps(() => nav(`/contracts/${o.contract_id}`),
+                          `${o.client} — ${money(o.remaining)}, ${o.days_overdue} хоног хэтэрсэн, гэрээ №${o.contract_no} нээх`,
+                          "row")}>
+                      <td className="td">
+                        {/* Нэхэмжлэлийн нэр бүх дэлгэц дээр НЭГ дүрмээс гарна */}
+                        <b className="text-ink">{invoiceLabel(o).title}</b>
+                        <span className="block text-xs text-t3">
+                          Гэрээ №{o.contract_no} · {o.due_date}-нд төлөгдөх ёстой байсан
+                        </span>
+                      </td>
+                      <td className="td">{o.client}</td>
+                      <td className="td text-right tabular-nums font-bold text-danger">{money(o.remaining)}</td>
+                      <td className="td text-right"><span className="pill-red tabular-nums">{o.days_overdue} хоног</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Хүлээгдэж буй төлбөр — ТӨСӨӨЛӨЛ, нэхэмжлэгдсэн баримт БИШ */}
+      <div className="card p-5 mb-3">
+        <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+          <h3 className="font-bold text-ink text-[15.5px]">Хүлээгдэж буй төлбөр</h3>
+          <span className="pill-amber">төсөөлөл</span>
+        </div>
+        <p className="text-[12.5px] text-t2 mb-3">
+          Цикл дуустал нэмэлт ачилт, буцаалт гарахгүй гэвэл ийм дүнтэй нэхэмжлэл төрнө —
+          нэхэмжлэгдсэн дүн БИШ.
+        </p>
+        {schedule.length === 0 ? (
+          <p className="text-t3 text-sm py-4">
+            Хүлээгдэж буй төлбөр алга — идэвхтэй түрээсийн гэрээн дээр бараа гадаа гарахад энд гарч ирнэ.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px]">
+              <thead><tr>
+                <th className="th">Хүлээх огноо</th><th className="th">Харилцагч</th>
+                <th className="th">Гэрээ</th><th className="th text-right">Төсөөлөл</th>
+                <th className="th text-right">Авлагын үлдэгдэл</th>
+              </tr></thead>
+              <tbody>
+                {schedule.map((s: any) => (
+                  <tr key={s.contract_id} className="cursor-pointer hover:bg-canvas"
+                      {...rowClickProps(() => nav(`/contracts/${s.contract_id}`),
+                        `${s.client} — ${s.expected_date}-нд ойролцоогоор ${money(s.projected_amount)}, гэрээ №${s.contract_no} нээх`,
+                        "row")}>
+                    <td className="td"><b className="text-ink tabular-nums">{s.expected_date}</b>
+                      <span className="block text-xs text-t3">{dueLabel(s.expected_date, today)} · {s.cycle_label}</span></td>
+                    <td className="td">{s.client}</td>
+                    <td className="td text-t2">№{s.contract_no}</td>
+                    {/* ≈ нь энэ тоо ТООЦООЛСОН гэдгийг нүдэнд шууд хэлнэ */}
+                    <td className="td text-right tabular-nums font-bold text-ink"
+                        title={`Төсөөлөл — ${money(s.projected_amount)}`}>≈{money(s.projected_amount)}</td>
+                    <td className={`td text-right tabular-nums ${s.receivable > 0 ? "text-danger font-semibold" : "text-t3"}`}>
+                      {s.receivable > 0 ? money(s.receivable) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-3 pt-3 border-t border-sunken flex justify-between items-center">
+              <span className="text-[12.5px] text-t2">Энэ циклийн нийт төсөөлөл</span>
+              <b className="tabular-nums text-ink" title={money(scheduleTotal)}>≈{sayaFmt(scheduleTotal)}₮</b>
+            </div>
           </div>
         )}
       </div>

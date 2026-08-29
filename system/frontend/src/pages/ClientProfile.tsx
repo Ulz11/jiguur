@@ -6,6 +6,7 @@ import { PayModal } from "./ContractDetail";
 import { invoiceLabel } from "../lib/invoice";
 import { useDownload } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
+import { dueLabel, todayIso } from "../lib/schedule";
 import {
   buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth, dayCellLabel,
   parseIso, isoOf, WEEKDAYS_MN, monthLabelMN, type TLEvent, type YearMonth,
@@ -25,6 +26,8 @@ export default function ClientProfile() {
   const load = () => api(`/api/clients/${id}`).then(setD).catch((e) => toast(e.message, "err"));
   useEffect(() => { load(); }, [id]);
   if (!d) return <Spinner />;
+  const upcoming = d.upcoming || [];
+  const today = todayIso();
 
   async function saveClient(patch: Record<string, string>) {
     await api(`/api/clients/${id}`, { method: "PUT", body: JSON.stringify({
@@ -126,6 +129,42 @@ export default function ClientProfile() {
                 : <TimelineCalendar events={d.timeline} />}
             </div>
             <div>
+              {/* Хүлээгдэж буй төлбөр — энэ харилцагчийн идэвхтэй түрээсийн
+                  гэрээнүүдийн одоогийн циклийн ТӨСӨӨЛӨЛ. Мөнгөний блок тул
+                  үйлдвэрийн даргад харагдахгүй (дашбоардын журамтай ижил). */}
+              {u?.role !== "factory" && (
+                <div className="mb-6">
+                  <div className="flex items-center justify-between gap-2 mb-2.5 flex-wrap">
+                    <h3 className="font-bold text-[14.5px]">Хүлээгдэж буй төлбөр</h3>
+                    <span className="pill-amber">төсөөлөл</span>
+                  </div>
+                  {upcoming.length === 0 ? (
+                    <p className="text-t3 text-[13px]">Идэвхтэй түрээсийн гэрээнээс хүлээгдэх төлбөр алга.</p>
+                  ) : upcoming.map((s: any) => (
+                    <div key={s.contract_id}
+                         className="flex items-center justify-between gap-3 py-2.5 border-b border-sunken cursor-pointer hover:bg-canvas -mx-2 px-2 rounded-lg transition"
+                         {...rowClickProps(() => nav(`/contracts/${s.contract_id}`),
+                           `Гэрээ №${s.contract_no} — ${s.expected_date}-нд ойролцоогоор ${money(s.projected_amount)}, нээх`,
+                           "link")}>
+                      <div className="min-w-0">
+                        <b className="text-[13px] text-ink tabular-nums">{s.expected_date}</b>
+                        <span className="block text-xs text-t3">
+                          №{s.contract_no} · {dueLabel(s.expected_date, today)}
+                        </span>
+                      </div>
+                      {/* ≈ нь энэ тоо ТООЦООЛСОН гэдгийг нүдэнд шууд хэлнэ */}
+                      <b className="text-[13px] tabular-nums text-ink shrink-0"
+                         title={`Төсөөлөл — ${money(s.projected_amount)}`}>≈{money(s.projected_amount)}</b>
+                    </div>
+                  ))}
+                  <div className="flex justify-between items-center pt-2.5 text-[12.5px]">
+                    <span className="text-t2">Авлагын үлдэгдэл</span>
+                    <b className={`tabular-nums ${d.receivable > 0 ? "text-danger" : "text-t3"}`}>
+                      {money(d.receivable)}
+                    </b>
+                  </div>
+                </div>
+              )}
               <h3 className="font-bold text-[14.5px] mb-3.5">Нэхэмжлэлийн байдал</h3>
               {d.invoices.slice(0, 6).map((inv: any) => (
                 <div key={inv.id} className="flex items-center justify-between gap-3 py-2.5 border-b border-sunken last:border-0">
