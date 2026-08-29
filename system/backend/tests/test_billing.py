@@ -2,7 +2,7 @@
 import json
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["DATABASE_URL"] = "sqlite://"  # in-memory
@@ -83,6 +83,27 @@ def test_cycle_invoices_autogenerate(db):
     cur = billing.current_cycle_accrual(c, today)
     assert cur["days_done"] == (today - date(2026, 5, 19)).days + 1
     assert cur["day_amount"] == pytest.approx(100 * 330)
+
+
+def test_open_ended_contract_keeps_invoicing(db):
+    """Дуусах огноогүй (хугацаагүй) түрээсийн гэрээ — мөнгө нь ЦИКЛҮҮДИЙГ дагана.
+
+    Компани гэрээнд дуусах огноо тавьдаггүй: гэрээ хаагдтал явна. Иймд
+    `end_date=None` нь нэхэмжлэл үүсэхийг ЗОГСООХГҮЙ — жил өнгөрөхөд цикл
+    бүрийн нэхэмжлэл бүрэн үүссэн, амьд цикл нь цааш үргэлжилж байна."""
+    c, m, ga, gb = setup_contract(db)
+    assert c.end_date is None, "гэрээ хугацаагүй эхэлнэ"
+    mv(db, c, "ISSUE", date(2026, 3, 20), [dict(material_id=m.id, grade_id=ga.id, qty=100)])
+    today = date(2027, 3, 20)                       # 365 хоног = 12 бүтэн цикл
+    created = billing.ensure_invoices(db, c, today)
+    assert len(created) == 12
+    assert created[0].cycle_start == date(2026, 3, 20)
+    assert created[-1].cycle_end == date(2026, 3, 20) + timedelta(days=360)
+    assert all(i.total == pytest.approx(100 * 330 * 30) for i in created)
+    db.refresh(c)
+    # …мөн явагдаж буй цикл нь дуусах огноогүй ч хэвийн үргэлжилнэ
+    cur = billing.current_cycle_accrual(c, today)
+    assert cur and cur["day_amount"] == pytest.approx(100 * 330)
 
 
 def test_penalty(db):

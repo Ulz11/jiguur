@@ -20,7 +20,11 @@ export default function ContractNew() {
   const [newClient, setNewClient] = useState({ name: "", person: "", phone: "", reg: "" });
   const [showNew, setShowNew] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
-  const cond0 = useMemo(() => ({ start_date: today(), end_date: "", penalty_percent: "0.5",
+  /* Дуусах огноо ЭНД алга — компани гэрээндээ хугацаа тавьдаггүй, гэрээ
+     хаагдтал явдаг. Хоосон орхигддог талбар нь «би юу бөглөх ёстой юм бол»
+     гэсэн эргэлзээ л төрүүлдэг байв. Шаардлагатай гэрээнд огноог үүссэний
+     дараа, гэрээн дотроос нь тавина (ContractDetail-ийн InlineEdit). */
+  const cond0 = useMemo(() => ({ start_date: today(), penalty_percent: "0.5",
                                  deposit: "", vat_percent: "0", note: "", no: "" }), []);
   const [cond, setCond] = useState(cond0);
   const uid = useId();
@@ -72,7 +76,7 @@ export default function ContractNew() {
       if (!cid) { toast("Харилцагч сонгоно уу", "err"); return; }
       const body = {
         client_id: cid, type, no: cond.no, start_date: cond.start_date,
-        end_date: cond.end_date || null,
+        end_date: null,                    // хугацаагүй — гэрээ хаагдтал явна
         // Хоосон орхивол л суурь 0.5% — санаатай бичсэн 0-ийг 0.5 болгож
         // сольж болохгүй (`|| 0.5` нь яг тэгж байсан).
         penalty_percent: cond.penalty_percent.trim() === "" ? 0.5 : parseMoney(cond.penalty_percent),
@@ -240,8 +244,6 @@ export default function ContractNew() {
                 <input id={`${uid}-no`} className="inp" placeholder="ж: 26/15" value={cond.no} onChange={(e) => setCond({ ...cond, no: e.target.value })} /></div>
               <div><label className="lbl" htmlFor={`${uid}-start`}>Эхлэх огноо</label>
                 <input id={`${uid}-start`} type="date" className="inp" value={cond.start_date} onChange={(e) => setCond({ ...cond, start_date: e.target.value })} /></div>
-              <div><label className="lbl" htmlFor={`${uid}-end`}>Дуусах огноо (заавал биш)</label>
-                <input id={`${uid}-end`} type="date" className="inp" value={cond.end_date} onChange={(e) => setCond({ ...cond, end_date: e.target.value })} /></div>
               <div><label className="lbl" htmlFor={`${uid}-penalty`}>Алданги %/хоног</label>
                 <input id={`${uid}-penalty`} className="inp" inputMode="decimal" value={cond.penalty_percent}
                        onChange={(e) => setCond({ ...cond, penalty_percent: e.target.value })} /></div>
@@ -255,6 +257,10 @@ export default function ContractNew() {
                   <option value="0">Тооцохгүй</option><option value="10">10%</option>
                 </select></div>
             </div>
+            <p className="text-[12.5px] text-t2 mt-3">
+              Гэрээ <b className="text-t1">хугацаагүй</b> — хаах хүртэл тооцоо цикл бүрээр
+              үргэлжилнэ. Дуусах огноо хэрэгтэй бол гэрээ үүссэний дараа гэрээн дотроос тавина.
+            </p>
             <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
               <input id={`${uid}-note`} className="inp" placeholder="ж: тээврийг захиалагч хариуцна" value={cond.note}
                      onChange={(e) => setCond({ ...cond, note: e.target.value })} /></div>

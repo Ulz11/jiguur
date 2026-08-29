@@ -231,6 +231,32 @@ def test_sale_contract_pdf(client, as_role):
     assert r.status_code == 200 and r.content[:4] == b"%PDF"
 
 
+def test_contract_pdf_renders_without_an_end_date(client, as_role):
+    """Дуусах огноогүй гэрээний PDF — ТҮРЭЭС ба ХУДАЛДАА хоёулаа зурагдана.
+
+    Компани дуусах огноо тавьдаггүй тул энэ нь ховор тохиолдол биш, ХЭВИЙН
+    гэрээ. Хоосон огноо баримт зурах замд ороод тасалдвал Отгоо гэрээгээ
+    хэвлэж чадахгүй болно."""
+    h = as_role("otgoo")
+    mats = client.get("/api/materials", headers=h).json()
+    m = next(x for x in mats if x["name"] == "Хэв хашмал 6012")
+    st = next(s for s in m["stock"] if s["grade"] == "А")
+    for ctype, price in (("rent", {"daily_rate": 330}), ("sale", {"unit_price": 58000})):
+        cl = client.post("/api/clients", json={"name": f"Хугацаагүй {ctype} ХХК"},
+                         headers=h).json()
+        c = client.post("/api/contracts", headers=h, json={
+            "client_id": cl["id"], "type": ctype, "start_date": iso(20),
+            "items": [{"material_id": m["id"], "grade_id": st["grade_id"],
+                       "qty": 20, **price}]})
+        assert c.status_code == 200, c.text
+        cid = c.json()["id"]
+        assert client.get(f"/api/contracts/{cid}", headers=h).json()["end_date"] is None
+        r = client.get(f"/api/contracts/{cid}/pdf", headers=h)
+        assert r.status_code == 200 and r.content[:4] == b"%PDF", f"{ctype}: {r.status_code}"
+        a = client.get(f"/api/contracts/{cid}/act-pdf", headers=h)
+        assert a.status_code == 200 and a.content[:4] == b"%PDF", f"{ctype} акт"
+
+
 # ============ 8. Audit log ============
 
 def test_audit_records_changes(client, as_role):

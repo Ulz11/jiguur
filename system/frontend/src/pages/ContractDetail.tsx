@@ -4,6 +4,7 @@ import { api, money, fmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, useToast,
          InlineEdit, Receipt, ConfirmModal } from "../ui";
 import { allocationPreview } from "../lib/alloc";
+import { endDateLabel } from "../lib/contract";
 import { invoiceLabel } from "../lib/invoice";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
@@ -81,8 +82,12 @@ export default function ContractDetail() {
             </span>
             {seesMoney ? (
               <>
+                {/* Дуусах огноо нь ХООСОН байх нь хэвийн — компани гэрээндээ
+                    хугацаа тавьдаггүй. «тодорхойгүй» гэдэг нь мэдээлэл дутуу
+                    мэт сонсогддог байв; гэрээ үнэхээр хугацаагүй. */}
                 <span className="inline-flex items-center gap-1.5">Дуусах:
-                  <InlineEdit type="date" label="Дуусах огноо" value={d.end_date || ""} display={d.end_date || "тодорхойгүй"}
+                  <InlineEdit type="date" label="Дуусах огноо" value={d.end_date || ""}
+                    display={endDateLabel(d.end_date)}
                     confirmText="Огноо солих уу?" width="w-36"
                     onSave={(v) => savePatch(`/api/contracts/${d.id}`,
                       v ? { end_date: v } : { clear_end_date: true }, "Дуусах огноо шинэчлэгдлээ")} />
@@ -104,7 +109,7 @@ export default function ContractDetail() {
                 </span>
               </>
             ) : (
-              <span>{d.end_date && `→ ${d.end_date} · `}Алданги {d.penalty_percent}%/хоног</span>
+              <span>→ {endDateLabel(d.end_date)} · Алданги {d.penalty_percent}%/хоног</span>
             )}
           </div>
           {seesMoney && (

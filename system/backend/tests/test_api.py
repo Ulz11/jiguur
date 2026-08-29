@@ -108,6 +108,46 @@ def test_auto_numbering_never_collides(client, as_role):
     assert len(all_no) == len(set(all_no))
 
 
+def test_contract_without_end_date_is_open_ended(client, as_role):
+    """Компани гэрээнд ДУУСАХ ОГНОО тавьдаггүй — гэрээ хаагдтал явна.
+
+    Иймд дуусах огноогүйгээр үүсгэхэд 200 буцаах ба жагсаалт, гэрээний хуудас
+    хоёулаа `end_date: null` гэж хэлнэ (хоосон мөр ч, «None» ч биш). Огноогүй
+    гэрээ хэзээ ч «дуусах дөхсөн» төлөвт орохгүй."""
+    h = as_role("otgoo")
+    cl = client.post("/api/clients", json={"name": "Хугацаагүй ХХК"}, headers=h).json()
+    mats = client.get("/api/materials", headers=h).json()
+    m = next(x for x in mats if x["name"] == "Хэв хашмал 6012")
+    st = next(s for s in m["stock"] if s["grade"] == "А")
+    r = client.post("/api/contracts", headers=h, json={
+        "client_id": cl["id"], "type": "rent", "start_date": iso(10),
+        "items": [{"material_id": m["id"], "grade_id": st["grade_id"],
+                   "qty": 10, "daily_rate": 330}]})
+    assert r.status_code == 200, r.text
+    cid = r.json()["id"]
+    det = client.get(f"/api/contracts/{cid}", headers=h).json()
+    assert det["end_date"] is None
+    row = next(c for c in client.get("/api/contracts", headers=h).json() if c["id"] == cid)
+    assert row["end_date"] is None
+    assert row["state"] != "ending"
+
+
+def test_open_ended_contract_end_date_set_and_cleared_after_creation(client, as_role):
+    """Үүсгэсний ДАРАА огноог тавьж, дахин хоосолж болно (гэрээний хуудасны
+    InlineEdit тэр хоёр замаар л явна): утга өгвөл `end_date`, хоослох бол
+    `clear_end_date`."""
+    h = as_role("otgoo")
+    _, cid, *_ = make_contract(client, as_role, days_ago=12, qty=10)
+    assert client.get(f"/api/contracts/{cid}", headers=h).json()["end_date"] is None
+    end = str(date.today() + timedelta(days=30))
+    assert client.patch(f"/api/contracts/{cid}", headers=h,
+                        json={"end_date": end}).status_code == 200
+    assert client.get(f"/api/contracts/{cid}", headers=h).json()["end_date"] == end
+    assert client.patch(f"/api/contracts/{cid}", headers=h,
+                        json={"clear_end_date": True}).status_code == 200
+    assert client.get(f"/api/contracts/{cid}", headers=h).json()["end_date"] is None
+
+
 def test_return_more_than_out_400(client, as_role):
     _, cid, m, st = make_contract(client, as_role, days_ago=5, qty=50)
     h = as_role("darga")
