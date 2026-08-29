@@ -70,15 +70,29 @@ export default function MaterialDetail() {
               <span>Засвар: <b className="text-t1 tabular-nums">{fmt(d.repair_fee)}₮/{unit}</b></span>
             </div>
           </div>
-          {/* Нийт эзэмшил = агуулахад + гадаа. Дөрвөн тоо нэг мөрөнд зогсоно —
-              «хэд байна, хэд гарсан» гэдэг нь нэг харцаар уншигдана. */}
-          <div className="grid grid-cols-4 gap-6 max-sm:grid-cols-2">
-            <Stat label="Нийт эзэмшил" val={fmt(t.total)} unit={unit} strong />
-            <Stat label="Агуулахад" val={fmt(t.on_hand)} unit={unit} />
-            <Stat label="Түрээсэнд" val={fmt(t.out)} unit={unit}
-                  sub={t.out > 0 ? `${fmt(t.contracts)} гэрээ · ${fmt(t.clients)} харилцагч` : undefined} />
-            <Stat label="Засварт" val={t.in_repair > 0 ? fmt(t.in_repair) : "—"}
-                  unit={t.in_repair > 0 ? unit : ""} warn={t.in_repair > 0} />
+          {/* НИЙТ ЭЗЭМШИЛ = Агуулахад + Түрээсэнд + Засварт. Дөрвөн тоо нэг
+              мөрөнд зогсох нь тэднийг зэрэгцээ дөрвөн үзүүлэлт мэт уншуулж
+              байв — үнэндээ эхнийх нь бусад ГУРВЫН НИЙЛБЭР. «=» ба «+» тэмдэг
+              тэр харьцааг нүдэнд шууд хэлнэ: Отгоо толгойдоо нэмж шалгах
+              шаардлагагүй. Акталсан нь хуваалтад ОРОХГҮЙ (компанийнх байхаа
+              больсон) тул энэ мөрөнд ч байхгүй — доод хүснэгтэд харагдана. */}
+          <div>
+            <div className="flex items-start gap-4 max-sm:gap-3 flex-wrap">
+              <Stat label="Нийт эзэмшил" val={fmt(t.total)} unit={unit} strong />
+              <Sign>=</Sign>
+              <Stat label="Агуулахад" val={fmt(t.on_hand)} unit={unit} />
+              <Sign>+</Sign>
+              <Stat label="Түрээсэнд" val={fmt(t.out)} unit={unit}
+                    sub={t.out > 0 ? `${fmt(t.contracts)} гэрээ · ${fmt(t.clients)} харилцагч` : undefined} />
+              <Sign>+</Sign>
+              <Stat label="Засварт" val={t.in_repair > 0 ? fmt(t.in_repair) : "—"}
+                    unit={t.in_repair > 0 ? unit : ""} warn={t.in_repair > 0} />
+            </div>
+            <p className="text-[12px] text-t3 mt-2 max-w-[420px]">
+              Эзэмшлийн ширхэг бүр эдгээрийн яг нэгэнд зогсоно.
+              {t.written_off > 0 && <> Акталсан <b className="text-t2 tabular-nums">{fmt(t.written_off)}{unit}</b> нь
+                эзэмшлээс гарсан тул энд ороогүй.</>}
+            </p>
           </div>
         </div>
       </div>
@@ -161,12 +175,15 @@ export default function MaterialDetail() {
               дээрх журамтай ижил: түүнд эдгээр нь зүгээр л тоо. */}
           {canCount && <Link to="/warehouse/stocktake" className="btn-ghost btn-row">▣ Тооллого хийх</Link>}
         </div>
-        <table className="w-full min-w-[680px]">
+        {/* Баганын дараалал нь толгойн хуваалттай ИЖИЛ: гурван бүрэлдэхүүн
+            зэрэгцээ, дараа нь тэдний нийлбэр. Акталсан нь нийлбэрийн ХОЙНО
+            зогсоно — хуваалтад ордоггүй гэдгээ байрлалаараа хэлнэ. */}
+        <table className="w-full min-w-[720px]">
           <thead><tr>
             <th className="th">Зэрэглэл</th><th className="th text-right">Агуулахад</th>
             <th className="th text-right">Түрээсэнд</th><th className="th text-right">Засварт</th>
-            <th className="th text-right">Акталсан</th>
             <th className="th text-right">Нийт эзэмшил</th>
+            <th className="th text-right">Акталсан</th>
           </tr></thead>
           <tbody>
             {d.grades.map((g: any) => (
@@ -177,10 +194,10 @@ export default function MaterialDetail() {
                 <td className="td text-right tabular-nums">
                   {g.in_repair > 0 ? <b className="text-warn">{fmt(g.in_repair)}</b> : "—"}
                 </td>
+                <td className="td text-right tabular-nums font-bold text-ink">{fmt(g.total)}</td>
                 <td className="td text-right tabular-nums text-t3">
                   {g.written_off > 0 ? fmt(g.written_off) : "—"}
                 </td>
-                <td className="td text-right tabular-nums font-bold text-ink">{fmt(g.total)}</td>
               </tr>
             ))}
             {d.grades.length > 1 && (
@@ -189,12 +206,18 @@ export default function MaterialDetail() {
                 <td className="td text-right tabular-nums font-bold">{fmt(t.on_hand)}</td>
                 <td className="td text-right tabular-nums font-bold">{fmt(t.out)}</td>
                 <td className="td text-right tabular-nums font-bold">{t.in_repair > 0 ? fmt(t.in_repair) : "—"}</td>
-                <td className="td text-right tabular-nums text-t3">{t.written_off > 0 ? fmt(t.written_off) : "—"}</td>
                 <td className="td text-right tabular-nums font-extrabold text-ink">{fmt(t.total)}</td>
+                <td className="td text-right tabular-nums text-t3">{t.written_off > 0 ? fmt(t.written_off) : "—"}</td>
               </tr>
             )}
           </tbody>
         </table>
+        {d.grades.length > 0 && (
+          <p className="text-[12px] text-t3 px-4 pb-4 pt-1">
+            Агуулахад + Түрээсэнд + Засварт = Нийт эзэмшил. Акталсан нь эзэмшлээс
+            гарсан тул нийлбэрт ороогүй.
+          </p>
+        )}
         {d.grades.length === 0 && (
           <Empty title="Нөөц бүртгэгдээгүй"
                  sub="Энэ материалд зэрэглэлийн үлдэгдэл хараахан тогтоогоогүй байна."
@@ -273,13 +296,30 @@ export default function MaterialDetail() {
   );
 }
 
+/** Хуваалтын тэмдэг («=», «+») — тоонуудын ХООРОНДЫН харьцааг хэлдэг тул
+ *  дэлгэц уншигчид дахин уншигдах хэрэггүй (нэрсээ өөрсдөө хэлнэ).
+ *
+ *  Дээрээ ҮЛ ХАРАГДАХ шошготой: `Stat`-ийн шошготой яг ижил өндөр эзэлснээр
+ *  тэмдэг нь тоонуудын мөрөнд ЯГ таарч зогсоно. Тоо болгоныг гараар шилжүүлэх
+ *  (`mt-[22px]` гэх мэт) нь фонт солигдоход л алдагдана. */
+function Sign({ children }: { children: string }) {
+  return (
+    <div aria-hidden="true" className="select-none shrink-0">
+      <div className={STAT_LABEL + " invisible"}>·</div>
+      <div className="text-[17px] font-bold text-t3">{children}</div>
+    </div>
+  );
+}
+
+const STAT_LABEL = "text-[12px] text-t3 font-bold uppercase tracking-wider mb-1";
+
 /** Толгойн үзүүлэлт — тоо нь том, нэгж нь хажуудаа тайван. */
 function Stat({ label, val, unit, sub, strong, warn }: {
   label: string; val: string; unit?: string; sub?: string; strong?: boolean; warn?: boolean;
 }) {
   return (
     <div>
-      <div className="text-[12px] text-t3 font-bold uppercase tracking-wider mb-1">{label}</div>
+      <div className={STAT_LABEL}>{label}</div>
       <div className={`tabular-nums font-extrabold ${strong ? "text-[22px]" : "text-lg"} ${
         warn ? "text-warn" : "text-ink"}`}>
         {val}{unit && <span className="text-[13px] font-semibold text-t2 ml-1">{unit}</span>}

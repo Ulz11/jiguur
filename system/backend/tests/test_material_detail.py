@@ -7,7 +7,9 @@
 ХАМГААЛАХ ЁСТОЙ ТЭНЦЭЛ:
   · Гэрээ бүрийн «гадаа» тоо = `billing.lot_qty_on`-ийн падангийн үлдэгдэл,
     өөрөөр хэлбэл гэрээний дэлгэрэнгүйн материалын мөртэй ЯГ таарна.
-  · Зэрэглэл бүрээр: агуулахад + гадаа = нийт эзэмшил.
+  · Зэрэглэл бүрээр: агуулахад + гадаа + засварт = нийт эзэмшил (АКТАЛСАН нь
+    хуваалтаас ГАДНА — компанийнх байхаа больсон). Энэ хуваалт нь тайлангийн
+    `owned`-той ЯГ таарна: нэг тоог хоёр хуудас өөрөөр хэлэх ёсгүй.
   · Зэрэглэл бүрийн «гадаа» = нөөцийн хүснэгтийн `on_rent` (хоёр өөр замаар
     бодогдсон нэг тоо зөрвөл аль нэг нь худал).
   · Худалдсан бараа ГАДАА БИШ (буцаж ирэхгүй) — `contract_row.qty_out`-ийн
@@ -102,8 +104,13 @@ def test_pending_shipment_is_not_out_but_is_visible_in_movements(client, as_role
 
 # ---------- Тэнцэл ----------
 
-def test_on_hand_plus_out_equals_total_per_grade(client, as_role):
-    """Зэрэглэл бүрээр: агуулахад + гадаа = нийт эзэмшил; нийлбэр нь totals."""
+def test_owned_partitions_into_on_hand_out_and_in_repair(client, as_role):
+    """Зэрэглэл бүрээр: агуулахад + түрээсэнд + засварт = нийт эзэмшил.
+
+    Засварт байгаа бараа КОМПАНИЙНХ хэвээр — зүгээр л түр ашиглагдахгүй байна.
+    Түүнийг «нийт эзэмшил»-ээс гаргавал эзэмшил хаашаа ч хамаарахгүй алга
+    болно (хуваалт бүтэн байхаа болино). Акталсан нь ХАРИН ГАДНА: тэр бараа
+    компанийнх байхаа больсон тул хуваалтад ордоггүй, зөвхөн харагдана."""
     h = as_role("otgoo")
     d = _detail(client, h, _mat(client, h)["id"])
     out_by_grade: dict[int, float] = {}
@@ -112,10 +119,28 @@ def test_on_hand_plus_out_equals_total_per_grade(client, as_role):
     assert d["grades"], "зэрэглэлийн мөр хоосон байж болохгүй"
     for g in d["grades"]:
         assert g["out"] == pytest.approx(out_by_grade.get(g["grade_id"], 0.0))
-        assert g["total"] == pytest.approx(g["on_hand"] + g["out"])
-    assert d["totals"]["on_hand"] == pytest.approx(sum(g["on_hand"] for g in d["grades"]))
-    assert d["totals"]["out"] == pytest.approx(sum(g["out"] for g in d["grades"]))
-    assert d["totals"]["total"] == pytest.approx(d["totals"]["on_hand"] + d["totals"]["out"])
+        assert g["total"] == pytest.approx(g["on_hand"] + g["out"] + g["in_repair"])
+    t = d["totals"]
+    assert t["on_hand"] == pytest.approx(sum(g["on_hand"] for g in d["grades"]))
+    assert t["out"] == pytest.approx(sum(g["out"] for g in d["grades"]))
+    assert t["in_repair"] == pytest.approx(sum(g["in_repair"] for g in d["grades"]))
+    assert t["total"] == pytest.approx(t["on_hand"] + t["out"] + t["in_repair"])
+    assert t["in_repair"] > 0, "seed-д засварт байгаа бараа байх ёстой — эс бөгөөс энэ тест хоосон"
+
+
+def test_total_agrees_with_the_materials_report(client, as_role):
+    """ХОЁР ГАДАРГУУ НЭГ ТООГ ХЭЛНЭ.
+
+    Тайлангийн `owned` нь агуулахад+түрээсэнд+засварт гэж боддог байхад
+    материалын дэлгэрэнгүйн `total` нь засвартыг орхиж байв: нэг материал
+    хуудас солиход 8,310 ба 8,340 гэсэн хоёр өөр «нийт эзэмшил» харуулдаг.
+    Аль нэгийг нь итгэвэл нөгөө нь худал болно."""
+    h = as_role("otgoo")
+    m = _mat(client, h)
+    d = _detail(client, h, m["id"])
+    rows = client.get("/api/reports/materials", headers=h).json()["rows"]
+    rep = next(r for r in rows if r["material_id"] == m["id"])
+    assert d["totals"]["total"] == pytest.approx(rep["owned"], abs=1)
 
 
 def test_out_matches_the_stock_tables_on_rent(client, as_role):
@@ -147,7 +172,8 @@ def test_balance_holds_after_a_return(client, as_role):
     after = _detail(client, h, m["id"])
     assert _by_no(after)[("24/03", "А")]["qty"] == pytest.approx(row["qty"] - 25)
     g_after = next(g for g in after["grades"] if g["grade_id"] == gid)
-    assert g_after["total"] == pytest.approx(g_after["on_hand"] + g_after["out"])
+    assert g_after["total"] == pytest.approx(
+        g_after["on_hand"] + g_after["out"] + g_after["in_repair"])
     # Буцсан бараа агуулахад орсон — нийт эзэмшил хөдлөөгүй
     g_before = next(g for g in before["grades"] if g["grade_id"] == gid)
     assert g_after["total"] == pytest.approx(g_before["total"])

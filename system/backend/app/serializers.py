@@ -43,6 +43,11 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
       · гадаа     — гэрээ бүр дээрх ПАДАНГИЙН алхалт (`billing.lot_qty_on`),
                     өөрөөр хэлбэл гэрээний дэлгэрэнгүйн материалын мөр өөрөө.
     Тиймээс энд ШИНЭ тооцоо байхгүй — байгаа хоёр тоог нэг дор эвлүүлж байна.
+
+    НИЙТ ЭЗЭМШИЛ = агуулахад + түрээсэнд + ЗАСВАРТ. Гурав нь бүтэн хуваалт:
+    компанийн эзэмшлийн ширхэг бүр яг нэг нүдэнд зогсоно. `reports/materials`-
+    ийн `owned` ижил дүрмээр бодогддог — хоёр хуудас нэг тоо хэлнэ. АКТАЛСАН
+    нь хуваалтаас ГАДНА (тэр бараа компанийнх байхаа больсон) ч харагдана.
     Худалдсан бараа «гадаа» БИШ (буцаж ирэхгүй) — `contract_row.qty_out`-ийн
     дүрэмтэй ижил. Баталгаажаагүй ачилт үлдэгдэл хөдөлгөхгүй (падан болоогүй)
     ч сүүлийн хөдөлгөөнд ХАРАГДАНА — дарга юу хүлээгдэж байгаагаа мэдэх ёстой.
@@ -88,11 +93,18 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
         st = rows.get(gid)
         on_hand = st.on_hand if st else 0.0
         out = round(out_by_grade.get(gid, 0.0), 3)
+        in_repair = st.in_repair if st else 0.0
         per_grade.append({"grade_id": gid, "grade": gname.get(gid, "?"),
                           "on_hand": on_hand, "out": out,
-                          "in_repair": st.in_repair if st else 0.0,
+                          "in_repair": in_repair,
                           "written_off": st.written_off if st else 0.0,
-                          "total": round(on_hand + out, 3)})
+                          # ЭЗЭМШИЛ = агуулахад + түрээсэнд + ЗАСВАРТ. Засварт
+                          # байгаа бараа компанийнх хэвээр, зүгээр л түр
+                          # ашиглагдахгүй байна — хуваалтаас гаргавал эзэмшил
+                          # хаашаа ч хамаарахгүй алга болно. Акталсан нь ХАРИН
+                          # ГАДНА: тэр бараа компанийнх байхаа больсон.
+                          # `reports/materials`-ийн `owned` яг ийм бодогддог.
+                          "total": round(on_hand + out + in_repair, 3)})
 
     # ---- Сүүлийн хөдөлгөөн (бүх гэрээг дамнасан) ----
     moves = []
@@ -121,14 +133,15 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
 
     on_hand_total = sum(g["on_hand"] for g in per_grade)
     out_total = sum(g["out"] for g in per_grade)
+    repair_total = sum(g["in_repair"] for g in per_grade)
     return {"id": m.id, "name": m.name, "category": m.category, "code": m.code,
             "unit": m.unit, "base_rate": m.base_rate, "repair_fee": m.repair_fee,
             "active": m.active,
             "grades": per_grade,
             "totals": {"on_hand": round(on_hand_total, 3), "out": round(out_total, 3),
-                       "in_repair": sum(g["in_repair"] for g in per_grade),
+                       "in_repair": repair_total,
                        "written_off": sum(g["written_off"] for g in per_grade),
-                       "total": round(on_hand_total + out_total, 3),
+                       "total": round(on_hand_total + out_total + repair_total, 3),
                        "contracts": len({h["contract_id"] for h in holdings}),
                        "clients": len({h["client_id"] for h in holdings})},
             "holdings": holdings,
