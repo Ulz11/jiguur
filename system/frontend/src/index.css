@@ -298,6 +298,33 @@ body::before {
 .segment > button { @apply rounded-[5px] font-semibold transition text-t1; min-height: var(--target-sm); padding: 5px 14px; font-size: 12.5px; }
 .segment > button.on { background: var(--color-cardbg); color: var(--jz-blue); box-shadow: 0 2px 6px rgba(25,41,107,.1); }
 
+/* ---- Түрээс / Худалдаа — хуудсын ГОЛ шилжүүлэгч ----
+   Энэ товч жагсаалтын АГУУЛГЫГ бүхэлд нь сольдог тул төлөвийн шүүлтүүртэй
+   (`.segment`, 36px, 12.5px) нэг эрэмбэд зогсох ёсгүй байв. Урьд нь топбарын
+   баруун дээд буланд, хуудаснаасаа тусдаа зогсдог байсныг Отгоо огт
+   анзаардаггүй байсан: одоо шүүлтүүрийн ЭХНИЙ мөрөнд, 44px өндөр, 15px
+   бүдүүн бичигтэй, сонгогдсон нь брэндийн улбар шар дээр гүн navy
+   (5.66:1) бичгээр зогсоно. */
+.scope-switch {
+  display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px;
+  border-radius: 10px; border: 1px solid var(--color-line-strong);
+  background: var(--color-sunken);
+}
+.scope-switch > button {
+  min-height: var(--target); padding: 0 22px; border-radius: 7px;
+  font-size: 15px; font-weight: 700; color: var(--color-t1);
+  transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+}
+.scope-switch > button:hover { background: rgba(255, 255, 255, .72); }
+.scope-switch > button.on {
+  background: var(--jz-orange); color: var(--color-onbrand);
+  box-shadow: 0 6px 14px rgba(255, 138, 11, .28);
+}
+.scope-switch > button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) { .scope-switch > button { transition: none; } }
+/* Утсан дээр гурав нь нэг мөрөнд багтана — зайг нь л хумина, өндрийг нь биш */
+@media (max-width: 430px) { .scope-switch > button { padding: 0 14px; font-size: 14px; } }
+
 
 /* ============================================================
    Жигүүр Зам — precision operational interface

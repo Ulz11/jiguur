@@ -73,8 +73,10 @@ function Shell({ children }: { children: ReactNode }) {
   if (!u) return <Navigate to="/login" replace />;
   // Даргын нүүр хуудсанд санхүүгийн блок байхгүй тул Түрээс/Худалдаа
   // шүүлтүүр тэнд юу ч хөдөлгөхгүй — үхсэн товч үлдээхгүй.
-  const showScope = ["/", "/contracts"].includes(loc.pathname)
-    && !(u.role === "factory" && loc.pathname === "/");
+  // Гэрээнүүд дээр энэ шилжүүлэгч ХУУДСАН ДОТРОО, шүүлтүүрийн эхэнд том
+  // товч болж буусан (Contracts.tsx) — топбарын буланд давхардуулбал ижил
+  // төлөв хоёр өөр газраас удирдагдана. Дашбоард дээр л энд үлдэнэ.
+  const showScope = loc.pathname === "/" && u.role !== "factory";
   const availableNav = NAV.filter((n: any) => (!n.role || n.role === u.role) && n.hide !== u.role);
   const workNav = availableNav.slice(0, WORK_COUNT);
   const orgNav = availableNav.slice(WORK_COUNT);

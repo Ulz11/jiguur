@@ -5,8 +5,11 @@ import { Spinner, StatePill, TypePill, Prog, Empty, Refreshing, useToast } from 
 import { rowClickProps } from "../lib/rowClick";
 import { useScope } from "../App";
 
+/** Түрээс/Худалдаа — хуудсын хамгийн эхний, хамгийн том шийдвэр. */
+const SCOPES: [string, string][] = [["all", "Бүгд"], ["rent", "Түрээс"], ["sale", "Худалдаа"]];
+
 export default function Contracts() {
-  const { scope } = useScope();
+  const { scope, setScope } = useScope();
   const [rows, setRows] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("all");
@@ -52,6 +55,19 @@ export default function Contracts() {
           <p className="text-t2 text-[13.5px] mt-0.5">Бүх түрээс, худалдааны гэрээ нэг дор.</p>
         </div>
         {u?.role !== "factory" && <Link to="/contracts/new" className="btn-primary">+ Шинэ гэрээ</Link>}
+      </div>
+
+      {/* Түрээс/Худалдаа нь топбарын баруун дээд буланд, хуудаснаасаа тусдаа
+          зогсдог байсан — Отгоо түүнийг олж хардаггүй, «худалдааны гэрээ
+          алга» гэж боддог байв. Энэ бол жагсаалтын АГУУЛГЫГ сольдог хамгийн
+          эхний шийдвэр тул шүүлтүүрийн эхэнд, ХАМГИЙН том товч болж зогсоно. */}
+      <div className="mb-3">
+        <div className="scope-switch" role="group" aria-label="Түрээс / Худалдаагаар шүүх">
+          {SCOPES.map(([v, l]) => (
+            <button key={v} onClick={() => setScope(v)} aria-pressed={scope === v}
+                    className={scope === v ? "on" : ""}>{l}</button>
+          ))}
+        </div>
       </div>
 
       <div className="flex items-center gap-3 mb-4 flex-wrap">
