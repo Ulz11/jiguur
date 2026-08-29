@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, fmt, money, sayaFmt, user } from "../api";
-import { Spinner, Prog, useToast, ConfirmModal, Refreshing } from "../ui";
+import { Spinner, Prog, useToast, ConfirmModal, Refreshing, Empty } from "../ui";
 import { useScope } from "../App";
 import { useLive } from "../lib/live";
 import { rowClickProps } from "../lib/rowClick";
-import { clientHref, contractHref, contractsHref, notificationHref } from "../lib/links";
+import { clientHref, contractHref, contractsHref, invoiceHref, notificationHref } from "../lib/links";
 import { invoiceLabel } from "../lib/invoice";
 import { dueLabel, todayIso } from "../lib/schedule";
 import RevChart from "../components/RevChart";
@@ -13,9 +13,11 @@ import RevChart from "../components/RevChart";
 /** Даргад хамаарах мэдэгдлүүд — ачилт, гэрээний хугацаа. Нэхэмжлэлийн
  *  хугацаа хэтрэлт, алданги, зээл, амлалт нь санхүүгийн ажил тул түүнд харагдахгүй. */
 const FACTORY_NOTE_KINDS = new Set(["shipment", "ending", "expired"]);
+/** Шүүлтүүрийн нэр — хоосон төлөв ЯМАР хүрээнээс болж хоосорсныг хэлнэ */
+const SCOPE_LABEL: Record<string, string> = { rent: "Түрээс", sale: "Худалдаа" };
 
 export default function Dashboard() {
-  const { scope } = useScope();
+  const { scope, setScope } = useScope();
   const [d, setD] = useState<any>(null);
   const [busyScope, setBusyScope] = useState(false);
   const [outQueue, setOutQueue] = useState<any[] | null>(null); // гадаа материалтай гэрээнүүд
@@ -97,7 +99,7 @@ export default function Dashboard() {
   const shipmentsCard = (touch: boolean) => (
     <div className="card p-5">
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <h3 className={`font-bold text-ink ${touch ? "text-[17px]" : "text-[15.5px]"}`}>Ачилт хүлээгдэж буй</h3>
+        <h2 className={`font-bold text-ink ${touch ? "text-[17px]" : "text-[15.5px]"}`}>Ачилт хүлээгдэж буй</h2>
         <span className="pill-blue">
           {touch ? `${d.pending_shipments.length} хүлээгдэж байна` : "Дарга баталгаажуулна"}
         </span>
@@ -137,7 +139,7 @@ export default function Dashboard() {
   const returnQueueCard = (
     <div className="card p-5">
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <h3 className="font-bold text-ink text-[17px]">Буцаалт хүлээж буй гэрээ</h3>
+        <h2 className="font-bold text-ink text-[17px]">Буцаалт хүлээж буй гэрээ</h2>
         {!!outQueue?.length && (
           <span className="pill-grey">
             {fmt(outQueue.reduce((s: number, c: any) => s + c.qty_out, 0))} ш түрээсэнд
@@ -164,7 +166,7 @@ export default function Dashboard() {
 
   const notificationsCard = (
     <div className="card p-5">
-      <h3 className="font-bold text-ink text-[15.5px] mb-3">Мэдэгдэл</h3>
+      <h2 className="font-bold text-ink text-[15.5px] mb-3">Мэдэгдэл</h2>
       {notes.length === 0 && <p className="text-t3 text-sm py-4">Одоогоор мэдэгдэл алга. 🙌</p>}
       {notes.map((n: any, i: number) => {
         /* Мэдэгдэл бүр ХААШАА аваачихаа мэднэ: гэрээтэй бол гэрээ рүү, эс
@@ -260,8 +262,12 @@ export default function Dashboard() {
         {/* «3 нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг
             хэлдэггүй байв — Отгоо тоог хараад хэнд залгахаа мэдэхгүй үлддэг.
             Карт нь бүтнээрээ дарагдаж задарна (Tab-аар ч очно). */}
+        {/* `aria-controls` нь БАЙГАА зангилаа заана: хумигдсан үед самбар нь
+            DOM-д огт байхгүй тул холбоос нь мухардмал болно. Нээлттэй үедээ л
+            заана — хумигдсаныг `aria-expanded` өөрөө хэлж байгаа. */}
         <button type="button" className="command-metric w-full text-left"
-                aria-expanded={overdueOpen} aria-controls="overdue-panel"
+                aria-expanded={overdueOpen}
+                {...(overdueOpen ? { "aria-controls": "overdue-panel" } : {})}
                 onClick={() => setOverdueOpen(!overdueOpen)}>
           <div className="text-[12.5px] text-t2 font-medium mb-2">Хугацаа хэтэрсэн</div>
           <div className="text-[28px] font-extrabold text-danger tabular-nums leading-tight"
@@ -314,7 +320,7 @@ export default function Dashboard() {
       {overdueOpen && (
         <div id="overdue-panel" className="card p-5 mb-3">
           <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-            <h3 className="font-bold text-ink text-[15.5px]">Хугацаа хэтэрсэн нэхэмжлэлүүд</h3>
+            <h2 className="font-bold text-ink text-[15.5px]">Хугацаа хэтэрсэн нэхэмжлэлүүд</h2>
             <span className="pill-red" title={money(k.overdue)}>
               {overdueList.length} нэхэмжлэл · {sayaFmt(k.overdue)}₮
             </span>
@@ -329,16 +335,25 @@ export default function Dashboard() {
                   <th className="th text-right">Үлдэгдэл</th><th className="th text-right">Хэтэрсэн</th>
                 </tr></thead>
                 <tbody>
-                  {overdueList.map((o: any) => (
+                  {overdueList.map((o: any) => {
+                    const lb = invoiceLabel(o);
+                    return (
+                    /* Мөр нь гэрээний ДЭЭД талд биш, ЯГ ТЭР НЭХЭМЖЛЭЛ дээрээ
+                       буулгана (#inv-…): Отгоо жагсаалтаас нэг мөр дараад
+                       гэрээний толгойд гараад доош нь хайж эхэлдэг байв. */
                     <tr key={o.id} className="cursor-pointer hover:bg-canvas"
-                        {...rowClickProps(() => nav(contractHref(o.contract_id)),
-                          `${o.client} — ${money(o.remaining)}, ${o.days_overdue} хоног хэтэрсэн, гэрээ №${o.contract_no} нээх`,
+                        {...rowClickProps(() => nav(invoiceHref(o.contract_id, o.id)),
+                          `${lb.sub ?? lb.title} · ${o.client} — ${money(o.remaining)}, ${o.days_overdue} хоног хэтэрсэн, гэрээ №${o.contract_no} нээх`,
                           "row")}>
                       <td className="td">
-                        {/* Нэхэмжлэлийн нэр бүх дэлгэц дээр НЭГ дүрмээс гарна */}
-                        <b className="text-ink">{invoiceLabel(o).title}</b>
+                        {/* Нэхэмжлэлийн нэр бүх дэлгэц дээр НЭГ дүрмээс гарна.
+                            Түрээсийн нэхэмжлэл ҮЕЭРЭЭ нэрлэгддэг ч мэдэгдэл нь
+                            дугаараар нь дууддаг — хоёулаа мөрөн дээрээ зогсоно,
+                            эс бөгөөс «R-26/07-4» гэдэг нь энэ мөр мөн эсэхийг
+                            Отгоо таамаглана. */}
+                        <b className="text-ink">{lb.title}</b>
                         <span className="block text-xs text-t3">
-                          Гэрээ №{o.contract_no} · {o.due_date}-нд төлөгдөх ёстой байсан
+                          {lb.sub && <>{lb.sub} · </>}Гэрээ №{o.contract_no} · {o.due_date}-нд төлөгдөх ёстой байсан
                         </span>
                       </td>
                       {/* Мөр нь ГЭРЭЭ рүү; харилцагчийн нэр ӨӨРИЙН баганадаа
@@ -349,7 +364,8 @@ export default function Dashboard() {
                       <td className="td text-right tabular-nums font-bold text-danger">{money(o.remaining)}</td>
                       <td className="td text-right"><span className="pill-red tabular-nums">{o.days_overdue} хоног</span></td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -360,7 +376,7 @@ export default function Dashboard() {
       {/* Хүлээгдэж буй төлбөр — ТӨСӨӨЛӨЛ, нэхэмжлэгдсэн баримт БИШ */}
       <div className="card p-5 mb-3">
         <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
-          <h3 className="font-bold text-ink text-[15.5px]">Хүлээгдэж буй төлбөр</h3>
+          <h2 className="font-bold text-ink text-[15.5px]">Хүлээгдэж буй төлбөр</h2>
           <span className="pill-amber">төсөөлөл</span>
         </div>
         <p className="text-[12.5px] text-t2 mb-3">
@@ -368,9 +384,16 @@ export default function Dashboard() {
           нэхэмжлэгдсэн дүн БИШ.
         </p>
         {schedule.length === 0 ? (
-          <p className="text-t3 text-sm py-4">
-            Хүлээгдэж буй төлбөр алга — идэвхтэй түрээсийн гэрээн дээр бараа түрээсэнд гарахад энд гарч ирнэ.
-          </p>
+          /* ШҮҮЛТҮҮРЭЭС болж хоосорсон бол энэ нь ГАРЦГҮЙ ХАНА байх ёсгүй
+             (UI-ЗАРЧИМ §4): «Худалдаа» хүрээнд түрээсийн цикл байхгүй нь
+             хэвийн — буцаж гарах ганц товч эндээ байна. */
+          <Empty
+            title="Хүлээгдэж буй төлбөр алга"
+            sub={scope === "all"
+              ? "Идэвхтэй түрээсийн гэрээн дээр бараа түрээсэнд гарахад энд гарч ирнэ."
+              : `${SCOPE_LABEL[scope]} хүрээнд хүлээгдэж буй цикл алга — бүх төрлөөр харвал гарч ирж магадгүй.`}
+            action={scope === "all" ? undefined
+              : { label: "Бүгдийг харах", onClick: () => setScope("all") }} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px]">
@@ -413,7 +436,7 @@ export default function Dashboard() {
       <div className="dashboard-analysis">
         <div className="card p-5">
           <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-            <h3 className="font-bold text-ink text-[15.5px] flex items-center gap-2"><span className="cdot" />Орлого — Түрээс · Худалдаа · Бартер</h3>
+            <h2 className="font-bold text-ink text-[15.5px] flex items-center gap-2"><span className="cdot" />Орлого — Түрээс · Худалдаа · Бартер</h2>
             <div className="flex items-center gap-1.5 flex-wrap">
               {/* Төлбөр нь гэрээгүй байж болдог тул түрээс/худалдаагаар шүүх
                   нь ЗОХИОМОЛ хариу төрүүлнэ. Тиймээс энэ график шүүлтүүрийг
@@ -431,7 +454,7 @@ export default function Dashboard() {
           <RevChart months={d.revenue.months} rent={d.revenue.rent} sale={d.revenue.sale} barter={d.revenue.barter} />
         </div>
         <div className="card p-5">
-          <h3 className="font-bold text-ink text-[15.5px] mb-4">Авлага насжилтаар</h3>
+          <h2 className="font-bold text-ink text-[15.5px] mb-4">Авлага насжилтаар</h2>
           {d.aging.map((a: any, i: number) => (
             <div key={a.label} className="flex items-center gap-3 mb-3">
               <span className="w-[84px] text-[12.5px] text-t2 font-medium">{a.label}</span>
@@ -455,7 +478,7 @@ export default function Dashboard() {
         {shipmentsCard(false)}
         <div className="card p-5">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold text-ink text-[15.5px]">Зээлийн ойрын төлөлт</h3>
+            <h2 className="font-bold text-ink text-[15.5px]">Зээлийн ойрын төлөлт</h2>
             <Link to="/loans" className="text-[12.5px] text-brand-ink font-semibold hover:underline">Бүгд →</Link>
           </div>
           {(d.loans_upcoming || []).length === 0 && <p className="text-t3 text-sm py-4">Идэвхтэй зээл алга.</p>}

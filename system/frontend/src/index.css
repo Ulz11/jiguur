@@ -304,6 +304,23 @@ body::before {
 @keyframes jz-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .refresh-note::before { animation: none; } }
 
+/* ---------- Заасан мөр (#inv-… гэх мэт хаягаар ирсэн) ----------
+   Дашбоардын «хугацаа хэтэрсэн» жагсаалтаас дарсан мөр нь гэрээний ТОЛГОЙД
+   буудаг байв — Отгоо тэндээсээ доош гүйлгэж, 30 нэхэмжлэлийн дундаас өөрийн
+   дарсан мөрөө нүдээрээ дахин хайна. Одоо хаяг нь мөрөө заана; заасан мөр нь
+   товч зуур брэнд өнгөөр асаж, харц шууд түүн дээр буудаг. Дараа нь бүдгэрч,
+   хүснэгт хэвэндээ ордог — байнгын тэмдэглэгээ болж үлдэхгүй. */
+@keyframes jz-row-flash {
+  from { background: var(--color-brand-100); }
+  to { background: transparent; }
+}
+.row-flash > td { animation: jz-row-flash 1.5s ease-out; }
+/* Хөдөлгөөн хүсээгүй хүнд ЧИМЭЭГҮЙ тэмдэглэгээ — гэрэлтэлт биш, тайван өнгө
+   (класс нь ижил хугацааны дараа өөрөө салдаг). */
+@media (prefers-reduced-motion: reduce) {
+  .row-flash > td { animation: none; background: var(--color-brand-50); }
+}
+
 /* Техникийн задаргаа (алдааны мессеж) — хаалттай байхдаа чимээгүй, нээгдэхэд
    зүүн тийш эгнэсэн код. Сумны эргэлт нь нээгдсэнийг хэлнэ. */
 .tech-details > summary { list-style: none; cursor: pointer; }
@@ -472,7 +489,9 @@ body::before {
 .dashboard-analysis { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, .9fr); gap: 13px; }
 .dashboard-operations { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 13px; margin-top: 13px; }
 .dashboard-analysis .card, .dashboard-operations .card { padding: 21px; }
-.dashboard-analysis h3, .dashboard-operations h3 { color: var(--jz-blue-deep); }
+/* Самбарын гарчиг h1-ийн ДАРААХ шат (h2) болов — гарчгийн дараалал алгасахгүй.
+   Хэв нь ангиараа явдаг тул харагдац хөдлөхгүй; сонгогч нь хоёуланг барина. */
+.dashboard-analysis :is(h2, h3), .dashboard-operations :is(h2, h3) { color: var(--jz-blue-deep); }
 .dashboard-operations .card { border-top: 2px solid transparent; }
 .dashboard-operations .card:nth-child(1) { border-top-color: var(--jz-orange); }
 .dashboard-operations .card:nth-child(2) { border-top-color: var(--jz-blue); }
@@ -484,7 +503,7 @@ body::before {
 .work-queue .card { padding: 21px; border-top: 2px solid transparent; }
 .work-queue .card:nth-child(1) { border-top-color: var(--jz-orange); }
 .work-queue .card:nth-child(2) { border-top-color: var(--jz-blue); }
-.work-queue h3 { color: var(--jz-blue-deep); }
+.work-queue :is(h2, h3) { color: var(--jz-blue-deep); }
 .work-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
   min-height: var(--target-lg); padding: 11px 0; border-bottom: 1px solid var(--color-sunken);
   transition: background .15s; }
@@ -619,9 +638,11 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2p
 }
 @media (max-width: 760px) {
   .jz-topbar { height: 57px; padding: 0 12px; gap: 8px; }
-  /* Явцуу дэлгэц ч гэсэн мэдээллийн доод хязгаараас доош ордоггүй — 9px
-     байсныг 11px болгож, зайг нь хасаж багтаав (… -ээр таслагдана). */
-  .jz-location { font-size: 11px; letter-spacing: .02em; }
+  /* Явцуу дэлгэц ч гэсэн мэдээллийн доод хязгаараас доош ордоггүй. 9px → 11px
+     болгосон нь ХАГАС алхам байв: 12px бол системийн жижиг бичгийн ШАЛ (Отгоо
+     60 настай). Дэлгэц явцуу бол текст өөрөө … -ээр таслагдана — үсгээ
+     жижигрүүлэх нь шийдэл БИШ. Зай нь бүрэн хаагдаж, өргөнөө нөхнө. */
+  .jz-location { font-size: 12px; letter-spacing: 0; }
   .refresh-note { top: 69px; }   /* topbar 66 → 57px болоход дагана */
   .jz-topbar-actions { margin-left: auto; }
   .jz-content { padding: 22px 14px 45px; }

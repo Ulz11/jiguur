@@ -10,6 +10,22 @@ export const clientHref = (id: number) => `/clients/${id}`;
 export const contractHref = (id: number) => `/contracts/${id}`;
 export const materialHref = (id: number) => `/warehouse/materials/${id}`;
 
+/* ---------- Нэхэмжлэл: гэрээний хуудасны ЯГ тэр мөр ----------
+ *
+ * Нэхэмжлэлд өөрийн хуудас байхгүй — тэр нь гэрээнийхээ хүснэгтэн дэх нэг мөр.
+ * Гэхдээ «хугацаа хэтэрсэн 3 нэхэмжлэл» дотроос нэгийг дараад гэрээний ТОЛГОЙД
+ * буух нь Отгоог 30 мөрийн дундаас өөрийн дарсан мөрөө дахин хайхад хүргэдэг.
+ * Тиймээс мөр өөрөө хаягтай: `#inv-{id}`. Зангууны нэр НЭГ л газар бичигдэнэ —
+ * мөрийн `id` ба холбоос хоёр зөрвөл холбоос чимээгүй хоосон буудна.
+ */
+export const invoiceAnchorId = (invoiceId: number) => `inv-${invoiceId}`;
+
+/** Нэхэмжлэлээ мэдэхгүй бол ГЭРЭЭ рүүгээ — худал зангуу нь зангуугүйгээс дор. */
+export function invoiceHref(contractId: number, invoiceId?: number | null): string {
+  const to = contractHref(contractId);
+  return invoiceId ? `${to}#${invoiceAnchorId(invoiceId)}` : to;
+}
+
 /* ---------- Гэрээний жагсаалтын төлөв ---------- */
 
 /** Гэрээнүүд хуудасны төлөвийн шүүлтүүрүүд (Contracts.tsx-ийн FILTERS-тэй нэг эх сурвалж) */
@@ -63,12 +79,16 @@ const FACTORY_BLOCKED = new Set(["/loans", "/collections", "/salary", "/reports"
 
 /** Мэдэгдэл хаашаа аваачих вэ. Гэрээтэй бол гэрээ рүүгээ, эс бөгөөс төрлийнхөө
  *  хуудас руу. Даргад хаалттай хуудас руу холбоос ҮҮСГЭХГҮЙ — дарж ороод 403
- *  харах нь холбоосгүйгээс дор. */
+ *  харах нь холбоосгүйгээс дор.
+ *
+ *  Мэдэгдэл нь ЯМАР нэхэмжлэлийн тухай ярьж байгаагаа мэддэг бол (сервер
+ *  `invoice_id` явуулдаг) тэр мөр дээрээ буулгана — «R-26/07-4 12 хоног
+ *  хэтэрлээ» гэж уншсан хүн гэрээний толгойд бууж, мөрөө дахин хайх ёсгүй. */
 export function notificationHref(
-  n: { kind: string; contract_id?: number | null },
+  n: { kind: string; contract_id?: number | null; invoice_id?: number | null },
   role: string | undefined,
 ): string | null {
-  if (n.contract_id) return contractHref(n.contract_id);
+  if (n.contract_id) return invoiceHref(n.contract_id, n.invoice_id);
   const to = NOTE_ROUTE[n.kind];
   if (!to) return null;
   return role === "factory" && FACTORY_BLOCKED.has(to) ? null : to;

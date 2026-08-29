@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  clientHref, contractHref, materialHref,
+  clientHref, contractHref, materialHref, invoiceAnchorId, invoiceHref,
   contractsHref, contractFilterFrom, auditHref, notificationHref,
 } from "./links";
 
@@ -13,6 +13,24 @@ describe("объектын хаяг", () => {
     expect(clientHref(7)).toBe("/clients/7");
     expect(contractHref(26)).toBe("/contracts/26");
     expect(materialHref(3)).toBe("/warehouse/materials/3");
+  });
+});
+
+describe("нэхэмжлэлийн хаяг", () => {
+  it("нэхэмжлэл нь гэрээнийхээ хуудсан дээрх ЯГ өөрийн мөр рүү заана", () => {
+    // Гэрээний толгойд буулгах нь «олдсонгүй»-тэй ойролцоо: 30 мөрийн
+    // дундаас Отгоо өөрийн дарсан нэхэмжлэлээ дахин нүдээрээ хайна.
+    expect(invoiceHref(26, 412)).toBe("/contracts/26#inv-412");
+  });
+
+  it("мөрийн id ба хаягийн зангуу НЭГ эх сурвалжаас гарна", () => {
+    expect(invoiceAnchorId(412)).toBe("inv-412");
+    expect(invoiceHref(26, 412)).toBe(`${contractHref(26)}#${invoiceAnchorId(412)}`);
+  });
+
+  it("нэхэмжлэлээ мэдэхгүй бол гэрээ рүүгээ — зангуугүй", () => {
+    expect(invoiceHref(26, null)).toBe("/contracts/26");
+    expect(invoiceHref(26, undefined)).toBe("/contracts/26");
   });
 });
 
@@ -64,6 +82,13 @@ describe("notificationHref", () => {
   it("гэрээтэй мэдэгдэл гэрээ рүүгээ очно", () => {
     expect(notificationHref({ kind: "ending", contract_id: 5 }, "manager")).toBe("/contracts/5");
     expect(notificationHref({ kind: "shipment", contract_id: 5 }, "factory")).toBe("/contracts/5");
+  });
+
+  it("нэхэмжлэлээ нэрлэсэн мэдэгдэл ТЭР МӨР рүүгээ буулгана", () => {
+    // «нэхэмжлэл R-26/07-4 12 хоног хэтэрлээ» гэж дуудсан мэдэгдэл гэрээний
+    // толгойд буувал Отгоо тэр мөрийг өөрөө хайх ёстой болно.
+    expect(notificationHref({ kind: "overdue", contract_id: 5, invoice_id: 41 }, "manager"))
+      .toBe("/contracts/5#inv-41");
   });
 
   it("гэрээгүй мэдэгдэл өөрийн хуудас руу очно", () => {

@@ -1,5 +1,5 @@
 import { Fragment, ReactNode, useEffect, useId, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { api, money, fmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, useToast,
          InlineEdit, Receipt, ConfirmModal } from "../ui";
@@ -11,7 +11,7 @@ import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import { materialSections, MaterialSection } from "../lib/lots";
-import { clientHref, materialHref } from "../lib/links";
+import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { todayIso } from "../lib/schedule";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -44,6 +44,28 @@ export default function ContractDetail() {
 
   const load = () => api(`/api/contracts/${id}`).then(setD).catch((e) => toast(e.message, "err"));
   useEffect(() => { load(); api("/api/grades").then(setGrades); }, [id]);
+
+  /* ---------- Хаягаар заасан мөр рүү ----------
+     Дашбоардын «хугацаа хэтэрсэн» жагсаалт, мэдэгдэл хоёр ЯГ нэг нэхэмжлэлийг
+     нэрлээд гэрээний ТОЛГОЙД буулгадаг байв. Одоо хаяг нь мөрөө авчирдаг:
+     `#inv-{id}` → тэр мөрийг нүдний өмнө гаргаж, товч зуур асаана.
+     Мөрүүд зурагдсаны ДАРАА л хайна (`ready`) — эс бөгөөс зангилаа хараахан
+     төрөөгүй байна. Дараагийн ачаалалт (засвар хийхэд) дахин асаахгүй. */
+  const { hash } = useLocation();
+  const ready = !!d;
+  useEffect(() => {
+    if (!ready || !hash) return;
+    const el = document.getElementById(hash.slice(1));
+    if (!el) return;
+    /* ШУУД байрлуулна, гүйлгэж үзүүлэхгүй: энэ бол ХУУДАС СОЛИГДСОН мөч —
+       өмнөх байрлалтай залгах орон зай алга, зөөлөн гүйлт нь зөвхөн хүлээлт
+       нэмнэ (зарим хөтөч дээр огт ажиллахгүй ч байдаг). Хуудас нээгдэхдээ
+       ЗААСАН мөрөө нүдний өмнө барьж, товч зуур асаана. */
+    el.scrollIntoView({ block: "center" });
+    el.classList.add("row-flash");
+    const t = window.setTimeout(() => el.classList.remove("row-flash"), 1600);
+    return () => window.clearTimeout(t);
+  }, [hash, ready]);
 
   /* InlineEdit-ийн хадгалалт: алдааг toast-оор гаргаад ДАХИН шиднэ. Тэгснээр
      талбар засварын горимд үлдэж, бичсэн утга алдагдахгүй — Loans.tsx-ийн
@@ -100,14 +122,18 @@ export default function ContractDetail() {
                 {/* Дуусах огноо нь ХООСОН байх нь хэвийн — компани гэрээндээ
                     хугацаа тавьдаггүй. «тодорхойгүй» гэдэг нь мэдээлэл дутуу
                     мэт сонсогддог байв; гэрээ үнэхээр хугацаагүй. */}
-                <span className="inline-flex items-center gap-1.5">Дуусах:
+                {/* Харагдах нэр («Дуусах:») нь ХАРЦНЫХ. Уншигчид талбарын
+                    нэрийг InlineEdit-ийн `label` аль хэдийн хэлдэг тул хоёуланг
+                    зарлавал «Дуусах: Дуусах огноо: Хугацаагүй, засах» болно —
+                    нэг талбар НЭГ л удаа нэрлэгдэнэ. */}
+                <span className="inline-flex items-center gap-1.5"><span aria-hidden="true">Дуусах:</span>
                   <InlineEdit type="date" label="Дуусах огноо" value={d.end_date || ""}
                     display={endDateLabel(d.end_date)}
                     confirmText="Огноо солих уу?" width="w-36"
                     onSave={(v) => savePatch(`/api/contracts/${d.id}`,
                       v ? { end_date: v } : { clear_end_date: true }, "Дуусах огноо шинэчлэгдлээ")} />
                 </span>
-                <span className="inline-flex items-center gap-1.5">Алданги:
+                <span className="inline-flex items-center gap-1.5"><span aria-hidden="true">Алданги:</span>
                   <InlineEdit type="number" label="Алданги" value={d.penalty_percent} suffix="%/хоног" width="w-20" right
                     confirmText="Алданги солих уу?"
                     onSave={(v) => savePatch(`/api/contracts/${d.id}`,
@@ -116,7 +142,7 @@ export default function ContractDetail() {
                 {/* Барьцаа нь ГАНЦ гэрээний тодорхой дүн — доорх «Барьцаа»
                     хайрцаг үүнийг бүтнээр нь харуулдаг. Толгойд нь сая болгож
                     дугуйлбал нэг тоо хоёр өөр дүн болж харагдана. */}
-                <span className="inline-flex items-center gap-1.5">Барьцаа:
+                <span className="inline-flex items-center gap-1.5"><span aria-hidden="true">Барьцаа:</span>
                   <InlineEdit type="number" label="Барьцаа" value={d.deposit} display={d.deposit > 0 ? money(d.deposit) : "—"}
                     confirmText="Барьцаа солих уу?" width="w-28" right
                     onSave={(v) => savePatch(`/api/contracts/${d.id}`,
@@ -128,7 +154,8 @@ export default function ContractDetail() {
             )}
           </div>
           {seesMoney && (
-            <div className="text-t2 text-[13px] mt-1.5 inline-flex items-center gap-1.5">Тэмдэглэл:
+            <div className="text-t2 text-[13px] mt-1.5 inline-flex items-center gap-1.5">
+              <span aria-hidden="true">Тэмдэглэл:</span>
               <InlineEdit label="Тэмдэглэл" value={d.note} display={d.note || "нэмэх…"} width="w-72"
                 confirmText="Хадгалах уу?"
                 onSave={(v) => savePatch(`/api/contracts/${d.id}`, { note: v }, "Тэмдэглэл хадгалагдлаа")} />
@@ -188,9 +215,9 @@ export default function ContractDetail() {
           {/* Материал — мөр бүр өөрийнхөө хөдөлгөөний түүхийг доороо задална */}
           <div className="card overflow-x-auto">
             <div className="flex items-center justify-between px-4 pt-4 pb-1">
-              <h3 className="font-bold text-ink text-[15.5px]">
+              <h2 className="font-bold text-ink text-[15.5px]">
                 {d.type === "rent" ? "Түрээсэнд байгаа материал" : "Худалдсан материал"}
-              </h3>
+              </h2>
               <span className="pill-grey">{fmt(d.items.reduce((s: number, i: any) => s + i.qty, 0))} ширхэг</span>
             </div>
             <table className="w-full min-w-[520px]">
@@ -209,10 +236,17 @@ export default function ContractDetail() {
                     {/* Хүснэгтэд мөргүй үлдсэн түүх (гэрээний мөрд ороогүй
                         материал) ч мөрөө авна — түүх чимээгүй алга болохгүй. */}
                     {(sec.rows.length ? sec.rows : [{ ...sec, orphan: true }]).map((it: any, i: number) => (
+                      /* Нэг материал ХОЁР тарифаар гарсан бол хоёр мөр болно —
+                         хоёулаа «Хэв хашмал 6012 (В) — түүхийг нээх» гэж ЯГ
+                         ижилхэн дуудагдвал уншигчаар ажилладаг хүн хоёр өөр
+                         мөрийг ялгаж чадахгүй. Ялгаж буй зүйл нь ТАРИФ. */
                       <tr key={i} className={has ? "cursor-pointer hover:bg-canvas transition" : undefined}
                           {...(has ? { "aria-expanded": open } : {})}
                           {...(has ? rowClickProps(() => setOpenMat(open ? null : sec.key),
-                                `${sec.material} (${sec.grade}) — хөдөлгөөний түүхийг ${open ? "хаах" : "нээх"}`,
+                                `${sec.material} (${sec.grade})${
+                                  sec.rows.length > 1 && !it.orphan
+                                    ? ` · ${fmt(it.qty)}ш · ${fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}₮`
+                                    : ""} — хөдөлгөөний түүхийг ${open ? "хаах" : "нээх"}`,
                                 "row") : {})}>
                         <td className="td font-bold text-ink">
                           {/* Задрах тэмдэг ЗӨВХӨН хэсгийн эхний мөрөнд — доорх
@@ -266,7 +300,7 @@ export default function ContractDetail() {
           {seesMoney && (
           <div className="card overflow-x-auto">
             <div className="flex items-center justify-between px-4 pt-4 pb-1">
-              <h3 className="font-bold text-ink text-[15.5px]">Нэхэмжлэлүүд</h3>
+              <h2 className="font-bold text-ink text-[15.5px]">Нэхэмжлэлүүд</h2>
             </div>
             <table className="w-full min-w-[640px]">
               <thead><tr>
@@ -278,7 +312,9 @@ export default function ContractDetail() {
                 {d.invoices.map((inv: any) => {
                   const lb = invoiceLabel(inv);
                   return (
-                  <tr key={inv.id}>
+                  /* Мөр өөрөө хаягтай: дашбоард, мэдэгдэл хоёр ЭНЭ мөр рүү
+                     шууд буудаг (lib/links.ts `invoiceAnchorId`). */
+                  <tr key={inv.id} id={invoiceAnchorId(inv.id)}>
                     <td className="td">
                       {/* Үеийн огноо хоёр мөр болж таслагдвал уншихад хүнд */}
                       <span className="font-semibold text-ink whitespace-nowrap">{lb.title}</span>
@@ -329,8 +365,12 @@ export default function ContractDetail() {
           <div className="card p-5">
             {/* Гарчиг нь ТОВЧИЙГ агуулна (button дотор heading биш) — уншигчаар
                 ажилладаг хүн гарчгаар нь үсэрч, тэндээсээ задална. */}
-            <h3 className="text-[15.5px]">
-              <button type="button" aria-expanded={showHist} aria-controls="mv-history"
+            <h2 className="text-[15.5px]">
+              {/* `aria-controls` нь БАЙГАА зангилаа заана: хумигдсан үед мөр нь
+                  DOM-д огт байхгүй тул холбоос нь мухардмал болно. Нээлттэй
+                  үедээ л заана — `aria-expanded` нь төлөвөө өөрөө хэлнэ. */}
+              <button type="button" aria-expanded={showHist}
+                      {...(showHist ? { "aria-controls": "mv-history" } : {})}
                       className="flex items-center gap-2 w-full text-left font-bold text-ink"
                       onClick={() => setHistOpen(!showHist)}>
                 <span className="text-t3">{showHist ? "▾" : "›"}</span>
@@ -338,7 +378,7 @@ export default function ContractDetail() {
                 <span className="pill-grey ml-auto">{fmt(d.movements.length)}</span>
                 {pendingMv > 0 && <span className="pill-amber">{fmt(pendingMv)} хүлээгдэж буй</span>}
               </button>
-            </h3>
+            </h2>
             {!showHist && (
               <p className="text-[12.5px] text-t3 mt-2">
                 Он цагийн дараалал, хөдөлгөөний огноо/тэмдэглэлийн засвар энд.
@@ -379,8 +419,9 @@ export default function ContractDetail() {
                   ) : (
                     <div className="mt-1.5 rounded-2xl border border-line-strong p-3 bg-sunken/40">
                       {u?.role === "manager" && (
-                        <div className="text-[12px] text-t2 inline-flex items-center gap-1.5 mb-2">Огноо:
-                          <InlineEdit type="date" label={`${mvName(mv.type)} — огноо`}
+                        <div className="text-[12px] text-t2 inline-flex items-center gap-1.5 mb-2">
+                          <span aria-hidden="true">Огноо:</span>
+                          <InlineEdit type="date" label={`${mv.date} · ${mvName(mv.type)} — огноо`}
                             value={mv.date} display={mv.date} width="w-36"
                             confirmText="Огноо солих уу?"
                             onSave={(v) => gatedPatch(`/api/movements/${mv.id}`, { date: v },
@@ -397,9 +438,11 @@ export default function ContractDetail() {
                               {l.writeoff_fee > 0 && <span className="text-danger"> · акт {money(l.writeoff_fee)}</span>}
                             </span>
                           </div>
-                          <span className="ml-auto text-[12px] text-t2 inline-flex items-center gap-1.5">Тоо:
+                          <span className="ml-auto text-[12px] text-t2 inline-flex items-center gap-1.5">
+                            <span aria-hidden="true">Тоо:</span>
                             {u?.role === "manager" ? (
-                              <InlineEdit type="number" right width="w-20" label={`${l.material} — тоо`}
+                              <InlineEdit type="number" right width="w-20"
+                                label={`${l.material} (${l.grade}) · ${mv.date} — тоо`}
                                 value={l.qty} display={fmt(l.qty)}
                                 confirmText="Тоо солих уу?"
                                 onSave={(v) => gatedPatch(`/api/movement-lines/${l.id}`,
@@ -408,9 +451,11 @@ export default function ContractDetail() {
                             ) : fmt(l.qty)}
                           </span>
                           {mv.type === "ISSUE" && (
-                            <span className="text-[12px] text-t2 inline-flex items-center gap-1.5">Тариф:
+                            <span className="text-[12px] text-t2 inline-flex items-center gap-1.5">
+                              <span aria-hidden="true">Тариф:</span>
                               {u?.role === "manager" ? (
-                                <InlineEdit type="number" right width="w-20" label={`${l.material} — тариф`}
+                                <InlineEdit type="number" right width="w-20"
+                                  label={`${l.material} (${l.grade}) · ${mv.date} — тариф`}
                                   value={l.rate ?? ""}
                                   display={l.rate != null ? fmt(l.rate) : "—"}
                                   confirmText="Тариф солих уу?"
@@ -434,7 +479,7 @@ export default function ContractDetail() {
 
           {seesMoney && (
           <div className="card p-5">
-            <h3 className="font-bold text-ink text-[15.5px] mb-3">Төлбөрүүд</h3>
+            <h2 className="font-bold text-ink text-[15.5px] mb-3">Төлбөрүүд</h2>
             {d.payments.length === 0 && <p className="text-t3 text-sm">Төлбөр бүртгэгдээгүй.</p>}
             {d.payments.map((p: any) => (
               <div key={p.id} className="flex items-center gap-3 py-2.5 border-b border-sunken last:border-0">
@@ -452,7 +497,7 @@ export default function ContractDetail() {
 
           {seesMoney && d.deposit > 0 && (
             <div className="card p-5">
-              <h3 className="font-bold text-ink text-[15.5px] mb-3">Барьцаа</h3>
+              <h2 className="font-bold text-ink text-[15.5px] mb-3">Барьцаа</h2>
               <div className="flex justify-between items-baseline py-1.5">
                 <span className="text-[13px] text-t2">Авсан барьцаа</span>
                 <b className="tabular-nums">{money(d.deposit)}</b>
