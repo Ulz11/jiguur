@@ -7,6 +7,8 @@
 import contextlib
 from datetime import date, timedelta
 
+import pytest
+
 
 def iso(days_ago: int) -> str:
     return str(date.today() - timedelta(days=days_ago))
@@ -643,6 +645,145 @@ def test_dashboard_scope_sums(client, as_role):
     sale = client.get("/api/dashboard?scope=sale", headers=h).json()["kpi"]
     assert abs((rent["receivable"] + sale["receivable"]) - all_["receivable"]) <= 2
     assert rent["active_contracts"] + sale["active_contracts"] == all_["active_contracts"]
+
+
+def _all_invoices(client, h):
+    """Бүх гэрээний бүх нэхэмжлэл — дашбоардын жагсаалттай тулгах эх сурвалж."""
+    out = []
+    for c in client.get("/api/contracts", headers=h).json():
+        out += client.get(f"/api/contracts/{c['id']}", headers=h).json()["invoices"]
+    return out
+
+
+def test_dashboard_overdue_list_is_exactly_the_overdue_invoices(client, as_role):
+    """«3 нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг хэлдэг байх
+    ёстой — Отгоо хэнд залгахаа эндээс олно. Төлөгдсөн нэхэмжлэл ОРОХГҮЙ."""
+    h = as_role("otgoo")
+    d = client.get("/api/dashboard", headers=h).json()
+    rows = d["overdue_list"]
+    invoices = _all_invoices(client, h)
+
+    assert {r["id"] for r in rows} == {i["id"] for i in invoices if i["status"] == "overdue"}
+    assert len(rows) == d["kpi"]["overdue_count"]
+    assert abs(sum(r["remaining"] for r in rows) - d["kpi"]["overdue"]) <= len(rows)
+    # seed-д төлөгдсөн нэхэмжлэл БАЙГАА — тэр нь жагсаалтад ОРООГҮЙ гэдэг л энэ тестийн утга
+    assert any(i["status"] == "paid" for i in invoices)
+
+
+def test_dashboard_overdue_row_carries_what_the_row_shows(client, as_role):
+    """Мөр бүр өөрөө: №, харилцагч, үлдэгдэл, хэтэрсэн хоног, очих гэрээ."""
+    h = as_role("otgoo")
+    rows = client.get("/api/dashboard", headers=h).json()["overdue_list"]
+    invoices = {i["id"]: i for i in _all_invoices(client, h)}
+
+    assert rows
+    for r in rows:
+        inv = invoices[r["id"]]
+        assert r["no"] == inv["no"]
+        assert r["client"] == inv["client"] and r["client_id"] == inv["client_id"]
+        assert r["contract_id"] == inv["contract_id"] and r["contract_no"] == inv["contract_no"]
+        assert r["remaining"] == inv["outstanding"] > 0
+        assert r["due_date"] == inv["due_date"]
+        assert r["days_overdue"] == (date.today() - date.fromisoformat(inv["due_date"])).days > 0
+    # хамгийн удаан хэтэрсэн нь тэргүүнд, тэнцвэл том дүнтэй нь
+    assert [(-r["days_overdue"], -r["remaining"]) for r in rows] == sorted(
+        (-r["days_overdue"], -r["remaining"]) for r in rows)
+
+
+def test_dashboard_overdue_list_respects_scope(client, as_role):
+    """Топбарын Түрээс/Худалдаа шүүлтүүр KPI-г шүүдэг бол жагсаалтыг ч шүүнэ."""
+    h = as_role("otgoo")
+    def ids(scope):
+        return {r["id"] for r in
+                client.get(f"/api/dashboard?scope={scope}", headers=h).json()["overdue_list"]}
+    rent, sale, all_ = ids("rent"), ids("sale"), ids("all")
+    rent_contracts = {c["id"] for c in client.get("/api/contracts", headers=h).json()
+                      if c["type"] == "rent"}
+
+    assert rent and sale, "seed-д түрээс ба худалдааны хэтэрсэн нэхэмжлэл хоёул байх ёстой"
+    assert rent | sale == all_ and not (rent & sale)
+    assert all(r["contract_id"] in rent_contracts for r in
+               client.get("/api/dashboard?scope=rent", headers=h).json()["overdue_list"])
+
+
+def test_dashboard_payment_schedule_only_active_rent_sorted_by_date(client, as_role):
+    """Хүлээгдэж буй төлбөр = ИДЭВХТЭЙ ТҮРЭЭСийн гэрээнүүдийн одоогийн цикл.
+    Худалдаанд цикл байхгүй тул scope=sale дээр хоосон."""
+    h = as_role("otgoo")
+    rows = client.get("/api/dashboard", headers=h).json()["payment_schedule"]
+    meta = {c["id"]: (c["type"], c["status"]) for c in client.get("/api/contracts", headers=h).json()}
+
+    assert rows
+    assert all(meta[r["contract_id"]] == ("rent", "active") for r in rows)
+    assert [r["expected_date"] for r in rows] == sorted(r["expected_date"] for r in rows)
+    assert client.get("/api/dashboard?scope=sale", headers=h).json()["payment_schedule"] == []
+
+
+def test_dashboard_payment_schedule_row_projects_the_full_cycle(client, as_role):
+    """Мөр дээрх ТӨСӨӨЛӨЛ = «өнөөдрийг хүртэл хуримтлагдсан + өдрийн дүн ×
+    үлдсэн хоног» — өөр хөдөлгөөн гарахгүй гэсэн тооцоо. Гэрээний хуудасны
+    амьд циклийн тоонуудаас ХАМААРАЛГҮЙГЭЭР дахин бодож тулгана."""
+    h = as_role("otgoo")
+    rows = client.get("/api/dashboard", headers=h).json()["payment_schedule"]
+    r = next(x for x in rows if x["contract_no"] == "26/07")
+    det = client.get(f"/api/contracts/{r['contract_id']}", headers=h).json()
+    cyc = det["cycle"]
+
+    left = cyc["days_total"] - cyc["days_done"]
+    assert r["projected_amount"] == pytest.approx(cyc["accrued"] + cyc["day_amount"] * left, abs=1)
+    assert r["expected_date"] == cyc["cycle_end"]
+    assert r["cycle_label"] == (cyc["cycle_start"].replace("-", ".") + "–"
+                                + cyc["cycle_end"].replace("-", "."))
+    assert r["client"] == det["client"] and r["client_id"] == det["client_id"]
+    assert r["receivable"] > 0     # авлагын үлдэгдэл мөрөндөө хамт явна
+
+
+def test_dashboard_payment_schedule_drops_a_closed_contract(client, as_role):
+    """Гэрээ хаагдмагц хүлээх юм үлдэхгүй — жагсаалтаас алга болно."""
+    h = as_role("otgoo")
+    _, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    _confirm_pending(client, as_role, cid)
+    assert any(r["contract_id"] == cid for r in
+               client.get("/api/dashboard", headers=h).json()["payment_schedule"])
+
+    assert client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": iso(0),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 100}]}).status_code == 200
+    assert client.post(f"/api/contracts/{cid}/close", headers=h).status_code == 200
+
+    assert not any(r["contract_id"] == cid for r in
+                   client.get("/api/dashboard", headers=h).json()["payment_schedule"])
+
+
+def test_client_profile_upcoming_matches_dashboard(client, as_role):
+    """Харилцагчийн хуудасны «Хүлээгдэж буй төлбөр» нь дашбоардын мөртэй ЯГ
+    ижил тоо хэлнэ — хоёр дэлгэц дээр өөр дүн гарах нь итгэлийг унагаана."""
+    h = as_role("otgoo")
+    dash = client.get("/api/dashboard", headers=h).json()["payment_schedule"]
+    row = next(r for r in dash if r["contract_no"] == "26/07")
+
+    prof = client.get(f"/api/clients/{row['client_id']}", headers=h).json()
+    up = prof["upcoming"]
+
+    assert [u["contract_no"] for u in up] == ["26/07"]
+    assert up[0]["expected_date"] == row["expected_date"]
+    assert up[0]["projected_amount"] == row["projected_amount"]
+    assert up[0]["cycle_label"] == row["cycle_label"]
+    assert prof["receivable"] == row["receivable"]
+
+
+def test_darga_dashboard_keeps_the_same_payload_shape(client, as_role):
+    """Мөнгийг даргаас нуух нь FRONTEND-ийн салаанд шийдэгддэг (Dashboard.tsx
+    `isFactory` — авлага, насжилт, орлогын график огт зурагддаггүй). Backend нь
+    ролиос үл хамааран нэг payload буцаадаг; шинэ хоёр жагсаалт ч ТЭР ЖУРМЫГ
+    дагана — өөр журам оруулбал энэ тест анхааруулна."""
+    otgoo = client.get("/api/dashboard", headers=as_role("otgoo")).json()
+    darga = client.get("/api/dashboard", headers=as_role("darga")).json()
+
+    assert set(otgoo) == set(darga)
+    assert darga["kpi"]["overdue"] == otgoo["kpi"]["overdue"]
+    assert len(darga["overdue_list"]) == len(otgoo["overdue_list"])
+    assert len(darga["payment_schedule"]) == len(otgoo["payment_schedule"])
 
 
 # ---------- Агуулах ----------

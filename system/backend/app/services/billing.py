@@ -389,6 +389,46 @@ def current_cycle_accrual(contract: models.Contract, today: date | None = None):
             "accrued": rent, "day_amount": day_sum}
 
 
+def _dotted(d: date) -> str:
+    """Циклийн шошгонд хүн уншдаг огноо: 2026-08-15 → 2026.08.15."""
+    return str(d).replace("-", ".")
+
+
+def upcoming_payment(contract: models.Contract, today: date | None = None):
+    """Одоогийн циклийн ТӨСӨӨЛӨЛ — «цикл дуустал өөр хөдөлгөөн гарахгүй» гэвэл
+    ХЭЗЭЭ, ХЭДИЙГ нэхэмжлэх вэ.
+
+    `current_cycle_accrual` нь ӨНӨӨДРИЙГ ХҮРТЭЛ хуримтлагдсаныг хэлдэг бол энэ
+    нь БҮТЭН циклийн дүнг хэлнэ — «энэ сар хэд ирэх вэ» гэдэг нь мөнгөө
+    төлөвлөх асуулт, хагас хариулт нь ажилладаггүй.
+
+    Хугацаа нь `derivable_invoice_specs`-ийн дүрмээр гарна (түрээсийн
+    нэхэмжлэлийн due = циклийн төгсгөл), тул төсөөлөл нь цикл дуусахад төрөх
+    ЖИНХЭНЭ нэхэмжлэлтэй яг таарна.
+
+    None буцаах тохиолдлууд — мөр ГАРГАХГҮЙ гэсэн үг:
+      · худалдаа (цикл гэж байхгүй), хаагдсан гэрээ
+      · хоосон цикл: гадаа бараагүй бол хуримтлал 0, тэр цикл нэхэмжлэл ч
+        төрүүлэхгүй (`derivable_invoice_specs` алгасдаг) — «0₮ хүлээгдэж
+        байна» гэсэн хий мөр Отгоогийн жагсаалтыг бохирдуулна.
+    """
+    today = today or date.today()
+    if contract.type != "rent" or contract.status != "active":
+        return None
+    cycles = cycles_of(contract, today)
+    if not cycles:
+        return None
+    cs, ce, complete = cycles[-1]
+    if complete:
+        return None
+    rent, _ = accrue_rent(contract, cs, ce)
+    if rent <= 0:
+        return None
+    return {"cycle_start": cs, "cycle_end": ce,
+            "cycle_label": f"{_dotted(cs)}–{_dotted(ce)}",
+            "expected_date": ce, "projected_amount": rent}
+
+
 # ---------- алданги ба үлдэгдэл ----------
 
 def invoice_outstanding(inv: models.Invoice) -> float:

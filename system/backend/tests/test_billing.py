@@ -600,3 +600,67 @@ def test_accrue_rent_segments_splits_a_return_pinned_across_two_lots(db):
     assert sum(s["qty"] * s["days"] for s in segs) == pytest.approx(
         sum(ln["qty_days"] for ln in lines))
     assert all(s["qty"] > 0 and s["days"] > 0 for s in segs)
+
+
+# ---------- Хүлээгдэж буй төлбөр (одоогийн циклийн ТӨСӨӨЛӨЛ) ----------
+
+def test_upcoming_payment_projects_the_whole_current_cycle(db):
+    """«Цикл дуустал өөр хөдөлгөөн гарахгүй» гэсэн ТӨСӨӨЛӨЛ — 100ш × 330₮ ×
+    30 хоног = 990,000₮. Циклийн 10 дахь хоног дээр зогсож байгаа ч ХАГАС биш,
+    БҮТЭН циклийн дүн гарна: Отгоо «энэ сар хэд ирэх вэ» гэдгээ мэдэх ёстой."""
+    start = date.today() - timedelta(days=10)
+    c, m, ga, gb = setup_contract(db, start=start)
+    mv(db, c, "ISSUE", start, [dict(material_id=m.id, grade_id=ga.id, qty=100)])
+
+    u = billing.upcoming_payment(c, date.today())
+
+    assert u["cycle_start"] == start
+    assert u["cycle_end"] == start + timedelta(days=30)
+    assert u["projected_amount"] == pytest.approx(990_000)
+    assert u["projected_amount"] == pytest.approx(
+        billing.accrue_rent(c, start, start + timedelta(days=30))[0])
+
+
+def test_upcoming_payment_matches_the_invoice_that_will_be_issued(db):
+    """Төсөөлөл нь ХИЙСВЭР тоо биш — цикл дуусахад ЯГ энэ дүнтэй, ЯГ энэ
+    хугацаатай нэхэмжлэл төрөх ёстой (`derivable_invoice_specs`-ийн дүрэм)."""
+    start = date.today() - timedelta(days=10)
+    c, m, ga, gb = setup_contract(db, start=start)
+    mv(db, c, "ISSUE", start, [dict(material_id=m.id, grade_id=ga.id, qty=100)])
+
+    u = billing.upcoming_payment(c, date.today())
+    spec = next(s for s in billing.derivable_invoice_specs(c, start + timedelta(days=31))
+                if s["cycle_start"] == start)
+
+    assert u["expected_date"] == spec["due_date"]
+    assert u["projected_amount"] == pytest.approx(spec["rent_amount"])
+
+
+def test_upcoming_payment_labels_the_cycle_for_humans(db):
+    """Хүн «2026.08.15–2026.09.14» гэж уншина — огноог мөрөнд нэг л газар хөрвүүлнэ."""
+    start = date(2026, 8, 15)
+    c, m, ga, gb = setup_contract(db, start=start)
+    mv(db, c, "ISSUE", start, [dict(material_id=m.id, grade_id=ga.id, qty=100)])
+
+    u = billing.upcoming_payment(c, start + timedelta(days=5))
+
+    assert u["cycle_label"] == "2026.08.15–2026.09.14"
+
+
+def test_upcoming_payment_none_for_sale_contract(db):
+    """Худалдаанд цикл гэж байхгүй — ачилт бүр өөрөө нэхэмжлэл. Хүлээгдэх юм алга."""
+    start = date.today() - timedelta(days=10)
+    c, m, ga, gb = setup_contract(db, start=start, ctype="sale")
+    mv(db, c, "ISSUE", start, [dict(material_id=m.id, grade_id=ga.id, qty=10)])
+
+    assert billing.upcoming_payment(c, date.today()) is None
+
+
+def test_upcoming_payment_none_when_nothing_is_out(db):
+    """Гадаа бараагүй гэрээнд ЮУ Ч хуримтлахгүй — цикл дуусахад нэхэмжлэл ч
+    үүсэхгүй (`derivable_invoice_specs` хоосон циклийг алгасдаг). Иймд
+    «0₮ хүлээгдэж байна» гэсэн хий мөр гаргахгүй."""
+    start = date.today() - timedelta(days=10)
+    c, m, ga, gb = setup_contract(db, start=start)
+
+    assert billing.upcoming_payment(c, date.today()) is None

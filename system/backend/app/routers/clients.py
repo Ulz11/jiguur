@@ -54,6 +54,10 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
     mmap = {m.id: m.name for m in db.query(models.Material).all()}
 
     contracts = [serializers.contract_row(ct, today) for ct in c.contracts]
+    # Хүлээгдэж буй төлбөр — идэвхтэй түрээсийн гэрээнүүдийн одоогийн циклийн
+    # ТӨСӨӨЛӨЛ. Дашбоардын самбартай ЯГ нэг эх сурвалжаас (serializers.upcoming_row).
+    upcoming = sorted((u for u in (serializers.upcoming_row(ct, today) for ct in c.contracts) if u),
+                      key=lambda u: u["expected_date"])
     invoices = [serializers.invoice(i, today)
                 for ct in c.contracts for i in ct.invoices]
     invoices.sort(key=lambda i: i["due_date"], reverse=True)
@@ -103,6 +107,6 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
 
     row = serializers.client_row(c, today)
     return {**row, "since": str(c.created_at)[:10],
-            "contracts": contracts, "invoices": invoices,
+            "contracts": contracts, "invoices": invoices, "upcoming": upcoming,
             "payments": payments, "files": files, "barter": barter, "notes": notes,
             "timeline": timeline[:50]}

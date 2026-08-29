@@ -71,6 +71,24 @@ def contract_row(c: models.Contract, today: date):
             "cycle": cur, "note": c.note}
 
 
+def upcoming_row(c: models.Contract, today: date):
+    """Гэрээний ХҮЛЭЭГДЭЖ БУЙ төлбөрийн мөр — байхгүй бол None.
+
+    Дашбоардын самбар ба харилцагчийн профайл ХОЁУЛАА эндээс уншина: нэг гэрээ
+    хоёр дэлгэц дээр өөр дүн хэлбэл аль нь ч итгэл хүлээхээ болино.
+    ⚠ Энэ бол ТӨСӨӨЛӨЛ — нэхэмжлэгдсэн баримт БИШ. UI-д ил тэмдэглэгдэнэ.
+    """
+    up = billing.upcoming_payment(c, today)
+    if not up:
+        return None
+    return {"contract_id": c.id, "contract_no": c.no,
+            "client_id": c.client_id, "client": c.client.name,
+            "cycle_start": str(up["cycle_start"]), "cycle_end": str(up["cycle_end"]),
+            "cycle_label": up["cycle_label"],
+            "expected_date": str(up["expected_date"]),
+            "projected_amount": round(up["projected_amount"])}
+
+
 def movement(mv: models.Movement, gmap: dict, mmap: dict):
     return {"id": mv.id, "type": mv.type, "date": str(mv.date), "note": mv.note,
             "status": mv.status,

@@ -40,6 +40,10 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
     receivable = penalty = overdue_amt = 0.0
     overdue_cnt = 0
     active_cnt = ending_cnt = 0
+    # «N нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг хэлж
+    # чадахгүй байв — Отгоо тоог хараад хэнд залгахаа мэдэхгүй үлддэг.
+    overdue_list: list[dict] = []
+    schedule: list[dict] = []
     for c in contracts:
         if not in_scope(c):
             continue
@@ -52,8 +56,38 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
                 ending_cnt += 1
         for inv in c.invoices:
             if billing.invoice_status(inv, today) == "overdue":
-                overdue_amt += billing.invoice_outstanding(inv)
+                # KPI-ийн мөнгө ЯГ энэ тоонуудаас нийлнэ — самбар дээрх нийлбэр
+                # задаргаатайгаа зөрвөл аль нь ч итгэл хүлээхээ болино.
+                remaining = billing.invoice_outstanding(inv)
+                overdue_amt += remaining
                 overdue_cnt += 1
+                overdue_list.append({
+                    "id": inv.id, "no": inv.no,
+                    "client": c.client.name, "client_id": c.client_id,
+                    "contract_id": c.id, "contract_no": c.no,
+                    # цикл нь нэхэмжлэлийн НЭР болдог (lib/invoice.ts `invoiceLabel`) —
+                    # нэг нэхэмжлэл дэлгэц бүр дээр ижил нэртэй байна
+                    "cycle_start": str(inv.cycle_start), "cycle_end": str(inv.cycle_end),
+                    "remaining": round(remaining), "due_date": str(inv.due_date),
+                    "days_overdue": (today - inv.due_date).days})
+        up = serializers.upcoming_row(c, today)
+        if up:
+            schedule.append(up)
+
+    # Хамгийн удаан хэтэрсэн нь тэргүүнд; тэнцвэл том дүнтэй нь (мөнгө хөөх дараалал)
+    overdue_list.sort(key=lambda r: (-r["days_overdue"], -r["remaining"]))
+
+    # Хүлээгдэж буй төлбөр — хамгийн ойрын огноо тэргүүнд. Мөр бүрд харилцагчийн
+    # авлагын үлдэгдэл дагалдана: «энэ сар 4 сая ирнэ» гэдэг нь «өмнөх 12 саяа
+    # төлөөгүй байгаа» гэдгийг мэдэхгүйгээр утгагүй.
+    receivable_of: dict[int, float] = {}
+    for row in schedule:
+        cid = row["client_id"]
+        if cid not in receivable_of:
+            cl = db.get(models.Client, cid)
+            receivable_of[cid] = serializers.client_row(cl, today)["receivable"]
+        row["receivable"] = receivable_of[cid]
+    schedule.sort(key=lambda r: (r["expected_date"], r["client"]))
 
     stocks = db.query(models.Stock).all()
     tot_hand = sum(s.on_hand for s in stocks)
@@ -146,6 +180,7 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
                     "active_contracts": active_cnt, "ending_soon": ending_cnt,
                     "utilization": utilization, "month_sale": round(month_sale)},
             "revenue": revenue, "aging": aging,
+            "overdue_list": overdue_list, "payment_schedule": schedule,
             "notifications": notifications[:20], "pending_shipments": pending,
             "loans_upcoming": loans_upcoming,
             "loans_total": loan_sum["total_debt"]}
