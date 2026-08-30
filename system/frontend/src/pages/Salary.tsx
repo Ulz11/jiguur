@@ -1,10 +1,12 @@
 import { Fragment, useEffect, useId, useState } from "react";
 import { api, money, sayaFmt } from "../api";
-import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt, ConfirmModal, InlineEdit } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt, ConfirmModal, InlineEdit,
+         DisclosureCell, DisclosureHead } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { empBody, type EmployeeBody } from "../lib/employee";
 import { rowClickProps } from "../lib/rowClick";
+import { panelId, disclosureProps } from "../lib/disclosure";
 import { todayIso } from "../lib/schedule";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -153,31 +155,44 @@ export default function Salary() {
         <div className="card overflow-x-auto">
           <h2 className="font-bold text-ink text-[15.5px] px-4 pt-4 pb-1">Бодолтууд</h2>
           <table className="w-full min-w-[480px]">
-            <thead><tr><th className="th">Үе</th><th className="th text-right">Нийт</th>
+            <thead><tr><DisclosureHead />
+              <th className="th">Үе</th><th className="th text-right">Нийт</th>
               <th className="th text-right">НДШ</th><th className="th text-right">Гарт олгох</th>
               <th className="th">Төлөв</th><th className="th"></th></tr></thead>
             <tbody>
-              {runs.map((r) => (
+              {runs.map((r) => {
+                const isOpen = open === r.id;
+                const pid = panelId("run", r.id);
+                return (
                 <Fragment key={r.id}>
-                  <tr className="cursor-pointer hover:bg-canvas" aria-expanded={open === r.id}
-                      {...rowClickProps(() => setOpen(open === r.id ? null : r.id),
-                        `${r.period} · ${r.half}-р хагас — задаргааг ${open === r.id ? "хаах" : "нээх"}`,
+                  {/* Мөр задардаг гэдгийг ЮУ Ч хэлдэггүй байв — Зээл, гэрээний
+                      материалтай нэг хэлбэрийн тэмдэг мөрийн эхэнд зогсоно. */}
+                  <tr className="cursor-pointer hover:bg-canvas" {...disclosureProps(isOpen, pid)}
+                      {...rowClickProps(() => setOpen(isOpen ? null : r.id),
+                        `${r.period} · ${r.half}-р хагас — задаргааг ${isOpen ? "хаах" : "нээх"}`,
                         "row")}>
+                    <DisclosureCell open={isOpen} />
                     <td className="td"><b className="text-ink">{r.period}</b>
                       <span className="block text-xs text-t3">{r.half}-р хагас · {r.items.length} хүн</span></td>
                     <td className="td text-right tabular-nums">{money(r.total_base)}</td>
                     <td className="td text-right tabular-nums text-t2">{r.total_ndsh ? money(r.total_ndsh) : "—"}</td>
                     <td className="td text-right tabular-nums font-bold text-ink">{money(r.total_net)}</td>
                     <td className="td">{r.paid ? <span className="pill-green">Олгосон</span> : <span className="pill-amber">Олгоогүй</span>}</td>
+                    {/* Бодолт бүр дээр «Олгох ✓» гэсэн ЯГ ижил нэртэй товч
+                        зогсдог байв — уншигчаар ажилладаг хүн АЛЬ үеийн цалинг
+                        олгож байгаагаа мэдэхгүй (дээрх «Хасах»-ын журам). ✓ нь
+                        чимэг тул нуугдана: «шалгагдсан» гэж уншигдах ёсгүй. */}
                     <td className="td">
                       {!r.paid && (
                         <button className="btn-ghost btn-row text-money"
-                          onClick={(ev) => { ev.stopPropagation(); setPayRun(r); }}>Олгох ✓</button>
+                          aria-label={`${r.period} · ${r.half}-р хагас — цалин олгох`}
+                          onClick={(ev) => { ev.stopPropagation(); setPayRun(r); }}>
+                          Олгох <span aria-hidden="true">✓</span></button>
                       )}
                     </td>
                   </tr>
-                  {open === r.id && (
-                    <tr><td colSpan={6} className="td !bg-canvas">
+                  {isOpen && (
+                    <tr id={pid}><td colSpan={7} className="td !bg-canvas">
                       {r.items.map((i: any) => (
                         <div key={i.id} className="flex gap-4 text-[13px] py-0.5">
                           <span className="w-40 text-ink font-semibold">{i.employee}</span>
@@ -190,7 +205,8 @@ export default function Salary() {
                     </td></tr>
                   )}
                 </Fragment>
-              ))}
+                );
+              })}
             </tbody>
           </table>
           {runs.length === 0 && <Empty title="Бодолт алга" sub="«Цалин бодох» товчоор эхний бодолтоо хийгээрэй." />}
@@ -223,6 +239,9 @@ export default function Salary() {
             } catch (e: any) { toast(e.message, "err"); setDrop(null); }
           }} />
       )}
+      {/* «буцаагдахгүй» гэж дотроо бичээд `danger` аваагүй байв: Enter нь ОЛГОХ
+          товч дээр очиж, санамсаргүй нэг товшилт 5,950,000₮-ийн цалинг олгосон
+          болгож бүртгэдэг байлаа (ui.tsx дахь `danger` дүрэм). */}
       {payRun && (
         <ConfirmModal
           title="Цалин олгох"
@@ -236,7 +255,7 @@ export default function Salary() {
           ]}
           total={{ label: "Гарт олгох нийт", value: money(payRun.total_net), accent: "money" }}
           note="Олгосны дараа зардалд тусна."
-          confirmLabel="Олгох ✓"
+          confirmLabel="Олгох ✓" danger
           onClose={() => setPayRun(null)}
           onConfirm={async () => {
             try {
