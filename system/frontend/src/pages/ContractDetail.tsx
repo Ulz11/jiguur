@@ -150,7 +150,9 @@ export default function ContractDetail() {
                 </span>
               </>
             ) : (
-              <span>→ {endDateLabel(d.end_date)} · Алданги {d.penalty_percent}%/хоног</span>
+              /* Алдангийн ХУВЬ нь гэрээний мөнгөн нөхцөл — дуусах огноо нь
+                 ажлын хуваарь. Даргад үлдэх нь хугацаа, явахгүй нь хувь. */
+              <span>→ {endDateLabel(d.end_date)}</span>
             )}
           </div>
           {seesMoney && (
@@ -190,8 +192,11 @@ export default function ContractDetail() {
 
       {/* Тоон хураангуй */}
       <div className="card p-5 mb-4 flex gap-8 flex-wrap items-center">
-        {d.type === "rent" && <Num label="Өдрийн дүн" val={money(d.day_amount)} />}
-        {cyc && <Num label="Энэ циклд хуримтлагдсан" val={money(cyc.accrued)} />}
+        {/* «Өдрийн дүн», «Энэ циклд хуримтлагдсан» нь ХУРИМТЛАЛ — авлагын хоёр
+            нүүр. Дарга материал тоолдог хүн тул эдгээр нь түүнд харагдахгүй
+            (сервер ч талбарыг нь илгээхээ больсон). */}
+        {seesMoney && d.type === "rent" && <Num label="Өдрийн дүн" val={money(d.day_amount)} />}
+        {seesMoney && cyc && <Num label="Энэ циклд хуримтлагдсан" val={money(cyc.accrued)} />}
         {/* Энэ мөрөнд «Өдрийн дүн», «Хуримтлагдсан» нь ТӨГРӨГӨӨРӨӨ зогсож
             байхад үлдэгдэл нь «12.3 сая» гэж дугуйлагддаг байв — Отгоо яг
             хэдийг нэхэхээ мэдэхгүй, доорх нэхэмжлэлүүдтэй нийлүүлж ч чадахгүй.
@@ -220,12 +225,18 @@ export default function ContractDetail() {
               </h2>
               <span className="pill-grey">{fmt(d.items.reduce((s: number, i: any) => s + i.qty, 0))} ширхэг</span>
             </div>
-            <table className="w-full min-w-[520px]">
+            {/* Даргад ҮНИЙН хоёр багана огт БАЙХГҮЙ — хоосон нүд үлдээвэл
+                «энд ямар нэг тоо байгаа» гэж заана (Machines.tsx-ийн журам). */}
+            <table className={`w-full ${seesMoney ? "min-w-[520px]" : "min-w-[360px]"}`}>
               <thead><tr>
                 <th className="th">Материал</th><th className="th">Зэрэглэл</th>
                 <th className="th text-right">Тоо</th>
-                <th className="th text-right">{d.type === "rent" ? "Тариф ₮/ш/хоног" : "Нэгж үнэ"}</th>
-                <th className="th text-right">{d.type === "rent" ? "Өдрийн дүн" : "Нийт"}</th>
+                {seesMoney && (
+                  <>
+                    <th className="th text-right">{d.type === "rent" ? "Тариф ₮/ш/хоног" : "Нэгж үнэ"}</th>
+                    <th className="th text-right">{d.type === "rent" ? "Өдрийн дүн" : "Нийт"}</th>
+                  </>
+                )}
               </tr></thead>
               <tbody>
                 {sections.map((sec) => {
@@ -245,7 +256,14 @@ export default function ContractDetail() {
                           {...(has ? rowClickProps(() => setOpenMat(open ? null : sec.key),
                                 `${sec.material} (${sec.grade})${
                                   sec.rows.length > 1 && !it.orphan
-                                    ? ` · ${fmt(it.qty)}ш · ${fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}₮`
+                                    ? ` · ${fmt(it.qty)}ш${
+                                        /* Мөрийг ялгах ТАРИФ нь даргад нууц —
+                                           дуудагдах нэрэнд ч гарахгүй (өмнөх
+                                           алдаа `title=`-д нуугдаж байсан).
+                                           Түүнд тоо ширхэг өөрөө ялгана. */
+                                        seesMoney
+                                          ? ` · ${fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}₮`
+                                          : ""}`
                                     : ""} — хөдөлгөөний түүхийг ${open ? "хаах" : "нээх"}`,
                                 "row") : {})}>
                         <td className="td font-bold text-ink">
@@ -261,6 +279,7 @@ export default function ContractDetail() {
                         </td>
                         <td className="td"><span className="pill-blue">{it.grade}</span></td>
                         <td className="td text-right tabular-nums">{fmt(it.qty)}</td>
+                        {seesMoney && (<>
                         <td className="td text-right tabular-nums" onClick={(e) => e.stopPropagation()}>
                           {it.orphan ? "—" : u?.role === "manager" ? (
                             <InlineEdit type="number" right width="w-24"
@@ -281,11 +300,12 @@ export default function ContractDetail() {
                         <td className="td text-right tabular-nums font-bold text-ink">
                           {it.orphan ? "—" : money(d.type === "rent" ? it.day_amount : it.qty * it.unit_price)}
                         </td>
+                        </>)}
                       </tr>
                     ))}
                     {open && (
-                      <tr><td colSpan={5} className="td !bg-canvas !p-0">
-                        <MaterialLedger sec={sec} sale={d.type === "sale"}
+                      <tr><td colSpan={seesMoney ? 5 : 3} className="td !bg-canvas !p-0">
+                        <MaterialLedger sec={sec} sale={d.type === "sale"} seesMoney={seesMoney}
                           canEdit={u?.role === "manager"} onEdit={gatedPatch} />
                       </td></tr>
                     )}
@@ -410,10 +430,23 @@ export default function ContractDetail() {
                       {mv.lines.slice(0, 3).map((l: any, i: number) => (
                         <span key={i}>{l.material} ({l.grade}) ×{fmt(l.qty)}{l.return_grade && l.return_grade !== l.grade ? ` → ${l.return_grade}` : ""}{i < Math.min(mv.lines.length, 3) - 1 ? " · " : ""}</span>
                       ))}
-                      {mv.lines.some((l: any) => l.repair_fee > 0) &&
-                        <span className="block text-warn">Засвар: {money(mv.lines.reduce((s: number, l: any) => s + l.repair_fee, 0))}</span>}
-                      {mv.lines.some((l: any) => l.writeoff_fee > 0) &&
-                        <span className="block text-danger">Акт: {money(mv.lines.reduce((s: number, l: any) => s + l.writeoff_fee, 0))}</span>}
+                      {/* Засвар/акт нь ХОЁР зүйл: хэдэн ширхэг (даргын тоолол)
+                          ба хэдэн төгрөг (харилцагчийн тооцоо). Даргад ТОО нь
+                          үлдэж, ДҮН нь явахгүй — «450,000₮» гэсэн мөр байхгүй. */}
+                      {mv.lines.some((l: any) => (seesMoney ? l.repair_fee : l.repair_qty) > 0) && (
+                        <span className="block text-warn">
+                          Засвар: {seesMoney
+                            ? money(mv.lines.reduce((s: number, l: any) => s + l.repair_fee, 0))
+                            : `${fmt(mv.lines.reduce((s: number, l: any) => s + l.repair_qty, 0))}ш`}
+                        </span>
+                      )}
+                      {mv.lines.some((l: any) => (seesMoney ? l.writeoff_fee : l.writeoff_qty) > 0) && (
+                        <span className="block text-danger">
+                          Акт: {seesMoney
+                            ? money(mv.lines.reduce((s: number, l: any) => s + l.writeoff_fee, 0))
+                            : `${fmt(mv.lines.reduce((s: number, l: any) => s + l.writeoff_qty, 0))}ш`}
+                        </span>
+                      )}
                       {mv.note && <span className="block text-t3">{mv.note}</span>}
                     </div>
                   ) : (
@@ -434,8 +467,16 @@ export default function ContractDetail() {
                             <b className="text-[12.5px] text-ink">{l.material}</b>
                             <span className="block text-[12px] text-t3">
                               {l.grade}{l.return_grade && l.return_grade !== l.grade ? ` → ${l.return_grade}` : ""}
-                              {l.repair_fee > 0 && <span className="text-warn"> · засвар {money(l.repair_fee)}</span>}
-                              {l.writeoff_fee > 0 && <span className="text-danger"> · акт {money(l.writeoff_fee)}</span>}
+                              {(seesMoney ? l.repair_fee : l.repair_qty) > 0 && (
+                                <span className="text-warn">
+                                  {" "}· засвар {seesMoney ? money(l.repair_fee) : `${fmt(l.repair_qty)}ш`}
+                                </span>
+                              )}
+                              {(seesMoney ? l.writeoff_fee : l.writeoff_qty) > 0 && (
+                                <span className="text-danger">
+                                  {" "}· акт {seesMoney ? money(l.writeoff_fee) : `${fmt(l.writeoff_qty)}ш`}
+                                </span>
+                              )}
                             </span>
                           </div>
                           <span className="ml-auto text-[12px] text-t2 inline-flex items-center gap-1.5">
@@ -450,7 +491,9 @@ export default function ContractDetail() {
                                                           "Хөдөлгөөний тоо шинэчлэгдлээ")} />
                             ) : fmt(l.qty)}
                           </span>
-                          {mv.type === "ISSUE" && (
+                          {/* Падангийн тариф нь МӨНГӨ — даргад талбар нь ч,
+                              нэр нь ч гарахгүй (сервер утгыг нь илгээхгүй). */}
+                          {seesMoney && mv.type === "ISSUE" && (
                             <span className="text-[12px] text-t2 inline-flex items-center gap-1.5">
                               <span aria-hidden="true">Тариф:</span>
                               {u?.role === "manager" ? (
@@ -538,8 +581,12 @@ export default function ContractDetail() {
         </div>
       </div>
 
-      {modal === "return" && <ReturnModal d={d} grades={grades} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
-      {modal === "add" && <AddModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+      {/* Буцаалт, нэмэлт олголт нь ДАРГЫН ажил (`canManage`) — цонх нь түүнд
+          нээгддэг тул мөнгөний зураас цонх дотор ч үргэлжилнэ. */}
+      {modal === "return" && <ReturnModal d={d} grades={grades} seesMoney={seesMoney}
+                                          onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+      {modal === "add" && <AddModal d={d} seesMoney={seesMoney}
+                                    onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "pay" && <PayModal d={d} invoices={d.invoices} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "extend" && <ExtendModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "deposit" && <DepositModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
@@ -637,9 +684,12 @@ function RebuildModal({ p, onClose, onDone }: {
    нэхэмжлэгдсэн циклд хүрвэл эхлээд зөрүүг харуулж, баталгаажуулсан үед л
    дахин бодно. Хөдөлгүүр татгалзвал (жишээ нь гадаа байгаагаас их буцаалт)
    серверийн монгол шалтгаан мэдэгдэл болж гарна. */
-function MaterialLedger({ sec, sale, canEdit, onEdit }: {
+function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit }: {
   sec: MaterialSection;
   sale: boolean;
+  /** Даргад: тоо, огноо, падангийн ХАМААРАЛ, үлдэгдэл нь ажил тул ХЭВЭЭР;
+   *  тариф/нэгж үнэ, засвар/актын дүн нь мөнгө тул багана нь ч байхгүй. */
+  seesMoney: boolean;
   canEdit: boolean;
   onEdit: (path: string, body: any, okMsg: string) => Promise<void>;
 }) {
@@ -659,12 +709,12 @@ function MaterialLedger({ sec, sale, canEdit, onEdit }: {
         {sale ? "бүх олголтын түүх · нийт олгогдсон " : "бүх падангийн хөдөлгөөн · одоо түрээсэнд "}
         <b className="text-ink tabular-nums">{fmt(sec.qty)}</b>ш
       </div>
-      <table className="w-full min-w-[520px]">
+      <table className={`w-full ${seesMoney ? "min-w-[520px]" : "min-w-[420px]"}`}>
         <thead><tr>
           <th className={th}>Огноо</th>
           <th className={th}>Хөдөлгөөн</th>
           <th className={`${th} text-right`}>Тоо</th>
-          <th className={`${th} text-right`}>{sale ? "Нэгж үнэ" : "Тариф"}</th>
+          {seesMoney && <th className={`${th} text-right`}>{sale ? "Нэгж үнэ" : "Тариф"}</th>}
           {!sale && <th className={th} title="Аль олголтын мөрөөс хасагдав">Падан</th>}
           <th className={`${th} text-right`}>{sale ? "Нийт олгогдсон" : "Түрээсэнд үлдсэн"}</th>
         </tr></thead>
@@ -681,14 +731,16 @@ function MaterialLedger({ sec, sale, canEdit, onEdit }: {
                 {!!ln.return_grade && ln.return_grade !== sec.grade && (
                   <span className="text-t3"> → {ln.return_grade}</span>
                 )}
-                {(ln.repair_fee ?? 0) > 0 && (
+                {((seesMoney ? ln.repair_fee : ln.repair_qty) ?? 0) > 0 && (
                   <span className="block text-warn">
-                    засвар {fmt(ln.repair_qty ?? 0)}ш · {money(ln.repair_fee ?? 0)}
+                    засвар {fmt(ln.repair_qty ?? 0)}ш
+                    {seesMoney && ` · ${money(ln.repair_fee ?? 0)}`}
                   </span>
                 )}
-                {(ln.writeoff_fee ?? 0) > 0 && (
+                {((seesMoney ? ln.writeoff_fee : ln.writeoff_qty) ?? 0) > 0 && (
                   <span className="block text-danger">
-                    акт {fmt(ln.writeoff_qty ?? 0)}ш · {money(ln.writeoff_fee ?? 0)}
+                    акт {fmt(ln.writeoff_qty ?? 0)}ш
+                    {seesMoney && ` · ${money(ln.writeoff_fee ?? 0)}`}
                   </span>
                 )}
                 {ln.note ? <span className="block text-t3">{ln.note}</span> : null}
@@ -707,6 +759,7 @@ function MaterialLedger({ sec, sale, canEdit, onEdit }: {
                   </span>
                 )}
               </td>
+              {seesMoney && (
               <td className={`${td} text-right tabular-nums whitespace-nowrap`}>
                 {!issue ? <span className="text-t3">—</span>
                   : canEdit ? (
@@ -718,6 +771,7 @@ function MaterialLedger({ sec, sale, canEdit, onEdit }: {
                                           "Паданны тариф шинэчлэгдлээ")} />
                 ) : (ln.rate != null ? fmt(ln.rate) : "—")}
               </td>
+              )}
               {!sale && (
                 <td className={td}>
                   {issue ? (
@@ -725,8 +779,10 @@ function MaterialLedger({ sec, sale, canEdit, onEdit }: {
                        нь буцаж заана, тул Отгоо нүдээрээ холбож уншина. */
                     <span className="text-t3">#{ln.id} падан</span>
                   ) : ln.sources && ln.sources.length ? ln.sources.map((s, i) => (
+                    /* ХАМААРАЛ нь даргын ажил: аль падангаас хэд буцав.
+                       Тэр падангийн ТАРИФ нь мөнгө — зөвхөн мөнгөний хүнд. */
                     <span key={i} className="block whitespace-nowrap">
-                      #{s.issue_line_id} · {fmt(s.rate)}₮ → <b className="tabular-nums">{fmt(s.qty)}</b>ш
+                      #{s.issue_line_id}{seesMoney && ` · ${fmt(s.rate)}₮`} → <b className="tabular-nums">{fmt(s.qty)}</b>ш
                       {s.pinned && <span className="text-t3"> (заасан)</span>}
                     </span>
                   )) : <span className="text-t3">—</span>}
@@ -777,7 +833,7 @@ function PdfButton({ pdf, path, children, className = "btn-secondary", busyLabel
 }
 
 /* ---------- Буцаалт ---------- */
-function ReturnModal({ d, grades, onClose, onDone }: any) {
+function ReturnModal({ d, grades, seesMoney, onClose, onDone }: any) {
   const toast = useToast();
   const [date, setDate] = useState(today());
   const [rows, setRows] = useState<any[]>(
@@ -907,6 +963,17 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
             Засварын фикс үнэ болон актын НБҮнэ автоматаар харилцагчийн тооцоонд нэмэгдэнэ.
           </p>
         );
+        /* Даргад тооцоо нь ШИРХЭГЭЭР зогсоно: юу хэдийг буцаав, хэд нь
+           засварт, хэд нь акт — тэр бол түүний бүртгэл. Тэдгээр ширхэг ямар
+           дүн болж хувирахыг Отгоо гэрээний хуудсан дээрээ хардаг. */
+        if (!seesMoney) return (
+          <Receipt className="mt-4"
+            rows={[
+              ...(repQty > 0 ? [{ label: "Үүнээс засварт", value: `${fmt(repQty)} ш`, accent: "dim" as const }] : []),
+              ...(woQty > 0 ? [{ label: "Үүнээс актлах", value: `${fmt(woQty)} ш`, accent: "dim" as const }] : []),
+            ]}
+            total={{ label: "Буцаах нийт", value: `${fmt(totRet)} ш` }} />
+        );
         return (
           <Receipt className="mt-4"
             rows={[
@@ -930,7 +997,7 @@ function ReturnModal({ d, grades, onClose, onDone }: any) {
 }
 
 /* ---------- Нэмэлт олголт ---------- */
-function AddModal({ d, onClose, onDone }: any) {
+function AddModal({ d, seesMoney, onClose, onDone }: any) {
   const toast = useToast();
   const [date, setDate] = useState(today());
   const rent = d.type === "rent";
@@ -944,8 +1011,11 @@ function AddModal({ d, onClose, onDone }: any) {
     || rows.some((r) => r.add > 0 || r.rate !== (rent ? r.daily_rate : r.unit_price));
 
   async function submit() {
+    /* Даргын олголтод тариф ЯВАХГҮЙ — сервер гэрээний мөрийн тарифыг өөрөө
+       тамгална (`billing.default_rates`). Үнэ бол Отгоогийн шийдвэр. */
     const lines = rows.filter((r) => r.add > 0).map((r) => ({
-      material_id: r.material_id, grade_id: r.grade_id, qty: r.add, rate: r.rate }));
+      material_id: r.material_id, grade_id: r.grade_id, qty: r.add,
+      ...(seesMoney ? { rate: r.rate } : {}) }));
     if (!lines.length) { toast("Нэмэх тоо оруулна уу", "err"); return; }
     setBusy(true);
     try {
@@ -961,8 +1031,10 @@ function AddModal({ d, onClose, onDone }: any) {
       <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
       <input id={`${uid}-date`} type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
       <div className="flex items-center gap-3 pb-1" aria-hidden="true">
-        <span className="lbl !mb-0 ml-auto w-28 text-right">{rent ? "Тариф ₮/ш/хоног" : "Нэгж үнэ"}</span>
-        <span className="lbl !mb-0 w-24 text-right">Нэмэх тоо</span>
+        {seesMoney && (
+          <span className="lbl !mb-0 ml-auto w-28 text-right">{rent ? "Тариф ₮/ш/хоног" : "Нэгж үнэ"}</span>
+        )}
+        <span className={`lbl !mb-0 w-24 text-right${seesMoney ? "" : " ml-auto"}`}>Нэмэх тоо</span>
       </div>
       {/* Багана дээрх гарчиг нь ХАРАХ хүнд л ажиллана — талбар бүрийг өөрийнх
           нь материалын нэрээр бүтнээр нэрлэнэ. */}
@@ -972,21 +1044,30 @@ function AddModal({ d, onClose, onDone }: any) {
             <b className="text-[13.5px] text-ink">{r.material}</b>
             <span className="block text-xs text-t3">{r.grade}</span>
           </div>
-          <input type="number" min={0} className="inp !min-h-10 !py-2 w-28 ml-auto text-right" value={r.rate}
-                 aria-label={`${r.material} (${r.grade}) — ${rent ? "тариф ₮/ш/хоног" : "нэгж үнэ"}`}
-                 onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, rate: +e.target.value } : x))} />
-          <input type="number" min={0} className="inp !min-h-10 !py-2 w-24 text-right" value={r.add}
+          {seesMoney && (
+            <input type="number" min={0} className="inp !min-h-10 !py-2 w-28 ml-auto text-right" value={r.rate}
+                   aria-label={`${r.material} (${r.grade}) — ${rent ? "тариф ₮/ш/хоног" : "нэгж үнэ"}`}
+                   onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, rate: +e.target.value } : x))} />
+          )}
+          <input type="number" min={0} className={`inp !min-h-10 !py-2 w-24 text-right${seesMoney ? "" : " ml-auto"}`}
+                 value={r.add}
                  aria-label={`${r.material} (${r.grade}) — нэмэх тоо`}
                  onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, add: +e.target.value } : x))} />
         </div>
       ))}
       <p className="text-[12px] text-t3 mt-2">
-        Олголт бүр өөрийн тарифаа хадгална — өмнөх олголтын тариф хэвээр үлдэнэ.
+        {seesMoney
+          ? "Олголт бүр өөрийн тарифаа хадгална — өмнөх олголтын тариф хэвээр үлдэнэ."
+          : "Гэрээнд тохирсон тарифаар бүртгэгдэнэ — үнийг менежер тогтооно."}
       </p>
       {(() => {
         const addDay = rows.reduce((s, r) => s + (r.add > 0 ? r.add * r.rate : 0), 0);
         const addQty = rows.reduce((s, r) => s + (r.add > 0 ? r.add : 0), 0);
         if (!addQty) return null;
+        if (!seesMoney) return (
+          <Receipt className="mt-4" rows={[]}
+            total={{ label: "Нэмж олгох (баталгаажсаны дараа)", value: `${fmt(addQty)} ш` }} />
+        );
         return (
           <Receipt className="mt-4"
             rows={[

@@ -378,3 +378,59 @@ def attachment(a: models.Attachment):
     return {"id": a.id, "filename": a.filename, "size": a.size,
             "uploaded_at": str(a.uploaded_at)[:16],
             "entity_type": a.entity_type, "entity_id": a.entity_id}
+
+
+# ---------- Мөнгөний хана: гэрээний дэлгэрэнгүй → ҮЙЛДВЭРИЙН ДАРГА ----------
+#
+# «Системийн зураглал» §4-т даргын хүрээ нь тодорхой: ТООЛНО, ЗЭРЭГЛЭЛ
+# ТОГТООНО. Үнэ, авлага, нэхэмжлэл нь Отгоо, санхүүчийнх.
+#
+# Зөвхөн дэлгэц дээр нуух нь (ContractDetail `seesMoney`) НУУСАН БОЛОВ гэсэн үг
+# биш байв: тариф, өдрийн дүн, хуримтлал, нэхэмжлэл бүгд даргын ТОКЕН руу
+# явсаар байсан. Тиймээс зураас нь ЭНД — серверийн хариунд — татагдана.
+#
+# Талбарыг 0 болгохгүй, БҮРМӨСӨН хасна: «0₮-ийн гэрээ» гэж уншигдах эрсдэлгүй,
+# мөн нэмэгдэх шинэ талбар өөрөө нэвтрэхгүй (жагсаалтад орох хүртэл).
+_F_TOP = ("balance", "penalty", "penalty_percent", "day_amount", "deposit",
+          "deposit_status", "deposit_applied", "deposit_returned",
+          "deposit_settled_date", "vat_percent")
+_F_BLOCKS = ("invoices", "payments")
+_F_ITEM = ("daily_rate", "unit_price", "day_amount", "repair_fee", "writeoff_price")
+# Хөдөлгөөний/дэвтрийн мөр: падангийн ТАРИФ, засвар/актын ДҮН явахгүй.
+# `repair_qty`, `writeoff_qty` нь ТОО — тэр бол даргын ажил, үлдэнэ.
+_F_LINE = ("rate", "repair_fee", "writeoff_fee")
+_F_CYCLE = ("accrued", "day_amount")
+
+
+def _without(d: dict, keys) -> dict:
+    return {k: v for k, v in d.items() if k not in keys}
+
+
+def factory_contract_detail(payload: dict) -> dict:
+    """`contract_detail`-ийн хариунаас мөнгө агуулсан БҮХ талбарыг хасна.
+
+    Үлдэх нь: тоо ширхэг, зэрэглэл, огноо, төлөв, хөдөлгөөний түүх, материал
+    бүрийн дэвтэр (аль падангаас хэд буцсан нь ХАМААРАЛ — тоо, дугаар нь
+    даргын ажил, тариф нь биш) ба циклийн хугацааны явц.
+    """
+    out = _without(payload, _F_TOP + _F_BLOCKS)
+
+    if isinstance(out.get("cycle"), dict):
+        out["cycle"] = _without(out["cycle"], _F_CYCLE)
+
+    out["items"] = [_without(it, _F_ITEM) for it in payload.get("items") or []]
+
+    out["movements"] = [{**mv, "lines": [_without(l, _F_LINE) for l in mv["lines"]]}
+                        for mv in payload.get("movements") or []]
+
+    groups = []
+    for g in payload.get("material_lines") or []:
+        lines = []
+        for ln in g["lines"]:
+            row = _without(ln, _F_LINE)
+            if row.get("sources"):
+                row["sources"] = [_without(s, _F_LINE) for s in row["sources"]]
+            lines.append(row)
+        groups.append({**g, "lines": lines})
+    out["material_lines"] = groups
+    return out

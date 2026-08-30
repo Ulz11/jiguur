@@ -142,17 +142,22 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
     db.refresh(c)
     gmap, mmap = _maps(db)
     live = _live_items(db, c, today, gmap, mmap)
-    return {**serializers.contract_row(c, today),
-            "vat_percent": c.vat_percent, "cycle_days": c.cycle_days,
-            "items": live,
-            # Материалын мөр бүрийн доор задардаг хөдөлгөөний дэвтэр (зөвхөн унших)
-            "material_lines": serializers.material_lines(c, gmap, mmap, today),
-            "movements": [serializers.movement(m, gmap, mmap)
-                          for m in sorted(c.movements, key=lambda m: (m.date, m.id), reverse=True)],
-            "invoices": [serializers.invoice(i, today)
-                         for i in sorted(c.invoices, key=lambda i: i.due_date, reverse=True)],
-            "payments": [serializers.payment(p) for p in
-                         db.query(models.Payment).filter_by(contract_id=c.id).order_by(models.Payment.date.desc()).all()]}
+    out = {**serializers.contract_row(c, today),
+           "vat_percent": c.vat_percent, "cycle_days": c.cycle_days,
+           "items": live,
+           # Материалын мөр бүрийн доор задардаг хөдөлгөөний дэвтэр (зөвхөн унших)
+           "material_lines": serializers.material_lines(c, gmap, mmap, today),
+           "movements": [serializers.movement(m, gmap, mmap)
+                         for m in sorted(c.movements, key=lambda m: (m.date, m.id), reverse=True)],
+           "invoices": [serializers.invoice(i, today)
+                        for i in sorted(c.invoices, key=lambda i: i.due_date, reverse=True)],
+           "payments": [serializers.payment(p) for p in
+                        db.query(models.Payment).filter_by(contract_id=c.id).order_by(models.Payment.date.desc()).all()]}
+    # Үйлдвэрийн дарга — тоо, зэрэглэл, огнооны хүн. Мөнгө нь дэлгэц дээр
+    # нуугдаад зогсохгүй, түүний ТОКЕН руу огт явахгүй (serializers-ийн тайлбар).
+    if user.role == "factory":
+        return serializers.factory_contract_detail(out)
+    return out
 
 
 from pydantic import BaseModel as _BM

@@ -175,7 +175,10 @@ def test_return_with_regrade_repair_writeoff_charges(client, as_role):
         "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 40,
                    "return_grade_id": gB, "repair_qty": 10, "writeoff_qty": 5}]})
     assert r.status_code == 200
-    det = client.get(f"/api/contracts/{cid}", headers=h).json()
+    # Буцаалтыг ДАРГА бүртгэнэ (түүний талбай) — харин ДҮНГ нь мөнгөний хүн
+    # уншина: даргын хариунд засвар/актын дүн ОГТ ирэхгүй боллоо
+    # (`serializers.factory_contract_detail`, tests/test_money_wall.py).
+    det = client.get(f"/api/contracts/{cid}", headers=as_role("otgoo")).json()
     ret = next(x for x in det["movements"] if x["type"] == "RETURN")
     ln = ret["lines"][0]
     assert ln["repair_fee"] == 10 * 15000          # засварын фикс (каталогоос)

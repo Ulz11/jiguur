@@ -291,9 +291,11 @@ def test_untouched_material_returns_empty_distribution(client, as_role):
 def test_factory_sees_the_material_page_with_rates(client, as_role):
     """Агуулах бол даргын талбай — хуудас нээгдэж, тариф нь мөрөн дээрээ байна.
 
-    Гэрээний дэлгэрэнгүйн материалын хүснэгт даргад тарифаа ХАРУУЛДАГ
-    (ContractDetail-ийн `seesMoney` нь нэхэмжлэл/төлбөр/барьцааг л нуудаг) —
-    энэ хуудас ЯГ тэр журмыг барина.
+    ⚠ ГЭРЭЭНИЙ дэлгэрэнгүй одоо ӨӨР журамтай: тэнд даргын хариунаас мөнгө
+    бүрмөсөн хасагддаг боллоо (`serializers.factory_contract_detail`,
+    tests/test_money_wall.py). Энэ хуудас хараахан тэр зураасны ГАДНА —
+    агуулахын тариф даргад ирсээр байна. Тусад нь шийдэгдэх ёстой; энэ тест
+    нь одоогийн байдлыг тэмдэглэж, чимээгүй өөрчлөгдөхөөс хамгаална.
     """
     d = _detail(client, as_role("darga"), _mat(client, as_role("darga"))["id"])
     assert d["holdings"][0]["rates"]
