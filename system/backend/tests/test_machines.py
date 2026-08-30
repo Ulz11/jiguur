@@ -246,16 +246,85 @@ def test_machine_invoice_window_excludes_outside_days(client, as_role):
 
 
 def test_machine_invoice_numbering_increments_and_is_unique(client, as_role):
+    """Дугаарлалт нь он/сар дотор урагшилна.
+
+    Хоёр баримт нь ДАВХАЦААГҮЙ цонхтой (өмнө нь ЯГ ижил цонхоор хоёр удаа
+    гаргадаг байсан — одоо тэр нь 409, доорх `…rejects_overlapping…` тест).
+    """
     h = as_role("otgoo")
     m = _invoice_machine(client, h)
-    body = {"client": "Түмэн Хийц", "d_from": "2026-05-01", "d_to": "2026-05-31"}
-    a = client.post(f"/api/machines/{m['id']}/invoices", headers=h, json=body).json()
-    b = client.post(f"/api/machines/{m['id']}/invoices", headers=h, json=body).json()
+    a = client.post(f"/api/machines/{m['id']}/invoices", headers=h, json={
+        "client": "Түмэн Хийц", "d_from": "2026-05-01", "d_to": "2026-05-15"}).json()
+    b = client.post(f"/api/machines/{m['id']}/invoices", headers=h, json={
+        "client": "Түмэн Хийц", "d_from": "2026-05-16", "d_to": "2026-05-31"}).json()
     assert a["no"] != b["no"]
     head_a, n_a = a["no"].rsplit("-", 1)
     head_b, n_b = b["no"].rsplit("-", 1)
     assert head_a == head_b and int(n_b) == int(n_a) + 1
     assert head_a.startswith("M-") and len(head_a) == len("M-26/05")
+
+
+# ---------- Давхардсан баримтын хориг ----------
+#
+# «Үүсгэх» товчийг хоёр дарахад M-YY/MM-1 БА M-YY/MM-2 хоёр ЯГ ижил мөрүүд
+# дээр төрдөг байв: кран нэг ажлаа хоёр удаа нэхэмжилнэ. Сервер огнооны
+# дараалал, мөр байгаа эсэхийг л шалгадаг байсан — цонх нь ДАВХАЦАЖ байгааг
+# хардаггүй. Давхардлыг ХЭНИЙ БАРИМТТАЙ давхацсаныг нэрлэж татгалзана.
+
+def _mk(client, h, mid, c="Түмэн Хийц", f="2026-05-01", t="2026-05-31"):
+    return client.post(f"/api/machines/{mid}/invoices", headers=h,
+                       json={"client": c, "d_from": f, "d_to": t})
+
+
+def test_machine_invoice_rejects_exact_duplicate_naming_the_existing_no(client, as_role):
+    h = as_role("otgoo")
+    m = _invoice_machine(client, h)
+    first = _mk(client, h, m["id"]).json()
+    r = _mk(client, h, m["id"])
+    assert r.status_code == 409, r.text
+    # Мэдэгдэл нь АЛЬ баримттай мөргөлдсөнийг хэлнэ — Отгоо очиж хардаг
+    assert first["no"] in r.json()["detail"]
+    assert client.get(f"/api/machines/{m['id']}/logs", headers=h).json()["invoices"] \
+        == [{**{k: v for k, v in first.items() if k != "rows"}}]
+
+
+def test_machine_invoice_rejects_partial_overlap(client, as_role):
+    """Ирмэг дээр ЧУХАМ таарсан өдөр ч давхардал — [a,b] ба [b,c] нь b-г хуваана."""
+    h = as_role("otgoo")
+    m = _invoice_machine(client, h)
+    first = _mk(client, h, m["id"], f="2026-05-01", t="2026-05-15").json()
+    r = _mk(client, h, m["id"], f="2026-05-15", t="2026-05-31")
+    assert r.status_code == 409 and first["no"] in r.json()["detail"]
+    # Бүрэн залгисан цонх ч давхардал
+    assert _mk(client, h, m["id"], f="2026-04-01", t="2026-06-30").status_code == 409
+
+
+def test_machine_invoice_allows_adjacent_windows(client, as_role):
+    """Зэрэгцээ (нэг ч өдөр хуваалцаагүй) цонх нь хэвийн — 15 ба 16 тусдаа."""
+    h = as_role("otgoo")
+    m = _invoice_machine(client, h)
+    assert _mk(client, h, m["id"], f="2026-05-01", t="2026-05-15").status_code == 200
+    assert _mk(client, h, m["id"], f="2026-05-16", t="2026-05-31").status_code == 200
+    assert len(client.get(f"/api/machines/{m['id']}/logs", headers=h).json()["invoices"]) == 2
+
+
+def test_machine_invoice_allows_same_window_for_another_client(client, as_role):
+    """Давхардал нь МАШИН + ХАРИЛЦАГЧААР тодорхойлогдоно — хөрш нь чөлөөтэй."""
+    h = as_role("otgoo")
+    m = _invoice_machine(client, h)
+    assert _mk(client, h, m["id"]).status_code == 200
+    assert _mk(client, h, m["id"], c="Бат Бүтээц",
+               f="2026-05-01", t="2026-05-31").status_code == 200
+    assert len(client.get(f"/api/machines/{m['id']}/logs", headers=h).json()["invoices"]) == 2
+
+
+def test_machine_invoice_duplicate_guard_is_per_machine(client, as_role):
+    """Өөр машины ижил цонх нь өөр ажил — хоригт өртөхгүй."""
+    h = as_role("otgoo")
+    a = _invoice_machine(client, h)
+    b = _invoice_machine(client, h)
+    assert _mk(client, h, a["id"]).status_code == 200
+    assert _mk(client, h, b["id"]).status_code == 200
 
 
 def test_machine_invoice_pdf_and_delete(client, as_role):

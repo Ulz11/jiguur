@@ -1,10 +1,10 @@
 import { useEffect, useId, useState } from "react";
 import { api, money, sayaFmt, user } from "../api";
-import { Spinner, FormModal, SubmitButton, useToast, Empty, InlineEdit, ConfirmModal, Receipt } from "../ui";
+import { Spinner, Spin, FormModal, SubmitButton, useToast, Empty, InlineEdit, ConfirmModal, Receipt } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
-import { billableJobs, billTotal, type MachineLogRow } from "../lib/machine";
+import { billableJobs, invoiceTotals, type MachineLogRow } from "../lib/machine";
 import { todayIso } from "../lib/schedule";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -23,9 +23,11 @@ export default function Machines() {
   const [modal, setModal] = useState<any>(null);     // {kind:'job'|'expense'|'add'|'invoice', machine}
   // Уугуул confirm() биш — системийн бусад устгал/төлөв солихтой ижил Modal
   const [ask, setAsk] = useState<any>(null);         // {kind:'delLog'|'retire'|'delInv', …}
-  // Нэхэмжлэлийн товч сервер рүү явж байх хоромд өөрийгөө түгжинэ — хоёр дарвал
-  // хоёр цонх (эсвэл хоёр баримт) төрдөг байв (SubmitButton-ийн журам).
-  const [invBusy, setInvBusy] = useState<number | null>(null);
+  /* Нэхэмжлэлийн товч сервер рүү явж байх хоромд өөрийгөө түгжинэ — хоёр дарвал
+     хоёр цонх (эсвэл хоёр баримт) төрдөг байв (SubmitButton-ийн журам).
+     ТҮЛХҮҮР нь МАШИНЫ ID: ганц `number | null` байхад нэг машины хүлээлт БҮХ
+     машины товчийг унтраадаг байв — зургаан краны жагсаалт бүхэлдээ хөшинө. */
+  const [invBusy, setInvBusy] = useState<Record<number, boolean>>({});
   const toast = useToast();
   const pdf = usePdf();
   const u = user();
@@ -127,20 +129,25 @@ export default function Machines() {
                 {/* Нэхэмжлэл гаргах зам нүд дотроо ч бий — доод «Нэхэмжлэлүүд»
                     хэсэг рүү гүйлгэлгүйгээр шууд. Зогссон машины өнгөрсөн ажлыг
                     нэхэмжлэх нь хэвийн тул идэвхгүй үед ч харагдана. */}
+                {/* Хоёр оролт НЭГ үйлдэл — тул НЭГ жинтэй (btn-secondary) ба НЭГ
+                    нэртэй. Картын оролт нь ХАРАГДАЖ буй бичилтийн самбарыг
+                    хөдөлгөхгүй: В машины нэхэмжлэлийг гаргахын тулд А машины
+                    нээлттэй түүхийг чимээгүй сольдог байв. Цонх нь дөнгөж
+                    татсан объектоо ШУУД аваад явна. */}
                 {seesMoney && (
-                  <button className="btn-ghost btn-row" disabled={invBusy !== null}
-                          aria-busy={invBusy === m.id || undefined}
+                  <button className="btn-secondary btn-row" disabled={!!invBusy[m.id]}
+                          aria-busy={invBusy[m.id] || undefined}
+                          aria-label={`${m.name} — нэхэмжлэл үүсгэх`}
                           onClick={async (e) => {
                             e.stopPropagation();
-                            setInvBusy(m.id);
+                            setInvBusy((b) => ({ ...b, [m.id]: true }));
                             try {
                               const s = await api(`/api/machines/${m.id}/logs`);
-                              setSel(s);
                               setModal({ kind: "invoice", machine: s });
                             } catch (er: any) { toast(er.message, "err"); }
-                            finally { setInvBusy(null); }
+                            finally { setInvBusy((b) => ({ ...b, [m.id]: false })); }
                           }}>
-                    {invBusy === m.id ? "…" : "Нэхэмжлэл үүсгэх"}
+                    Нэхэмжлэл үүсгэх{invBusy[m.id] && <Spin />}
                   </button>
                 )}
                 {/* Зогссон машин жагсаалтын сүүлд ирдэг (сервер эрэмбэлнэ) ба
@@ -312,7 +319,10 @@ export default function Machines() {
                   бодит байдал нь бичилтийн «Хэлбэр» талбар дээр бүртгэгддэг. */}
               <p className="text-[12.5px] text-t3 mt-0.5">Краны ажлын мөрүүдээс гаргасан баримт — авлагын тооцоонд ордоггүй.</p>
             </div>
+            {/* Картын оролттой ИЖИЛ нэр — нэг үйлдэл хоёр өөр дуудлагатай
+                байвал уншигчаар ажилладаг хүн хоёр өөр зүйл гэж уншина. */}
             <button className="btn-secondary !min-h-9 !py-1.5"
+                    aria-label={`${sel.name} — нэхэмжлэл үүсгэх`}
                     onClick={() => setModal({ kind: "invoice", machine: sel })}>Нэхэмжлэл үүсгэх</button>
           </div>
           {sel.invoices.length === 0 ? (
@@ -335,10 +345,14 @@ export default function Machines() {
                       <td className="td text-right tabular-nums font-bold text-ink"
                           title={money(inv.grand_total)}>{money(inv.grand_total)}</td>
                       <td className="td text-right whitespace-nowrap">
+                        {/* Шошго нь «…» болдог байв — уншигчаар ажилладаг хүн
+                            30 мөрийн аль баримтын товчийг дарснаа алддаг. Нэр
+                            байрандаа, тэмдэг нь дэргэд нь. */}
                         <button className="btn-ghost btn-row" disabled={pdf.busy}
                                 aria-busy={pdf.busyPath === path || undefined}
+                                aria-label={`№${inv.no} — PDF нээх`}
                                 onClick={() => pdf.open(path)}>
-                          {pdf.busyPath === path ? "…" : "PDF"}
+                          PDF{pdf.busyPath === path && <Spin />}
                         </button>
                         <button className="w-9 h-9 rounded-lg bg-danger-50 text-danger shrink-0 ml-1.5 align-middle"
                                 title="Нэхэмжлэл устгах" aria-label={`№${inv.no} — нэхэмжлэл устгах`}
@@ -487,6 +501,10 @@ function InvoiceModal({ m, onClose, onDone }: any) {
   const f0 = { client: "", from: monthStart(), to: today() };
   const [f, setF] = useState(f0);
   const [names, setNames] = useState<string[]>([]);
+  /* НӨАТ% нь СЕРВЕРИЙН тооцоонд ордог (`create_invoice`) тул урьдчилсан
+     харагдац түүнийг мэдэхгүй бол «1,800,000₮» гэж амлаад баримт дээр өөр тоо
+     хэвлэнэ. Компанийн тохиргоо ГАНЦ эх сурвалж — сервер ч эндээс уншина. */
+  const [vat, setVat] = useState(0);
   const uid = useId();
 
   // Харилцагчийн санал: бүртгэлтэй харилцагчид + краны бичилтэд бичигдсэн
@@ -497,12 +515,15 @@ function InvoiceModal({ m, onClose, onDone }: any) {
     api("/api/clients")
       .then((rows: any[]) => { if (alive) setNames(rows.map((c) => c.name)); })
       .catch(() => { /* санал байхгүй ч гараар бичих зам нээлттэй */ });
+    api("/api/settings")
+      .then((s: any) => { if (alive) setVat(parseMoney(s.vat_percent)); })
+      .catch(() => { /* уншигдаагүй бол 0 — өнөөдрийн бодит утга */ });
     return () => { alive = false; };
   }, []);
 
   const logs: MachineLogRow[] = m.logs || [];
   const rows = billableJobs(logs, f.client, f.from, f.to);
-  const total = billTotal(rows);
+  const sum = invoiceTotals(rows, vat);
   const suggestions = Array.from(new Set([...(m.clients || []), ...names]));
 
   return (
@@ -543,10 +564,16 @@ function InvoiceModal({ m, onClose, onDone }: any) {
                 value: money(r.amount),
               })),
               ...(rows.length > 6
-                ? [{ label: `… бас ${rows.length - 6} мөр`, value: money(billTotal(rows.slice(6))), accent: "dim" as const }]
+                ? [{ label: `… бас ${rows.length - 6} мөр`, value: money(invoiceTotals(rows.slice(6)).total), accent: "dim" as const }]
+                : []),
+              // НӨАТ 0 бол мөр нэмэхгүй — байхгүй татварыг «0₮» гэж зарлах нь
+              // уншигчийг зогсоох чимээ (өнөөдрийн Жигүүр Зам).
+              ...(sum.vat > 0
+                ? [{ label: `Мөрүүдийн дүн`, value: money(sum.total), accent: "dim" as const },
+                   { label: `НӨАТ ${vat}%`, value: money(sum.vat), accent: "dim" as const }]
                 : []),
             ]}
-            total={{ label: `${rows.length} мөр · Нийт`, value: money(total), accent: "money" }} />
+            total={{ label: `${rows.length} мөр · Нийт`, value: money(sum.grand), accent: "money" }} />
         )}
       </div>
 

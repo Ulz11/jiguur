@@ -42,3 +42,21 @@ export function billableJobs(
 export function billTotal(rows: MachineLogRow[]): number {
   return rows.reduce((s, r) => s + r.amount, 0);
 }
+
+/** Баримтын нийт — серверийн `create_invoice`-тэй ЯГ ижил томьёо.
+ *
+ *  Урьдчилсан харагдац `billTotal`-ыг «Нийт» гэж бичдэг байсан бол сервер
+ *  `grand_total = total + total × НӨАТ% / 100` гэж бичдэг. Жигүүр Зам одоогоор
+ *  НӨАТ-гүй (тохиргооны `vat_percent` = 0) тул хоёр тоо санамсаргүй таарч
+ *  байв: тохиргоог асаамагц дэлгэц дээрх амлалт баримт дээр эвдэрнэ.
+ *
+ *  НӨАТ% нь ТОХИРГООНООС ирнэ (`/api/settings` — сервер ч мөн адил
+ *  `routers/machines.py::_vat_percent`). Уншигдаагүй/гажсан утга нь 0 болж
+ *  унана: тоо хэзээ ч NaN болж дэлгэц дээр гарахгүй.
+ */
+export function invoiceTotals(rows: MachineLogRow[], vatPercent = 0) {
+  const total = billTotal(rows);
+  const pct = Number.isFinite(vatPercent) && vatPercent > 0 ? vatPercent : 0;
+  const vat = (total * pct) / 100;
+  return { total, vat, grand: total + vat };
+}

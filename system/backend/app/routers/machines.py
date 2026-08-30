@@ -141,6 +141,26 @@ def _next_no(db: Session, today: date) -> str:
     return f"{head}{n}"
 
 
+def _overlapping_invoice(db: Session, mid: int, client: str,
+                         d_from: date, d_to: date) -> models.MachineInvoice | None:
+    """Ижил машин + ижил харилцагчийн ДАВХАЦСАН цонхтой баримт (эхнийх).
+
+    Хоёр цонх [a1,a2] ба [b1,b2] нь `a1 <= b2 БА b1 <= a2` үед давхацна —
+    ирмэг ОРОЛЦОНО, `billable_jobs`-ийн цонхтой яг ижил журам. Иймд 05-01–05-15
+    ба 05-16–05-31 нь зэрэгцээ (чөлөөтэй), 05-15-аар таарвал давхардал.
+
+    Харилцагчийг `strip()`-ээр жишнэ — `billable_jobs` мөрөө ЯГ тэгж түүдэг тул
+    хоёр газар нэг дүрэм: «Түмэн Хийц » ба «Түмэн Хийц» нэг хүн.
+    """
+    key = client.strip()
+    return (db.query(models.MachineInvoice)
+            .filter(models.MachineInvoice.machine_id == mid,
+                    models.MachineInvoice.client == key,
+                    models.MachineInvoice.d_from <= d_to,
+                    models.MachineInvoice.d_to >= d_from)
+            .order_by(models.MachineInvoice.id).first())
+
+
 def _machine(db: Session, mid: int) -> models.Machine:
     m = db.get(models.Machine, mid)
     if not m:
@@ -264,6 +284,15 @@ def create_invoice(mid: int, body: InvoiceIn, db: Session = Depends(get_db),
     m = _machine(db, mid)
     if body.d_from > body.d_to:
         raise HTTPException(400, "Эхлэх огноо дуусах огнооноос хойш байж болохгүй")
+    # «Үүсгэх»-ийг хоёр дарахад ЯГ ижил мөрүүд дээр хоёр баримт төрдөг байв —
+    # кран нэг ажлаа хоёр удаа нэхэмжилнэ. Давхацсан цонхыг АЛЬ баримттай
+    # мөргөлдсөнийг нэрлэж татгалзана (409 — «мөргөлдөөн», 400 биш: хүсэлт
+    # өөрөө зөв, зөвхөн одоо байгаа баримттай зөрчилдөж байна).
+    dup = _overlapping_invoice(db, mid, body.client, body.d_from, body.d_to)
+    if dup:
+        raise HTTPException(409, f"№{dup.no} нь {dup.client}-ийн {dup.d_from}–{dup.d_to} "
+                                 f"хугацааг аль хэдийн нэхэмжилсэн байна — "
+                                 f"давхардсан баримт үүсгэхгүй")
     rows = billable_jobs(m, body.client, body.d_from, body.d_to)
     if not rows:
         raise HTTPException(400, "Тухайн хугацаанд энэ харилцагчийн нэхэмжлэх ажил олдсонгүй")

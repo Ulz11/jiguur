@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { billableJobs, billTotal, type MachineLogRow } from "./machine";
+import { billableJobs, billTotal, invoiceTotals, type MachineLogRow } from "./machine";
 
 // Нэхэмжлэх үүсгэхийн ӨМНӨ Отгоо «хэдэн мөр, хэдэн төгрөг» болохыг харна.
 // Тэр урьдчилсан харагдац нь серверийн сонголттой ЯГ ижил дүрмээр ажиллах ёстой
@@ -54,5 +54,34 @@ describe("billTotal", () => {
 
   it("хоосон сонголт 0", () => {
     expect(billTotal([])).toBe(0);
+  });
+});
+
+/* НӨАТ нь дэлгэц дээр ХАРАГДДАГГҮЙ байв: урьдчилсан харагдац `billTotal`-ыг
+   шууд «Нийт» гэж бичдэг байсан бол сервер `grand_total = total + НӨАТ` гэж
+   бичдэг. Жигүүр Зам одоогоор НӨАТ-гүй (тохиргоо 0) тул хоёр тоо санамсаргүй
+   таарч байсан — тохиргоог асаамагц баримт дээр өөр тоо гарна. */
+describe("invoiceTotals", () => {
+  const rows = billableJobs(logs, "Түмэн Хийц", "2026-05-01", "2026-05-31");
+
+  it("НӨАТ 0 бол нийт нь мөрүүдийн нийлбэрээрээ хэвээр", () => {
+    expect(invoiceTotals(rows, 0)).toEqual({ total: 1_800_000, vat: 0, grand: 1_800_000 });
+  });
+
+  it("НӨАТ 10% — серверийн total + total×%/100 томьёо", () => {
+    expect(invoiceTotals(rows, 10)).toEqual({ total: 1_800_000, vat: 180_000, grand: 1_980_000 });
+  });
+
+  it("тохиргоо уншигдаагүй (заагаагүй) бол НӨАТ-гүй гэж үзнэ", () => {
+    expect(invoiceTotals(rows)).toEqual({ total: 1_800_000, vat: 0, grand: 1_800_000 });
+  });
+
+  it("тохиргоо гажсан (NaN, сөрөг) бол 0 болж унана — тоо хэзээ ч NaN болохгүй", () => {
+    expect(invoiceTotals(rows, NaN).grand).toBe(1_800_000);
+    expect(invoiceTotals(rows, -5).grand).toBe(1_800_000);
+  });
+
+  it("хоосон сонголт бүхэлдээ 0", () => {
+    expect(invoiceTotals([], 10)).toEqual({ total: 0, vat: 0, grand: 0 });
   });
 });
