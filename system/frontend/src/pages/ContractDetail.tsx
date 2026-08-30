@@ -2,7 +2,8 @@ import { Fragment, ReactNode, useEffect, useId, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { api, money, fmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, useToast,
-         InlineEdit, Receipt, ConfirmModal } from "../ui";
+         InlineEdit, Receipt, ConfirmModal, Chevron, DisclosureCell, DisclosureHead } from "../ui";
+import { panelId, disclosureProps } from "../lib/disclosure";
 import { allocationPreview } from "../lib/alloc";
 import { endDateLabel } from "../lib/contract";
 import { invoiceLabel } from "../lib/invoice";
@@ -227,8 +228,10 @@ export default function ContractDetail() {
             </div>
             {/* Даргад ҮНИЙН хоёр багана огт БАЙХГҮЙ — хоосон нүд үлдээвэл
                 «энд ямар нэг тоо байгаа» гэж заана (Machines.tsx-ийн журам). */}
-            <table className={`w-full ${seesMoney ? "min-w-[520px]" : "min-w-[360px]"}`}>
+            {/* +30px — задрах тэмдгийн багана (`chev-cell`) */}
+            <table className={`w-full ${seesMoney ? "min-w-[550px]" : "min-w-[390px]"}`}>
               <thead><tr>
+                <DisclosureHead />
                 <th className="th">Материал</th><th className="th">Зэрэглэл</th>
                 <th className="th text-right">Тоо</th>
                 {seesMoney && (
@@ -242,6 +245,7 @@ export default function ContractDetail() {
                 {sections.map((sec) => {
                   const open = openMat === sec.key;
                   const has = sec.lines.length > 0;
+                  const pid = panelId("mat", sec.key);
                   return (
                   <Fragment key={sec.key}>
                     {/* Хүснэгтэд мөргүй үлдсэн түүх (гэрээний мөрд ороогүй
@@ -252,7 +256,7 @@ export default function ContractDetail() {
                          ижилхэн дуудагдвал уншигчаар ажилладаг хүн хоёр өөр
                          мөрийг ялгаж чадахгүй. Ялгаж буй зүйл нь ТАРИФ. */
                       <tr key={i} className={has ? "cursor-pointer hover:bg-canvas transition" : undefined}
-                          {...(has ? { "aria-expanded": open } : {})}
+                          {...(has ? disclosureProps(open, pid) : {})}
                           {...(has ? rowClickProps(() => setOpenMat(open ? null : sec.key),
                                 `${sec.material} (${sec.grade})${
                                   sec.rows.length > 1 && !it.orphan
@@ -266,10 +270,13 @@ export default function ContractDetail() {
                                           : ""}`
                                     : ""} — хөдөлгөөний түүхийг ${open ? "хаах" : "нээх"}`,
                                 "row") : {})}>
+                        {/* Задрах тэмдэг ЗӨВХӨН эхний мөрөнд байв — атал доорх
+                            тарифын мөрүүд ЧУХАМ ижилхэн задардаг (нэг л самбар).
+                            Тэмдэггүй мөр дарахад дээд мөрийн самбар нээгддэг нь
+                            хэнд ч ойлгогдохгүй: одоо бүлгийн МӨР БҮР тэмдэгтэй,
+                            бүгд НЭГ самбарыг (`pid`) заана. */}
+                        {has ? <DisclosureCell open={open} /> : <td className="td chev-cell" />}
                         <td className="td font-bold text-ink">
-                          {/* Задрах тэмдэг ЗӨВХӨН хэсгийн эхний мөрөнд — доорх
-                              тарифын мөрүүд нь тэр материалын үргэлжлэл. */}
-                          {i === 0 && has && <span className="text-t3 font-normal mr-1.5">{open ? "▾" : "›"}</span>}
                           {sec.material}
                           {/* «Хэдэн мөр» биш «ХЭД ирж байна» — баталгаажаагүй
                               ачилтыг задлалгүйгээр мөрөн дээрээс уншина. */}
@@ -304,7 +311,7 @@ export default function ContractDetail() {
                       </tr>
                     ))}
                     {open && (
-                      <tr><td colSpan={seesMoney ? 5 : 3} className="td !bg-canvas !p-0">
+                      <tr id={pid}><td colSpan={seesMoney ? 6 : 4} className="td !bg-canvas !p-0">
                         <MaterialLedger sec={sec} sale={d.type === "sale"} seesMoney={seesMoney}
                           canEdit={u?.role === "manager"} onEdit={gatedPatch} />
                       </td></tr>
@@ -389,11 +396,10 @@ export default function ContractDetail() {
               {/* `aria-controls` нь БАЙГАА зангилаа заана: хумигдсан үед мөр нь
                   DOM-д огт байхгүй тул холбоос нь мухардмал болно. Нээлттэй
                   үедээ л заана — `aria-expanded` нь төлөвөө өөрөө хэлнэ. */}
-              <button type="button" aria-expanded={showHist}
-                      {...(showHist ? { "aria-controls": "mv-history" } : {})}
+              <button type="button" {...disclosureProps(showHist, "mv-history")}
                       className="flex items-center gap-2 w-full text-left font-bold text-ink"
                       onClick={() => setHistOpen(!showHist)}>
-                <span className="text-t3">{showHist ? "▾" : "›"}</span>
+                <Chevron open={showHist} />
                 Хөдөлгөөний түүх
                 <span className="pill-grey ml-auto">{fmt(d.movements.length)}</span>
                 {pendingMv > 0 && <span className="pill-amber">{fmt(pendingMv)} хүлээгдэж буй</span>}
@@ -409,19 +415,20 @@ export default function ContractDetail() {
             <div id="mv-history" className="relative pl-6 mt-4 before:content-[''] before:absolute before:left-[7px] before:top-1.5 before:bottom-1.5 before:w-0.5 before:bg-sunken">
               {d.movements.map((mv: any) => {
                 const open = openMv === mv.id;
+                const mvPid = panelId("mv", mv.id);
                 return (
                 <div key={mv.id} className="relative pb-4 last:pb-0">
                   <i className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-white border-[3px] ${
                     mv.type === "ISSUE" ? "border-brand" : mv.type === "RETURN" ? "border-warn" : "border-danger"}`} />
                   {/* Задардаг мөр — хулганаар ч, Tab+Enter-ээр ч нээгдэнэ */}
                   <div className="cursor-pointer" title="Дарж дэлгэрэнгүйг нээнэ"
-                       aria-expanded={open}
+                       {...disclosureProps(open, mvPid)}
                        {...rowClickProps(() => setOpenMv(open ? null : mv.id),
                          `${mv.date} · ${mvName(mv.type)} — дэлгэрэнгүйг ${open ? "хаах" : "нээх"}`)}>
                     <span className="text-[12px] text-t3 font-semibold">{mv.date}</span>
                     {mv.status === "pending" && <span className="pill-amber ml-2">хүлээгдэж буй</span>}
                     <b className="block text-[13.5px] text-ink font-semibold">
-                      <span className="text-t3 font-normal mr-1">{open ? "▾" : "›"}</span>
+                      <Chevron open={open} />{" "}
                       {mvName(mv.type)} — {fmt(mv.lines.reduce((s: number, l: any) => s + l.qty, 0))}ш
                     </b>
                   </div>
@@ -450,7 +457,7 @@ export default function ContractDetail() {
                       {mv.note && <span className="block text-t3">{mv.note}</span>}
                     </div>
                   ) : (
-                    <div className="mt-1.5 rounded-2xl border border-line-strong p-3 bg-sunken/40">
+                    <div id={mvPid} className="mt-1.5 rounded-2xl border border-line-strong p-3 bg-sunken/40">
                       {u?.role === "manager" && (
                         <div className="text-[12px] text-t2 inline-flex items-center gap-1.5 mb-2">
                           <span aria-hidden="true">Огноо:</span>
@@ -883,6 +890,7 @@ function ReturnModal({ d, grades, seesMoney, onClose, onDone }: any) {
           const feeOver = r.repair + r.writeoff > ret;
           const expanded = open === i;
           const flagged = r.repair + r.writeoff;
+          const dmgPid = panelId(`${uid}-dmg`, i);
           return (
             <div key={i} className="py-3">
               <div className="flex items-center gap-3">
@@ -907,9 +915,9 @@ function ReturnModal({ d, grades, seesMoney, onClose, onDone }: any) {
                           onChange={(e) => setRow(i, { return_grade_id: +e.target.value })}>
                     {grades.map((g: any) => <option key={g.id} value={g.id}>{g.code}</option>)}
                   </select>
-                  <button className="btn-ghost !min-h-11 text-[13px]" aria-expanded={expanded}
+                  <button className="btn-ghost !min-h-11 text-[13px]" {...disclosureProps(expanded, dmgPid)}
                           onClick={() => setOpen(expanded ? null : i)}>
-                    <span className="text-t3">{expanded ? "▾" : "›"}</span> Гэмтэл/акт
+                    <Chevron open={expanded} /> Гэмтэл/акт
                     {!expanded && flagged > 0 && <b className="text-warn"> · {fmt(flagged)}ш</b>}
                   </button>
                   <span className={`ml-auto text-[12.5px] tabular-nums ${
@@ -921,7 +929,7 @@ function ReturnModal({ d, grades, seesMoney, onClose, onDone }: any) {
               )}
 
               {ret > 0 && expanded && (
-                <div className="mt-2.5 rounded-[8px] p-3 flex gap-4 flex-wrap items-end"
+                <div id={dmgPid} className="mt-2.5 rounded-[8px] p-3 flex gap-4 flex-wrap items-end"
                      style={{ background: "var(--color-sunken)" }}>
                   <div>
                     <label className="lbl" htmlFor={`${uid}-rep-${i}`}>Засварт</label>

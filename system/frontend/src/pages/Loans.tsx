@@ -1,9 +1,11 @@
 import { Fragment, useEffect, useId, useState } from "react";
 import { api, money, sayaFmt } from "../api";
-import { Spinner, FormModal, SubmitButton, useToast, Empty, InlineEdit, Receipt, ConfirmModal } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Empty, InlineEdit, Receipt, ConfirmModal,
+         DisclosureCell, DisclosureHead } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { rowClickProps } from "../lib/rowClick";
+import { panelId, disclosureProps } from "../lib/disclosure";
 import { partLabel, partSign, balanceAfterRemoving } from "../lib/loan";
 import { todayIso } from "../lib/schedule";
 
@@ -109,19 +111,28 @@ export default function Loans() {
       <div className="card overflow-x-auto">
         <table className="w-full min-w-[880px]">
           <thead><tr>
+            <DisclosureHead />
             <th className="th">Зээлдүүлэгч</th><th className="th text-right">Үндсэн дүн</th>
             <th className="th text-right">Үлдэгдэл</th>
             <th className="th text-right">Сарын хүү</th><th className="th text-right">Сарын төлөлт</th>
             <th className="th">Дараагийн</th><th className="th"></th>
           </tr></thead>
           <tbody>
-            {d.loans.map((l: any) => (
+            {d.loans.map((l: any) => {
+              const isOpen = open === l.id;
+              const pid = panelId("loan", l.id);
+              return (
               <Fragment key={l.id}>
+                {/* Мөр задардаг гэдгийг ЮУ Ч хэлдэггүй байв — мөрийн хамгийн ил
+                    зогсоол нь зээлдүүлэгчийн нэрэн дээрх ✎ засвар байсан тул
+                    Отгоо түүнийг мөрийн үйлдэл гэж ойлгоно. Одоо тэмдэг мөрийн
+                    эхэнд, өөрийн баганадаа (бүх хүснэгттэй нэг хэлбэр). */}
                 <tr className="cursor-pointer hover:bg-canvas transition"
-                    aria-expanded={open === l.id}
-                    {...rowClickProps(() => setOpen(open === l.id ? null : l.id),
-                                      `${l.name} — төлөлтийн түүхийг ${open === l.id ? "хаах" : "нээх"}`,
+                    {...disclosureProps(isOpen, pid)}
+                    {...rowClickProps(() => setOpen(isOpen ? null : l.id),
+                                      `${l.name} — төлөлтийн түүхийг ${isOpen ? "хаах" : "нээх"}`,
                                       "row")}>
+                  <DisclosureCell open={isOpen} />
                   <td className="td whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     <span className="flex items-center gap-1.5">
                       <InlineEdit label="Зээлдүүлэгч" value={l.name} width="w-44" confirmText="Нэр солих уу?"
@@ -188,8 +199,8 @@ export default function Loans() {
                     )}
                   </td>
                 </tr>
-                {open === l.id && (
-                  <tr><td colSpan={7} className="td !bg-canvas">
+                {isOpen && (
+                  <tr id={pid}><td colSpan={8} className="td !bg-canvas">
                     <div className="flex flex-col gap-3">
                       <div className="flex items-center justify-between gap-4 flex-wrap"
                            onClick={(e) => e.stopPropagation()}>
@@ -280,7 +291,8 @@ export default function Loans() {
                   </td></tr>
                 )}
               </Fragment>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         {d.loans.length === 0 && <Empty title="Зээл алга" />}

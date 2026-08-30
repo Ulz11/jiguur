@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useLayoutEffect, useRef, useId } from "react";
 import { tabbablesIn, trapNext } from "./lib/focus";
 import { editKeyAction } from "./lib/edit";
+import { saysIrreversible } from "./lib/danger";
 
 /* ---------- Toast ---------- */
 const ToastCtx = createContext<(msg: string, kind?: "ok" | "err") => void>(() => {});
@@ -202,6 +203,15 @@ export function ConfirmModal({ title, intro, rows, total, note, confirmLabel, ca
   note?: ReactNode;
   confirmLabel: string;
   cancelLabel?: string;
+  /** ДҮРЭМ: «буцаагдахгүй» ⇒ `danger`.
+   *
+   *  `danger` нь улаан товч гэсэн ЧИМЭГ биш — фокусыг ЗӨӨДӨГ: Enter нь
+   *  «Болих» дээр очно. Буцаагддаг үйлдэлд (ачилт баталгаажуулах) фокус
+   *  гүйцэтгэх товч дээрээ байх нь зөв, буцаагдахгүйд нь БУРУУ: Отгоо
+   *  жагсаалт дундуур Enter дараад 5,950,000₮ цалин олгочихно.
+   *
+   *  Тиймээс `intro`/`note` дотор «буцаагдахгүй», «сэргэхгүй» гэсэн үг байвал
+   *  энэ туг ЗААВАЛ. Мартвал доорх шалгалт хөгжүүлэлтийн үед дуугарна. */
   danger?: boolean;
   onConfirm: () => Promise<void> | void;
   onClose: () => void;
@@ -213,6 +223,15 @@ export function ConfirmModal({ title, intro, rows, total, note, confirmLabel, ca
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
+  /* Дүрмийг хүн биш МАШИН барина. Зөвхөн `dev` — ажилд гарсан багц дээр энэ
+     мөр огт үлдэхгүй (Vite нь `import.meta.env.DEV`-ийг тогтмолоор солино). */
+  useEffect(() => {
+    if (import.meta.env.DEV && !danger && (saysIrreversible(intro) || saysIrreversible(note))) {
+      console.warn(
+        `[ConfirmModal] «${title}» нь «буцаагдахгүй» гэж бичсэн атлаа danger аваагүй — ` +
+        `Enter нь «${confirmLabel}» дээр очиж байна. danger нэмнэ үү.`);
+    }
+  }, [danger, title]);
   return (
     <Modal title={title} onClose={onClose}>
       {intro && <p className="text-[13.5px] text-t2 mb-4">{intro}</p>}
@@ -266,6 +285,27 @@ export function Receipt({ rows, total, className = "" }: {
       )}
     </div>
   );
+}
+
+/* ---------- Задрах тэмдэг (disclosure) ----------
+   Систем дээр «энэ мөр задардаг» гэдгийг ТАВАН өөр аргаар (эсвэл огт биш)
+   хэлдэг байсныг НЭГ биет болгов — `lib/disclosure.ts`-ийн тайлбарыг үз.
+   Тэмдэг нь чимэг тул уншигчид нуугдана: төлөвийг `aria-expanded` хэлнэ. */
+export function Chevron({ open }: { open: boolean }) {
+  return <span className="chev-mark" aria-hidden="true">{open ? "▾" : "›"}</span>;
+}
+
+/** Хүснэгтийн задрах мөрийн ЭХНИЙ нүд. Мөрийн эхэнд, өөрийн баганадаа зогсоно:
+ *  /loans дээр мөрийн хамгийн ил зогсоол нь зээлдүүлэгчийн нэрэн дээрх ✎ засвар
+ *  байсан — нүд дарахыг уриалж байгаа зүйл нь мөрийн үйлдэл БИШ байв.
+ *  Мөрийн товшилтыг ЗААВАЛ дамжуулна (`stopPropagation` тавихгүй). */
+export function DisclosureCell({ open }: { open: boolean }) {
+  return <td className="td chev-cell"><Chevron open={open} /></td>;
+}
+
+/** Түүний толгой — нэргүй багана (сумны нэрийг мөр өөрөө үүрнэ) */
+export function DisclosureHead() {
+  return <th className="th chev-cell" />;
 }
 
 /* ---------- Жижиг туслахууд ---------- */

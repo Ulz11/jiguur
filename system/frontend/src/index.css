@@ -328,6 +328,13 @@ body::before {
 .tech-details > summary .chev { display: inline-block; transition: transform 0.18s ease; }
 .tech-details[open] > summary .chev { transform: rotate(90deg); }
 
+/* ---- Задрах тэмдэг — НЭГ хэлбэр (ui.tsx `Chevron`, `DisclosureCell`) ----
+   Задардаг мөр систем даяар таван өөр дүртэй байв: сумтай, сумгүй, огт
+   тэмдэггүй... Одоо ганц дүр: мөрийн ЭХЭНД, өөрийн нарийн баганадаа. Тэмдэг нь
+   тайван саарал (чимэг), нээгдэхэд ▾ болж төлөвөө хэлнэ. */
+.chev-cell { width: 30px; padding-left: 10px; padding-right: 0; text-align: center; }
+.chev-mark { color: var(--color-t3); font-weight: 400; user-select: none; }
+
 /* Сегмент — хажуу хажуугаа зогссон шүүлтүүрүүд (Apple-style биш, 5-7px ирмэг) */
 .segment { @apply inline-flex rounded-[7px] gap-0.5 border border-line; padding: 3px; background: #eff1f5; }
 /* Шүүлтүүрийн товч ч дарагддаг зүйл — 34px биш, шатныхаа доод шат (36px) */
