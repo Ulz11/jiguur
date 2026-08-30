@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, fmt, money, sayaFmt, user } from "../api";
-import { Spinner, Prog, useToast, ConfirmModal, Refreshing, Empty } from "../ui";
-import { useScope } from "../App";
+import { Spinner, Prog, useToast, ConfirmModal, Refreshing, Empty, Chevron } from "../ui";
+import { disclosureProps } from "../lib/disclosure";
+import { useScope, ScopeSwitch } from "../App";
 import { useLive } from "../lib/live";
 import { rowClickProps } from "../lib/rowClick";
 import { clientHref, contractHref, contractsHref, invoiceHref, notificationHref } from "../lib/links";
@@ -117,18 +118,17 @@ export default function Dashboard() {
             </b>
             <span className={`text-t2 ${touch ? "text-[13px]" : "text-[12.5px]"}`}>{p.date} · {p.summary}</span>
           </div>
+          {/* Хүлээгдэж буй ачилт бүр дээр «Ачсан ✓» гэсэн ЯГ ижил нэртэй товч
+              зогсож байв — Цалингийн «Олгох ✓»-тэй ижил алдаа: мөр бүр өөрийн
+              ачилтаа нэрлэнэ, ✓ нь чимэг тул нуугдана. */}
           {(isFactory || u?.role === "manager") && (
-            touch ? (
-              <button className="btn-primary tap-lg px-6 max-[840px]:w-full max-[840px]:justify-center"
-                      disabled={busy === p.id} onClick={() => askShipment(p)}>
-                {busy === p.id ? "…" : "Ачсан ✓"}
-              </button>
-            ) : (
-              <button className="btn-secondary ml-auto !min-h-9 !py-1.5 !px-3 text-[13px]"
-                      disabled={busy === p.id} onClick={() => askShipment(p)}>
-                {busy === p.id ? "…" : "Ачсан ✓"}
-              </button>
-            )
+            <button className={touch
+                      ? "btn-primary tap-lg px-6 max-[840px]:w-full max-[840px]:justify-center"
+                      : "btn-secondary ml-auto !min-h-9 !py-1.5 !px-3 text-[13px]"}
+                    aria-label={`Гэрээ №${p.contract_no} · ${p.client} — ${p.date}-ний ачилтыг баталгаажуулах`}
+                    disabled={busy === p.id} onClick={() => askShipment(p)}>
+              {busy === p.id ? "…" : <>Ачсан <span aria-hidden="true">✓</span></>}
+            </button>
           )}
         </div>
       ))}
@@ -237,7 +237,11 @@ export default function Dashboard() {
     <Refreshing busy={busyScope}>
       <div className="dashboard-header">
         <div>
-          <div className="dashboard-kicker">УДИРДЛАГЫН ТОЙМ <span>•</span> АМЬД</div>
+          {/* Хуудас ӨӨРИЙН шүүлтүүрээ нэрлэнэ: доорх бүх тоо ЯМАР хүрээнийх
+              болохыг гарчигныхаа дээр хэлнэ (хаягтай нэг зүйл). */}
+          <div className="dashboard-kicker">УДИРДЛАГЫН ТОЙМ
+            {scope !== "all" && <><span>•</span> {SCOPE_LABEL[scope].toUpperCase()}</>}
+            <span>•</span> АМЬД</div>
           <h1 className="dashboard-title">Удирдлагын төв</h1>
           <p className="dashboard-subtitle">
             {scope === "all" ? "Компанийн өнөөдрийн зураг — бүх тоо амьд." :
@@ -246,6 +250,10 @@ export default function Dashboard() {
         </div>
         <Link to="/contracts/new" className="btn-primary command-action">+ Шинэ гэрээ</Link>
       </div>
+
+      {/* Түрээс/Худалдаа — доорх БҮХ тоог сольдог шийдвэр тул тэдгээрийн ЯГ
+          дээр, хуудасны дотор зогсоно (Гэрээнүүд хуудастай нэг байрлал). */}
+      <ScopeSwitch />
 
       {/* KPI */}
       <div className="command-metrics">
@@ -262,12 +270,11 @@ export default function Dashboard() {
         {/* «3 нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг
             хэлдэггүй байв — Отгоо тоог хараад хэнд залгахаа мэдэхгүй үлддэг.
             Карт нь бүтнээрээ дарагдаж задарна (Tab-аар ч очно). */}
-        {/* `aria-controls` нь БАЙГАА зангилаа заана: хумигдсан үед самбар нь
-            DOM-д огт байхгүй тул холбоос нь мухардмал болно. Нээлттэй үедээ л
-            заана — хумигдсаныг `aria-expanded` өөрөө хэлж байгаа. */}
+        {/* Задрах дүрэм нь `lib/disclosure.ts`-д НЭГ л газар бичигдэнэ:
+            `aria-controls` нь БАЙГАА зангилаа заана — хумигдсан үед самбар нь
+            DOM-д огт байхгүй тул холбоос нь мухардмал болно. */}
         <button type="button" className="command-metric w-full text-left"
-                aria-expanded={overdueOpen}
-                {...(overdueOpen ? { "aria-controls": "overdue-panel" } : {})}
+                {...disclosureProps(overdueOpen, "overdue-panel")}
                 onClick={() => setOverdueOpen(!overdueOpen)}>
           <div className="text-[12.5px] text-t2 font-medium mb-2">Хугацаа хэтэрсэн</div>
           <div className="text-[28px] font-extrabold text-danger tabular-nums leading-tight"
@@ -280,7 +287,7 @@ export default function Dashboard() {
                 болгодог дүрэм (index.css `.command-metric`) энэ дээр унахгүй:
                 энэ бол шошго биш, ҮЙЛДЭЛ. */}
             <span className="text-[13px] text-brand-ink font-semibold">
-              <span className="text-t3 mr-1">{overdueOpen ? "▾" : "›"}</span>Дэлгэрэнгүй
+              <Chevron open={overdueOpen} /> Дэлгэрэнгүй
             </span>
           </div>
         </button>
@@ -288,10 +295,12 @@ export default function Dashboard() {
           <div className="text-[12.5px] text-t2 font-medium mb-2">Идэвхтэй гэрээ</div>
           <div className="text-[28px] font-extrabold text-ink tabular-nums leading-tight">{k.active_contracts}</div>
           {/* Тоо нь АЛЬ гэрээнүүд болохыг хэлэх ёстой — шүүлтүүр нь хаягаар
-              дамжиж, Гэрээнүүд «Дуусах дөхсөн» дээр нээгдэнэ. */}
+              дамжиж, Гэрээнүүд «Дуусах дөхсөн» дээр нээгдэнэ. Энэ тоо нь
+              ЭНЭ ХҮРЭЭНД бодогдсон тул хүрээгээ ч хамт авч явна — эс бөгөөс
+              «2» дарахад 7 мөр нээгдэнэ. */}
           <div className="mt-2">
             {k.ending_soon > 0 ? (
-              <Link to={contractsHref("ending")} className="pill-blue hover:underline">
+              <Link to={contractsHref("ending", scope)} className="pill-blue hover:underline">
                 {k.ending_soon} нь удахгүй дуусна →
               </Link>
             ) : (

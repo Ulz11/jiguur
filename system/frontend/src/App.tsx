@@ -5,6 +5,7 @@ import { user, clearAuth } from "./api";
 import { ToastProvider } from "./ui";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { pageTitle } from "./lib/titles";
+import { scopeFrom, scopeHref, type Scope } from "./lib/links";
 import { todayIso } from "./lib/schedule";
 import ChangePassword from "./components/ChangePassword";
 import brandLogo from "./assets/jiguur-logo.png";
@@ -29,9 +30,36 @@ import MaterialDetail from "./pages/MaterialDetail";
 import Audit from "./pages/Audit";
 import SettingsPage from "./pages/SettingsPage";
 
-/* ---------- Глобал Түрээс/Худалдаа scope ---------- */
-const ScopeCtx = createContext<{ scope: string; setScope: (s: string) => void }>({ scope: "all", setScope: () => {} });
+/* ---------- Глобал Түрээс/Худалдаа scope ----------
+   Хүрээ нь ХАЯГНААС уншигдана (`?scope=rent|sale`), контекст нь түүний амьд
+   толь: хоёулаа рендер тутамд нэг эх сурвалжаас гардаг тул ЗӨРӨХ боломжгүй
+   (өмнө нь useState байсан — хаяг түүнийг мэддэггүй, буцах товч ч мэддэггүй).
+
+   Бичихдээ PUSH: хүрээ солих нь Отгоогийн ХИЙСЭН үйлдэл тул буцах товч
+   түүнийг алхам алхмаар буцаана («яагаад тоо өөрчлөгдчихөв» → ← дарж хараад
+   болно). Replace бол энэ алхмыг чимээгүй залгих байв. */
+const ScopeCtx = createContext<{ scope: Scope; setScope: (s: Scope) => void }>({ scope: "all", setScope: () => {} });
 export const useScope = () => useContext(ScopeCtx);
+
+/** Түрээс/Худалдаа — хуудсын ГОЛ шилжүүлэгч. Дашбоард ба Гэрээнүүд дээр ЯГ
+ *  ижил байрлал, ижил хэмжээ, ижил дуудагдах нэртэй байхын тулд НЭГ л газар
+ *  бичигдэнэ (өмнө нь топбарын 36px саарал сегмент ба хуудасны 44px улбар шар
+ *  товч гэсэн хоёр өөр биетэй, нэг төлөвтэй байв). */
+const SCOPE_BUTTONS: [Scope, string][] = [["all", "Бүгд"], ["rent", "Түрээс"], ["sale", "Худалдаа"]];
+
+export function ScopeSwitch({ className = "mb-3" }: { className?: string }) {
+  const { scope, setScope } = useScope();
+  return (
+    <div className={className}>
+      <div className="scope-switch" role="group" aria-label="Түрээс / Худалдаагаар шүүх">
+        {SCOPE_BUTTONS.map(([v, l]) => (
+          <button key={v} onClick={() => setScope(v)} aria-pressed={scope === v}
+                  className={scope === v ? "on" : ""}>{l}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const NAV = [
   /* Цэсний нэр = хуудасны гарчиг = дээд мөрийн байршил: НЭГ хуудас НЭГ нэртэй.
@@ -57,7 +85,10 @@ function Shell({ children }: { children: ReactNode }) {
   const u = user();
   const nav = useNavigate();
   const loc = useLocation();
-  const { scope, setScope } = useScope();
+  /* Хүрээ нь хаягаас ГАРНА — рендер тутамд. Тиймээс буцах/урагшлах товч,
+     хавчуурга, дахин ачаалалт гурвуулаа ямар ч нэмэлт кодгүйгээр ажиллана. */
+  const scope = scopeFrom(new URLSearchParams(loc.search).get("scope"));
+  const setScope = (s: Scope) => nav(scopeHref(loc.pathname, loc.search, s));
   const [pw, setPw] = useState(false);
   const [menu, setMenu] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("jz_nav") === "min");
@@ -75,12 +106,6 @@ function Shell({ children }: { children: ReactNode }) {
   };
 
   if (!u) return <Navigate to="/login" replace />;
-  // Даргын нүүр хуудсанд санхүүгийн блок байхгүй тул Түрээс/Худалдаа
-  // шүүлтүүр тэнд юу ч хөдөлгөхгүй — үхсэн товч үлдээхгүй.
-  // Гэрээнүүд дээр энэ шилжүүлэгч ХУУДСАН ДОТРОО, шүүлтүүрийн эхэнд том
-  // товч болж буусан (Contracts.tsx) — топбарын буланд давхардуулбал ижил
-  // төлөв хоёр өөр газраас удирдагдана. Дашбоард дээр л энд үлдэнэ.
-  const showScope = loc.pathname === "/" && u.role !== "factory";
   const availableNav = NAV.filter((n: any) => (!n.role || n.role === u.role) && n.hide !== u.role);
   const workNav = availableNav.slice(0, WORK_COUNT);
   const orgNav = availableNav.slice(WORK_COUNT);
@@ -95,6 +120,7 @@ function Shell({ children }: { children: ReactNode }) {
   );
 
   return (
+    <ScopeCtx.Provider value={{ scope, setScope }}>
     <div className="jz-app-shell">
       {/* Гарын хүний ЭХНИЙ зогсоол — 13 мөрт цэсийг тойрч агуулга руу */}
       <a href="#jz-main" className="jz-skip">Агуулга руу алгасах</a>
@@ -149,15 +175,11 @@ function Shell({ children }: { children: ReactNode }) {
                 хэд вэ» гэсэн ганц хариу тул ЛОКАЛ хуанлигаар унших ёстой. */}
             ЖИГҮҮР ЗАМ ХХК <i /> {pageTitle(loc.pathname).toUpperCase()} <i /> {todayIso()}
           </span>
+          {/* Түрээс/Худалдаа энд байсан: топбарын баруун дээд буланд, 36px
+              саарал сегмент болж — Отгоо түүнийг ХЭЗЭЭ Ч анзаараагүй, атал тэр
+              нь доорх бүх KPI-г сольж байв. Одоо хоёр хуудас дээрээ, KPI-н яг
+              дээр, 44px улбар шар товч болж зогсоно (ScopeSwitch). */}
           <div className="jz-topbar-actions">
-            {showScope && (
-              <div className="segment" role="group" aria-label="Түрээс / Худалдаагаар шүүх">
-                {[["all", "Бүгд"], ["rent", "Түрээс"], ["sale", "Худалдаа"]].map(([v, l]) => (
-                  <button key={v} onClick={() => setScope(v)} aria-pressed={scope === v}
-                          className={scope === v ? "on" : ""}>{l}</button>
-                ))}
-              </div>
-            )}
             <span className="top-pulse" title="Систем хэвийн ажиллаж байна" />
           </div>
         </div>
@@ -168,6 +190,7 @@ function Shell({ children }: { children: ReactNode }) {
 
       {pw && <ChangePassword onClose={() => setPw(false)} />}
     </div>
+    </ScopeCtx.Provider>
   );
 }
 
@@ -213,13 +236,13 @@ const router = createBrowserRouter(
   )
 );
 
+/* Хүрээний контекст нь ЭНД биш, `Shell` дотор — router-ийн дотор байж байж
+   хаягаа уншина. Гадна нь useState барьж байсан нь яг тэр асуудал байв:
+   хаяг нэг юм хэлж, төлөв өөр юм барьж чадна. */
 export default function App() {
-  const [scope, setScope] = useState("all");
   return (
     <ToastProvider>
-      <ScopeCtx.Provider value={{ scope, setScope }}>
-        <RouterProvider router={router} />
-      </ScopeCtx.Provider>
+      <RouterProvider router={router} />
     </ToastProvider>
   );
 }

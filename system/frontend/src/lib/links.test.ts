@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   clientHref, contractHref, materialHref, invoiceAnchorId, invoiceHref,
   contractsHref, contractFilterFrom, auditHref, notificationHref,
+  scopeFrom, scopeHref,
 } from "./links";
 
 /* Дэлгэц бүр дээр НЭГ объект НЭГ хаягтай байх ёстой. Хаягийг мөрөөр нь
@@ -54,6 +55,64 @@ describe("contractsHref / contractFilterFrom", () => {
     for (const raw of ["", null, undefined, "хог", "ENDING", "; drop"]) {
       expect(contractFilterFrom(raw)).toBe("all");
     }
+  });
+});
+
+/* ---------- Түрээс / Худалдаа — хамрах хүрээ хаяганд ----------
+   Хүрээ нь хуудасны төлөв болж нуугдаж байвал: буцах товч түүнийг буцаахгүй,
+   хавчуургаар өөр зураг нээгдэж, дахин ачаалахад чимээгүй «бүгд» рүү унана.
+   Дашбоардын хамгийн том тоо (авлага 77.4 → 6.1 сая) үүнээс хамаардаг тул
+   хүрээ нь хаяган дээр НЭРЛЭГДЭЖ зогсоно. */
+describe("scopeFrom / scopeHref", () => {
+  it("хаягнаас зөвхөн ТАНИХ хүрээ дамжина", () => {
+    expect(scopeFrom("rent")).toBe("rent");
+    expect(scopeFrom("sale")).toBe("sale");
+    expect(scopeFrom("all")).toBe("all");
+  });
+
+  it("танихгүй / хоосон утга бүх төрлийг харуулна — хоосон самбар гаргахгүй", () => {
+    for (const raw of ["", null, undefined, "хог", "RENT", "; drop"]) {
+      expect(scopeFrom(raw)).toBe("all");
+    }
+  });
+
+  it("«бүгд» нь параметргүй — цэвэр хаяг", () => {
+    expect(scopeHref("/", "", "all")).toBe("/");
+    expect(scopeHref("/", "?scope=sale", "all")).toBe("/");
+  });
+
+  it("хүрээг хаягт бичнэ — буцах товч түүнийг буцаана", () => {
+    expect(scopeHref("/", "", "sale")).toBe("/?scope=sale");
+    expect(scopeHref("/contracts", "?scope=rent", "sale")).toBe("/contracts?scope=sale");
+  });
+
+  it("хуудасны БУСАД параметрийг хөндөхгүй", () => {
+    // Гэрээнүүд дээр «Дуусах дөхсөн» шүүлтүүр хүрээ солиход алдагдах ёсгүй
+    expect(scopeHref("/contracts", "?state=ending", "rent")).toBe("/contracts?state=ending&scope=rent");
+    expect(scopeHref("/contracts", "?state=ending&scope=rent", "all")).toBe("/contracts?state=ending");
+  });
+
+  it("бичсэнээ буцааж уншина — хаяг ба төлөв нэг эх сурвалж", () => {
+    for (const s of ["all", "rent", "sale"] as const) {
+      const href = scopeHref("/", "", s);
+      const q = href.includes("?") ? href.slice(href.indexOf("?")) : "";
+      expect(scopeFrom(new URLSearchParams(q).get("scope"))).toBe(s);
+    }
+  });
+});
+
+describe("contractsHref — төлөв ба хүрээ хамт", () => {
+  it("хүрээгүй бол хуучин хаяг ХЭВЭЭР", () => {
+    expect(contractsHref("ending")).toBe("/contracts?state=ending");
+    expect(contractsHref("ending", "all")).toBe("/contracts?state=ending");
+    expect(contractsHref(null, "all")).toBe("/contracts");
+  });
+
+  it("дашбоардын «3 нь удахгүй дуусна» нь ЯГ тэр хүрээгээр тоологдсон", () => {
+    // Худалдааны хүрээнд бодогдсон тоог дараад бүх төрлийн жагсаалт нээгдвэл
+    // дарсан тоо ба гарч ирсэн мөрийн тоо хоёр зөрнө.
+    expect(contractsHref("ending", "sale")).toBe("/contracts?state=ending&scope=sale");
+    expect(contractsHref(null, "rent")).toBe("/contracts?scope=rent");
   });
 });
 

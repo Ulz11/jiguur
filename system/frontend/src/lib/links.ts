@@ -26,6 +26,35 @@ export function invoiceHref(contractId: number, invoiceId?: number | null): stri
   return invoiceId ? `${to}#${invoiceAnchorId(invoiceId)}` : to;
 }
 
+/* ---------- Түрээс / Худалдаа — хамрах хүрээ ----------
+ *
+ * Энэ шилжүүлэгч нь дашбоардын БҮХ тоог (авлагын нийт 77.4 → 6.1 сая), 4 дэх
+ * картын хэмждэг зүйлийг, гэрээний жагсаалтыг бүхэлд нь сольдог. Ийм хүчтэй
+ * шүүлтүүр нь хуудасны дотоод төлөв болж нуугдвал:
+ *   · буцах товч түүнийг БУЦААХГҮЙ (Отгоо «яагаад тоо өөрчлөгдчихөв» гэж үлдэнэ)
+ *   · хавчуурга, хуваалцсан холбоос нь өөр зураг нээнэ
+ *   · дахин ачаалахад чимээгүй «бүгд» рүү унана
+ * Тиймээс хүрээ нь ХАЯГАН дээр амьдарна: `?scope=rent|sale`, байхгүй нь «бүгд».
+ */
+export const SCOPES = ["all", "rent", "sale"] as const;
+export type Scope = (typeof SCOPES)[number];
+
+/** Хаягнаас уншсан хүрээ — ЗӨВХОН таних утга дамжина. Танихгүй үг ирвэл
+ *  «бүгд» рүү унана: буруу линк Отгоод хоосон самбар үзүүлэх ёсгүй. */
+export function scopeFrom(raw: string | null | undefined): Scope {
+  return (SCOPES as readonly string[]).includes(raw ?? "") ? (raw as Scope) : "all";
+}
+
+/** Байгаа хаягийн БУСАД параметрийг хөндөхгүйгээр хүрээг сольсон хаяг.
+ *  «Бүгд» нь параметргүй — анхны төлөв хаягаа бохирдуулахгүй. */
+export function scopeHref(pathname: string, search: string, scope: Scope): string {
+  const p = new URLSearchParams(search);
+  if (scope === "all") p.delete("scope");
+  else p.set("scope", scope);
+  const q = p.toString();
+  return q ? `${pathname}?${q}` : pathname;
+}
+
 /* ---------- Гэрээний жагсаалтын төлөв ---------- */
 
 /** Гэрээнүүд хуудасны төлөвийн шүүлтүүрүүд (Contracts.tsx-ийн FILTERS-тэй нэг эх сурвалж) */
@@ -36,8 +65,12 @@ export type ContractFilter = (typeof CONTRACT_FILTERS)[number];
  *  Шүүлтүүр нь хаягаар дамжина: холбоос нь тэмдэглэгдэж, буцаж ирэхэд ч
  *  ижил жагсаалт нээгдэнэ (хуудасны дотоод төлөв бол зөвхөн нэг товшилтын
  *  настай). */
-export function contractsHref(state?: ContractFilter | null): string {
-  return !state || state === "all" ? "/contracts" : `/contracts?state=${state}`;
+export function contractsHref(state?: ContractFilter | null, scope?: Scope | null): string {
+  const p = new URLSearchParams();
+  if (state && state !== "all") p.set("state", state);
+  if (scope && scope !== "all") p.set("scope", scope);
+  const q = p.toString();
+  return q ? `/contracts?${q}` : "/contracts";
 }
 
 /** Хаягнаас уншсан төлөв — ЗӨВХӨН таних утга дамжина. Танихгүй үг ирвэл

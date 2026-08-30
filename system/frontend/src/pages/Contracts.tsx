@@ -4,13 +4,10 @@ import { api, money, sayaFmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Empty, Refreshing, useToast } from "../ui";
 import { rowClickProps } from "../lib/rowClick";
 import { contractFilterFrom, contractHref, type ContractFilter } from "../lib/links";
-import { useScope } from "../App";
-
-/** Түрээс/Худалдаа — хуудсын хамгийн эхний, хамгийн том шийдвэр. */
-const SCOPES: [string, string][] = [["all", "Бүгд"], ["rent", "Түрээс"], ["sale", "Худалдаа"]];
+import { useScope, ScopeSwitch } from "../App";
 
 export default function Contracts() {
-  const { scope, setScope } = useScope();
+  const { scope } = useScope();
   const [rows, setRows] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [params] = useSearchParams();
@@ -67,15 +64,10 @@ export default function Contracts() {
       {/* Түрээс/Худалдаа нь топбарын баруун дээд буланд, хуудаснаасаа тусдаа
           зогсдог байсан — Отгоо түүнийг олж хардаггүй, «худалдааны гэрээ
           алга» гэж боддог байв. Энэ бол жагсаалтын АГУУЛГЫГ сольдог хамгийн
-          эхний шийдвэр тул шүүлтүүрийн эхэнд, ХАМГИЙН том товч болж зогсоно. */}
-      <div className="mb-3">
-        <div className="scope-switch" role="group" aria-label="Түрээс / Худалдаагаар шүүх">
-          {SCOPES.map(([v, l]) => (
-            <button key={v} onClick={() => setScope(v)} aria-pressed={scope === v}
-                    className={scope === v ? "on" : ""}>{l}</button>
-          ))}
-        </div>
-      </div>
+          эхний шийдвэр тул шүүлтүүрийн эхэнд, ХАМГИЙН том товч болж зогсоно.
+          Дашбоардтай НЭГ бүрэлдэхүүн (App.tsx `ScopeSwitch`) — хоёр хуудсанд
+          хоёр өөр биетэй байвал байрлал, хэмжээ, нэр нь салж эхэлнэ. */}
+      <ScopeSwitch />
 
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="segment flex-wrap" role="group" aria-label="Гэрээг төлөвөөр шүүх">
