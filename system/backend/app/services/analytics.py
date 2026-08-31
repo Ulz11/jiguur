@@ -135,28 +135,33 @@ def cash_forecast(db: Session, today: date | None = None):
             b["items_in"].append({"label": f"{inv.contract.client.name} · {inv.no}",
                                   "date": str(inv.due_date), "amount": round(out)})
 
-    # Идэвхтэй гэрээний ирээдүйн циклүүд — 30 хоног тутам дахин нэхэмжлэгдэнэ.
+    # Идэвхтэй гэрээний ирээдүйн циклүүд — цикл бүрд дахин нэхэмжлэгдэнэ.
     # (Одоогийн бараа гадаа байна гэж үзсэн төсөөлөл; буцаалт хийвэл багасна.)
+    #
+    # Цонх бүрийн дүн нь ТУХАЙН ЦОНХНЫ уртаар бодогдоно, `cycle_days`-аар БИШ:
+    # календарь гэрээнд сарууд өөр өөр урттай (28…31) тул нэг тогтмолоор
+    # үржүүлбэл прогноз хуанлигаас салж, 31 хоногийн сар доогуур тооцогдоно.
     for c in db.query(models.Contract).filter(models.Contract.status == "active").all():
         if c.no.startswith("OB-") or c.type != "rent":
             continue
         cur = billing.current_cycle_accrual(c, today)
         if not cur or cur["day_amount"] <= 0:
             continue
-        full = cur["day_amount"] * c.cycle_days
-        end = date.fromisoformat(cur["cycle_end"])
-        n = 0
-        while (end - today).days <= 90 and n < 4:
-            if c.end_date and end > c.end_date:
+        # Явагдаж буй цикл (1-ээс тоологддог) — түүнээс эхлээд 4 цонх урагш
+        first = billing.cycle_index(c, date.fromisoformat(cur["cycle_start"])) - 1
+        for n in range(4):
+            cs, ce = billing.cycle_window(c, first + n)
+            if (ce - today).days > 90:
                 break
-            b = bucket_for(end)
+            if c.end_date and ce > c.end_date:
+                break
+            full = cur["day_amount"] * (ce - cs).days
+            b = bucket_for(ce)
             if b:
                 b["inflow"] += full
                 b["items_in"].append({
                     "label": f"{c.client.name} · №{c.no} цикл хаагдана",
-                    "date": str(end), "amount": round(full)})
-            end += timedelta(days=c.cycle_days)
-            n += 1
+                    "date": str(ce), "amount": round(full)})
 
     # Зээлийн төлөлт (3 сар урагш)
     monthly_loan = 0.0

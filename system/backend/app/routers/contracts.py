@@ -25,6 +25,9 @@ def _safe(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z._-]+", "-", name).strip("-") or "file"
 
 
+CYCLE_MODE_ERR = "Тооцооны мөчлөг «30 хоног» эсвэл «Календарь сар» байна"
+
+
 @router.get("/contracts")
 def list_contracts(scope: str = "all", db: Session = Depends(get_db),
                    user=Depends(auth.current_user)):
@@ -61,9 +64,12 @@ def create_contract(body: schemas.ContractIn, db: Session = Depends(get_db),
             m = db.get(models.Material, it.material_id)
             raise HTTPException(400, f"{m.name if m else '?'} — агуулахад хүрэлцэхгүй "
                                      f"(байгаа: {st.on_hand if st else 0:g}, хүссэн: {it.qty:g})")
+    if body.cycle_mode not in billing.CYCLE_MODES:
+        raise HTTPException(400, CYCLE_MODE_ERR)
     c = models.Contract(no=no, client_id=body.client_id, type=body.type,
                         start_date=body.start_date, end_date=body.end_date,
-                        cycle_days=body.cycle_days, penalty_percent=body.penalty_percent,
+                        cycle_days=body.cycle_days, cycle_mode=body.cycle_mode,
+                        penalty_percent=body.penalty_percent,
                         deposit=body.deposit, vat_percent=body.vat_percent, note=body.note)
     db.add(c)
     db.flush()
@@ -144,6 +150,7 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
     live = _live_items(db, c, today, gmap, mmap)
     out = {**serializers.contract_row(c, today),
            "vat_percent": c.vat_percent, "cycle_days": c.cycle_days,
+           "cycle_mode": billing.cycle_mode(c),
            "items": live,
            # Материалын мөр бүрийн доор задардаг хөдөлгөөний дэвтэр (зөвхөн унших)
            "material_lines": serializers.material_lines(c, gmap, mmap, today),
@@ -173,6 +180,9 @@ class ContractPatch(_BM):
     # Тооцоог бүхэлд нь хөдөлгөх талбарууд — зөвхөн менежер, дахин бодолттой
     start_date: date | None = None
     cycle_days: int | None = None
+    # "days" | "month" — цонхны ХЭЛБЭР солих нь эхлэх огноо солихтой ижил
+    # хүндийн засвар: БҮХ цикл шинээр зурагдана (R5 / H3).
+    cycle_mode: str | None = None
     confirm: bool = False
 
 
@@ -335,8 +345,10 @@ def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
                    user=Depends(auth.require_roles("manager", "finance"))):
     """Inline засвар — гэрээний нөхцөлүүд.
 
-    `start_date` / `cycle_days` нь БҮХ тооцоог хөдөлгөнө: нэхэмжлэлтэй гэрээнд
-    эхлээд зөрүүг харуулж (rebuild_required), `confirm` ирсэн үед л дахин бодно.
+    `start_date` / `cycle_days` / `cycle_mode` нь БҮХ тооцоог хөдөлгөнө:
+    нэхэмжлэлтэй гэрээнд эхлээд зөрүүг харуулж (rebuild_required), `confirm`
+    ирсэн үед л дахин бодно. Гурвуулаа ЦОНХНЫ хэлбэрийг л өөрчилдөг тул нэг
+    хаалганаас орно — «горим солих» нь «огноо солих»-оос аюулгүй биш.
     """
     c = db.get(models.Contract, cid)
     if not c:
@@ -344,12 +356,14 @@ def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
     data = body.model_dump(exclude_unset=True)
     data.pop("clear_end_date", None)
     confirm = bool(data.pop("confirm", False))
-    heavy = {k: data.pop(k) for k in ("start_date", "cycle_days")
+    heavy = {k: data.pop(k) for k in ("start_date", "cycle_days", "cycle_mode")
              if data.get(k) is not None}
     if heavy and getattr(user, "role", "") != "manager":
-        raise HTTPException(403, "Гэрээний эхлэх огноо, циклийг зөвхөн менежер өөрчилнө")
+        raise HTTPException(403, "Гэрээний эхлэх огноо, мөчлөгийг зөвхөн менежер өөрчилнө")
     if heavy.get("cycle_days") is not None and heavy["cycle_days"] < 1:
         raise HTTPException(400, "Циклийн хоног 1-ээс бага байж болохгүй")
+    if heavy.get("cycle_mode") is not None and heavy["cycle_mode"] not in billing.CYCLE_MODES:
+        raise HTTPException(400, CYCLE_MODE_ERR)
     fields = {**data, **heavy}
     before = {k: getattr(c, k) for k in fields}
 
@@ -363,7 +377,7 @@ def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
 
     if heavy:
         rebuilt, preview = _gated(db, user, c, mutate, [date.min], confirm,
-                                  "гэрээний огноо/цикл")
+                                  "гэрээний огноо/мөчлөг")
         if preview:
             return preview
         audit.log(db, user, "update", "contract", c.id,

@@ -70,6 +70,8 @@ class ContractIn(BaseModel):
     start_date: date
     end_date: date | None = None
     cycle_days: int = 30
+    # "days" (30 хоногт зангидсан) | "month" (КАЛЕНДАРЬ САР — R5/H3)
+    cycle_mode: str = "days"
     # 0 = алданги автоматаар нэхэгдэхгүй (гараар нэхэж болно) — R25 / H2
     penalty_percent: float = 0
     deposit: float = 0

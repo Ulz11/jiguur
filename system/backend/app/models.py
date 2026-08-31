@@ -98,6 +98,11 @@ class Contract(Base):
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     cycle_days: Mapped[int] = mapped_column(Integer, default=30)
+    # Тооцооны мөчлөгийн ХЭЛБЭР: "days" (анхны — cycle_days хоногт зангидсан)
+    # эсвэл "month" (КАЛЕНДАРЬ САР: зангилаа нь эхлэх огнооны ӨДӨР, хоног нь
+    # тухайн сарын жинхэнэ урт тул 31 хоногтой сар ×31/30 нэхэгдэнэ — R5/H3).
+    # "month" үед `cycle_days` тооцоонд ОГТ оролцохгүй.
+    cycle_mode: Mapped[str] = mapped_column(String(10), default="days")
     # %/хоног. Анхны утга 0 — алданги нь Отгоогийн ХӨШҮҮРЭГ, машины автомат
     # төлбөр биш (R25 / H2). Зэвсэглэх нь гэрээ бүрд ГАРААР хийгдэх шийдвэр.
     penalty_percent: Mapped[float] = mapped_column(Float, default=0)

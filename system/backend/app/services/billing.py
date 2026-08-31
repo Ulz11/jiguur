@@ -4,6 +4,10 @@
 - Түрээс хоногоор: тухайн өдөр d-д бараа "гадаа" бол тоолно.
   Өдрийн муж [гарсан өдөр, буцсан өдөр) — 3.20-нд гарч 3.21-нд буцвал 1 хоног.
 - Цикл = гэрээний өдрөөс эхэлсэн cycle_days (30) хоногийн үе. [эхлэл, төгсгөл) хагас нээлттэй.
+- Цөөнх гэрээ КАЛЕНДАРЬ САРААР явна (`cycle_mode="month"`, R5/H3): зангилаа нь
+  эхлэх огнооны ӨДӨР, хоног нь тухайн сарын жинхэнэ урт. 31 хоногтой сар
+  ×31/30 илүү нэхэгддэг нь ТУСГАЙ КОДГҮЙГЭЭР, зүгээр л 31 хоног хуримтлагдсанаас
+  өөрөө гарна. Доод урсгал бүхэлдээ ЦОНХЫГ хэрэглэдэг тул горимыг мэдэхгүй.
 - Буцаалт циклийн дундуур ирвэл өдрөөр нь пропорц бодогдоно (өөрөө гарна).
 - Засвар, актын төлбөр тухайн циклийн нэхэмжлэлд нэмэгдэнэ.
 - Алданги = үлдэгдэл × %/хоног × хэтэрсэн хоног. ⚠ ЭНЭ НЬ ТООЦООЛОЛ, НЭХЭМЖЛЭЛ
@@ -12,6 +16,7 @@
   Нэхэгдсэн (`penalty_booked`) нь мөнгө; нэхэгдээгүй нь зөвхөн харагдац.
 """
 import json
+from calendar import monthrange
 from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 from .. import models
@@ -317,13 +322,54 @@ def charges_in(contract: models.Contract, d_from: date, d_to: date):
 
 # ---------- цикл ба нэхэмжлэл ----------
 
+CYCLE_MODES = ("days", "month")
+
+
+def cycle_mode(contract: models.Contract) -> str:
+    """Гэрээний мөчлөгийн хэлбэр — «days» (анхны) эсвэл «month».
+
+    `getattr` уналттай: багана нэмэгдэхээс өмнөх мөр, эсвэл талбаргүй
+    туслах объект («fake» гэрээ) ч 30 хоногийн хуучин зан төлөвөө хадгална.
+    """
+    return getattr(contract, "cycle_mode", None) or "days"
+
+
+def add_months(anchor: date, n: int) -> date:
+    """`anchor`-оос n сарын дараах ЗАНГИЛААНЫ өдөр — сарын уртад хумигдана.
+
+    ХАЗГАЙЛАЛТЫН (clamp) ДҮРЭМ: зорилтот сард зангилааны өдөр байхгүй бол ТЭР
+    САРЫН СҮҮЛЧИЙН өдөр болно (1.31 + 1 сар = 2.28, өндөр жилд 2.29). Хумилт нь
+    ХЭЗЭЭ Ч ХАДГАЛАГДАХГҮЙ — дараагийн хил `anchor`-оос дахин бодогдох тул
+    зангилаа боломжтой газраа ЭРГЭЖ ОЧНО (1.31 → 2.28 → 3.31 → 4.30 → 5.31).
+
+    Иймд цонхнууд нь зайгүй, давхцалгүй, гэрээний эхлэлээс мөнхөд тодорхой.
+    """
+    m = anchor.month - 1 + n
+    y = anchor.year + m // 12
+    m = m % 12 + 1
+    return date(y, m, min(anchor.day, monthrange(y, m)[1]))
+
+
+def cycle_window(contract: models.Contract, n: int) -> tuple[date, date]:
+    """n-р циклийн ХАГАС НЭЭЛТТЭЙ цонх [эхлэл, төгсгөл) — n нь 0-оос тоологдоно.
+
+    Тооцооны БҮХ доод урсгал (хуримтлал, зурвас, нэхэмжлэлийн spec, хавсралт,
+    төсөөлөл) ЗӨВХӨН цонхыг хэрэглэнэ — хоногийн арифметик хийхгүй. Горим
+    солигдоход тэдгээрийн аль нь ч мэдэхгүй өнгөрнө.
+    """
+    if cycle_mode(contract) == "month":
+        return add_months(contract.start_date, n), add_months(contract.start_date, n + 1)
+    step = timedelta(days=contract.cycle_days)
+    cs = contract.start_date + n * step
+    return cs, cs + step
+
+
 def cycles_of(contract: models.Contract, today: date):
     """Гэрээний бүх дууссан ба одоогийн цикл. [(start, end, complete), ...]"""
     out = []
     n = 0
     while True:
-        cs = contract.start_date + timedelta(days=n * contract.cycle_days)
-        ce = cs + timedelta(days=contract.cycle_days)
+        cs, ce = cycle_window(contract, n)
         if cs > today:
             break
         out.append((cs, ce, ce <= today))
@@ -338,7 +384,14 @@ def cycle_index(contract: models.Contract, cycle_start: date) -> int:
 
     Байрлалаас (хэдэн нэхэмжлэл үүссэнээс) БИШ огнооноос гарна: иймд
     нэхэмжлэлүүдийг устгаад дахин үүсгэхэд дугаар нь ЯГ ХЭВЭЭР үлдэнэ.
+
+    Календарь горимд энэ нь САРЫН АЛХМЫН тоо — хоногийн зөрүү нь сар бүр өөр
+    (28…31) тул хуваахад тогтворгүй болно. Хумигдсан хил (1.31 → 2.28) ч
+    сарынхаа дугаарыг л авч явна.
     """
+    if cycle_mode(contract) == "month":
+        return ((cycle_start.year - contract.start_date.year) * 12
+                + cycle_start.month - contract.start_date.month) + 1
     return (cycle_start - contract.start_date).days // contract.cycle_days + 1
 
 
@@ -430,8 +483,10 @@ def current_cycle_accrual(contract: models.Contract, today: date | None = None):
         return None
     rent, _ = accrue_rent(contract, cs, min(today + timedelta(days=1), ce))
     day_sum, _ = accrue_rent(contract, today, today + timedelta(days=1))
+    # Нийт хоног нь ЦОНХНООС гарна, `cycle_days`-аас БИШ: календарь горимд тэр
+    # тоо утгагүй (28…31), 30 хоногийн горимд ЯГ ижил утга гарна.
     return {"cycle_start": str(cs), "cycle_end": str(ce),
-            "days_done": (today - cs).days + 1, "days_total": contract.cycle_days,
+            "days_done": (today - cs).days + 1, "days_total": (ce - cs).days,
             "accrued": rent, "day_amount": day_sum}
 
 
