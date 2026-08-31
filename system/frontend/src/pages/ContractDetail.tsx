@@ -20,6 +20,11 @@ import { daysBetween, todayIso } from "../lib/schedule";
 import { isVoided, movementStockRows, voidRowClass, voidTitle } from "../lib/void";
 import { AKT_KINDS, AktKind, aktAmountText, aktCycle, aktCycleLabel, aktKind,
          aktLandingText, aktSigned } from "../lib/akt";
+import { EffKey, RATE_RESTATE_WARN, effectiveDate, effectiveOptions,
+         rateChangeScope, rateChangeText } from "../lib/rate";
+import { ClosePreview, OutRow, Prefill, StepKey, applyPrefill, closeSteps,
+         outstandingQty, outstandingWriteoff, returnPrefill, stepBlock,
+         stepIndex } from "../lib/close";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -51,6 +56,11 @@ export default function ContractDetail() {
      өөр цонх байвал хоёр өөр газарт өөр асуулт болно. */
   const [akt, setAkt] = useState<any | "new" | null>(null);
   const [voidAkt, setVoidAkt] = useState<any>(null);
+  /* Тарифын цонх: аль материалын мөрийг дахин тохирч байна вэ (R3 / H6).
+     InlineEdit байсныг СОЛИВ — «хэзээнээс» гэдэг асуултыг нэг мөрийн
+     засвар зөөж чадахгүй. */
+  const [rateRow, setRateRow] = useState<any>(null);
+  const [voidRate, setVoidRate] = useState<any>(null);
   const toast = useToast();
   const pdf = usePdf();
   const u = user();
@@ -352,21 +362,32 @@ export default function ContractDetail() {
                         <td className="td text-right tabular-nums">{fmt(it.qty)}</td>
                         {seesMoney && (<>
                         <td className="td text-right tabular-nums" onClick={(e) => e.stopPropagation()}>
-                          {it.orphan ? "—" : u?.role === "manager" ? (
+                          {/* ТАРИФ нь нэг мөрийн засвар БИШ — «хэзээнээс» гэсэн
+                              асуулттай ирдэг шийдвэр (R3 / H6). Тиймээс InlineEdit
+                              биш, цонх нээгддэг: гурван хилийн аль нэгийг сонгоно.
+                              Худалдаанд цикл байхгүй тул хуучин inline зам хэвээр —
+                              гэхдээ одоо ХААЛГАТАЙ (`gatedPatch`). */}
+                          {it.orphan ? "—" : u?.role !== "manager" ? (
+                            fmt(d.type === "rent" ? it.daily_rate : it.unit_price)
+                          ) : d.type === "rent" ? (
+                            <button className="inline-val" onClick={() => setRateRow(it)}
+                                    title="Дарж тарифыг дахин тохирно">
+                              <span className="sr-only">{it.material} ({it.grade}) · тариф: </span>
+                              <span>{fmt(it.daily_rate)}</span>
+                              <span className="pen" aria-hidden="true">✎</span>
+                              <span className="sr-only"> · дахин тохирох</span>
+                            </button>
+                          ) : (
                             <InlineEdit type="number" right width="w-24"
-                              label={`${it.material} (${it.grade}) · ${d.type === "rent" ? "тариф" : "нэгж үнэ"}`}
-                              value={d.type === "rent" ? it.daily_rate : it.unit_price}
-                              display={fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}
-                              confirmText="Энэ циклээс шинэ үнээр?"
-                              onSave={(v) => {
-                                const num = parseMoney(v);
-                                return savePatch(`/api/contracts/${d.id}/items`,
-                                  { material_id: it.material_id, grade_id: it.grade_id,
-                                    old_rate: d.type === "rent" ? it.daily_rate : it.unit_price,
-                                    ...(d.type === "rent" ? { daily_rate: num } : { unit_price: num }) },
-                                  "Үнэ шинэчлэгдлээ — одоогийн циклээс шинэ утгаар бодогдоно");
-                              }} />
-                          ) : fmt(d.type === "rent" ? it.daily_rate : it.unit_price)}
+                              label={`${it.material} (${it.grade}) · нэгж үнэ`}
+                              value={it.unit_price} display={fmt(it.unit_price)}
+                              confirmText="Бүх түүхэнд шинэ үнээр?"
+                              onSave={(v) => gatedPatch(`/api/contracts/${d.id}/items`,
+                                { material_id: it.material_id, grade_id: it.grade_id,
+                                  old_rate: it.orig_rate ?? it.unit_price,
+                                  unit_price: parseMoney(v) },
+                                "Нэгж үнэ шинэчлэгдлээ")} />
+                          )}
                         </td>
                         <td className="td text-right tabular-nums font-bold text-ink">
                           {it.orphan ? "—" : money(d.type === "rent" ? it.day_amount : it.qty * it.unit_price)}
@@ -387,6 +408,40 @@ export default function ContractDetail() {
                 })}
               </tbody>
             </table>
+            {/* ТАРИФЫН ТҮҮХ (R3 / H6) — Мөнхболдын 300 → 350 → 450 нь ЯВДАЛ
+                болж мөр мөрөөрөө үлдэнэ: хэзээнээс, юунаас юу болов, ямар
+                тохиролцооны дор. Хүчингүй болсон нь ч ХАРАГДАНА (H1). */}
+            {seesMoney && (d.rate_changes || []).length > 0 && (
+              <div className="px-4 pb-4 pt-1 border-t border-line mt-1">
+                <h3 className="text-[12px] text-t3 font-semibold uppercase tracking-wider mb-2">
+                  Тарифын өөрчлөлт
+                </h3>
+                <ul className="space-y-1.5">
+                  {d.rate_changes.map((rc: any) => (
+                    <li key={rc.id} className="text-[13px] flex items-center gap-2 flex-wrap">
+                      <span className={`${voidRowClass(rc)} text-t2`} title={voidTitle(rc)}>
+                        <b className="text-ink">{rc.material}</b>
+                        {rc.grade && <span className="pill-grey !py-0 mx-1.5">{rc.grade}</span>}
+                        <span className="tabular-nums">{rateChangeText(rc)}</span>
+                        {rc.note && <span className="text-t3"> · {rc.note}</span>}
+                      </span>
+                      {isVoided(rc) ? (
+                        <span className="pill-red" title={voidTitle(rc)}>ХҮЧИНГҮЙ</span>
+                      ) : u?.role === "manager" && (
+                        <VoidButton label={`${rc.material} · ${rateChangeText(rc)}`}
+                                    onClick={() => setVoidRate(rc)} />
+                      )}
+                      {isVoided(rc) && rc.void_reason && (
+                        <span className="basis-full text-[12px] text-danger">
+                          Шалтгаан: {rc.void_reason}
+                          {rc.voided_by && <span className="text-t3"> · {rc.voided_by}</span>}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           {/* ЧӨЛӨӨТ АКТ (R12 / түр R15 / H4) — материал ба нэхэмжлэлийн ДУНД.
@@ -789,6 +844,7 @@ export default function ContractDetail() {
           нээгддэг тул мөнгөний зураас цонх дотор ч үргэлжилнэ. */}
       {modal === "return" && <ReturnModal d={d} grades={grades} seesMoney={seesMoney}
                                           onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+
       {modal === "add" && <AddModal d={d} seesMoney={seesMoney}
                                     onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "pay" && <PayModal d={d} invoices={d.invoices} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
@@ -796,43 +852,13 @@ export default function ContractDetail() {
       {modal === "deposit" && <DepositModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "penalty" && <ChargePenaltyModal d={d} onClose={() => setModal("")}
                                                   onDone={() => { setModal(""); load(); }} />}
-      {modal === "close" && (() => {
-        /* Гэрээ хаах нь буцаагдахгүй үйлдэл — юу үлдэж байгааг эхлээд харуулна. */
-        const depositOpen = d.deposit > 0 && d.deposit_status !== "settled";
-        return (
-          <ConfirmModal
-            title="Гэрээ хаах"
-            intro={<>Гэрээ №{d.no} · <b className="text-ink">{d.client}</b> — хаасны дараа шинэ хуримтлал
-                    бодогдохгүй. Үлдэгдэл авлага, нэхэгдсэн алданги хэвээр үлдэнэ.</>}
-            rows={[
-              { label: "Үлдэгдэл авлага", value: money(d.balance),
-                accent: d.balance > 0 ? "danger" : undefined },
-              /* НЭХЭГДСЭН нь нийлбэрт орно; НЭХЭГДЭЭГҮЙ нь зөвхөн мэдээлэл —
-                 хаалтын дүнд оруулбал хэзээ ч шийдээгүй мөнгө өр болно. */
-              ...(pen.booked > 0
-                ? [{ label: "Нэхэгдсэн алданги", value: money(pen.booked), accent: "danger" as const }] : []),
-              ...(pen.showUnbooked
-                ? [{ label: `Алдангийн тооцоол — ${UNCHARGED}`,
-                     value: "≈" + money(pen.unbooked), accent: "dim" as const }] : []),
-              ...(depositOpen
-                ? [{ label: "⚠ Барьцааны тооцоо хийгдээгүй байна", value: money(d.deposit),
-                     accent: "danger" as const }] : []),
-            ]}
-            total={{ label: "Хаах үед үлдэх нийт тооцоо", value: money(d.balance + pen.booked),
-                     accent: d.balance + pen.booked > 0 ? "danger" : "money" }}
-            note={depositOpen
-              ? "Барьцааг эхлээд «Барьцааны тооцоо хийх»-ээр суутгаж/буцааж дуусгахыг зөвлөе."
-              : undefined}
-            confirmLabel="Гэрээ хаах" danger
-            onClose={() => setModal("")}
-            onConfirm={async () => {
-              try {
-                await api(`/api/contracts/${d.id}/close`, { method: "POST" });
-                toast("Гэрээ хаагдлаа"); setModal(""); load();
-              } catch (e: any) { toast(e.message, "err"); }
-            }} />
-        );
-      })()}
+      {/* ХААЛТЫН ЁСЛОЛ (H7) — нэг товчийн баталгаажуулалт байсныг СОЛИВ:
+          гадаа үлдсэнээ шийд → эцсийн тасархай циклээ нэх → барьцаагаа
+          цэвэрлэ → хаа. Дарааллыг ДАТА нь тодорхойлно (`closeSteps`). */}
+      {modal === "close" && <CloseWizard d={d} grades={grades}
+                                         onClose={() => setModal("")}
+                                         onDone={() => { setModal(""); load(); }}
+                                         onReload={load} pdf={pdf} />}
       {pending && <RebuildModal p={pending} onClose={() => setPending(null)}
                                 onDone={() => { setPending(null); load(); }} />}
       {voidPay && <VoidPaymentModal payment={voidPay} onClose={() => setVoidPay(null)}
@@ -847,6 +873,12 @@ export default function ContractDetail() {
       {voidAkt && <VoidAktModal d={d} a={voidAkt} onClose={() => setVoidAkt(null)}
                                 onDone={() => { setVoidAkt(null); load(); }}
                                 onRebuild={(p) => { setVoidAkt(null); setPending(p); }} />}
+      {rateRow && <RateModal d={d} row={rateRow} onClose={() => setRateRow(null)}
+                             onDone={() => { setRateRow(null); load(); }}
+                             onRebuild={(p) => { setRateRow(null); setPending(p); }} />}
+      {voidRate && <VoidRateModal d={d} rc={voidRate} onClose={() => setVoidRate(null)}
+                                  onDone={() => { setVoidRate(null); load(); }}
+                                  onRebuild={(p) => { setVoidRate(null); setPending(p); }} />}
     </div>
   );
 }
@@ -1066,6 +1098,160 @@ function VoidAktModal({ d, a, onClose, onDone, onRebuild }: {
       </label>
       <input id={rid} className="inp w-full" value={reason} autoFocus
              placeholder="ж: давхар бичсэн"
+             onChange={(e) => setReason(e.target.value)} />
+    </ConfirmModal>
+  );
+}
+
+/* ---------- ТАРИФЫН ДАХИН ТОХИРОЛТ (R3 / H6) ----------
+   Отгоо эгчийн Excel-д тариф циклүүдийн хооронд дахин тохирогддог (Мөнхболд
+   300 → 350 → 450). Түүний семантик нэг мөр: ШИНЭ ТАРИФ ДАРААГИЙН ЦИКЛЭЭС,
+   гарын үсэг зурсан өнгөрсөн нь ХЭВЭЭР.
+
+   Урьд нь энэ нь нэг мөрийн InlineEdit байв: тоог дарж бичихэд падангийн
+   тариф ЧИМЭЭГҮЙ ухарч, нэхэмжлэгдсэн циклүүд хуучин дүнгээ хэдэн сар авч
+   яваад огт хамаагүй засварын үед гэнэт үсэрдэг байсан. Нэг нүд «хэзээнээс»
+   гэсэн асуултыг зөөж чадахгүй — тиймээс ЦОНХ. Огноог UI таамаглахгүй:
+   гурван хил СЕРВЕРЭЭС ирнэ (`cycle_bounds`). */
+function RateModal({ d, row, onClose, onDone, onRebuild }: {
+  d: any; row: any; onClose: () => void; onDone: () => void;
+  onRebuild: (p: Pending) => void;
+}) {
+  const toast = useToast();
+  const uid = useId();
+  const opts = effectiveOptions(d.cycle_bounds);
+  const f0 = { rate: String(Math.round(row.daily_rate || 0)),
+               when: (opts[0]?.value || "next") as EffKey, note: "" };
+  const [f, setF] = useState(f0);
+  const [busy, setBusy] = useState(false);
+  const rate = parseMoney(f.rate);
+  const eff = effectiveDate(d.cycle_bounds, f.when);
+  const chosen = opts.find((o) => o.value === f.when);
+  const same = Math.abs(rate - (row.daily_rate || 0)) < 0.005;
+  const scope = rateChangeScope(row);
+
+  async function submit() {
+    const body: any = { material_id: row.material_id, grade_id: row.grade_id,
+                        new_rate: rate, effective_from: eff, note: f.note.trim() };
+    if (scope !== undefined) body.old_rate = scope;
+    const path = `/api/contracts/${d.id}/rate-change`;
+    const okMsg = `Тариф ${fmt(rate)}₮ болов — ${eff}-ээс`;
+    setBusy(true);
+    try {
+      const r = await api(path, { method: "POST", body: JSON.stringify(body) });
+      if (r?.rebuild_required) {
+        onRebuild({ path, body, method: "POST", okMsg,
+                    diffs: r.diffs || [], warnings: r.warnings || [] });
+        return;
+      }
+      toast(okMsg);
+      onDone();
+    } catch (e: any) { toast(e.message, "err"); setBusy(false); }
+  }
+
+  return (
+    <FormModal title="Тариф дахин тохирох" onClose={onClose} dirty={formDirty(f0, f)}>
+      <p className="text-[13.5px] text-t2 mb-4">
+        <b className="text-ink">{row.material}</b>
+        <span className="pill-grey !py-0 mx-1.5">{row.grade}</span>
+        · одоогийн тариф <b className="text-ink tabular-nums">{fmt(row.daily_rate)}₮</b>/ш/хоног
+        {scope !== undefined && scope !== row.daily_rate && (
+          <span className="text-t3"> · падангийн төрөлх {fmt(scope)}₮</span>
+        )}
+      </p>
+
+      <label className="lbl" htmlFor={`${uid}-rate`}>Шинэ тариф ₮/ш/хоног</label>
+      <input id={`${uid}-rate`} className="inp max-w-[200px] text-right font-bold" autoFocus
+             inputMode="numeric" value={f.rate}
+             onChange={(e) => setF({ ...f, rate: e.target.value })} />
+
+      {/* «Хэзээнээс» нь ТАРИФААС дутуугүй чухал — тиймээс дүнгийн ЯГ доор,
+          нуугдсан сонголт биш ил радио. Огноо нь шошгондоо гарна. */}
+      <fieldset className="mt-4">
+        <legend className="lbl">Хэзээнээс</legend>
+        <div className="space-y-1.5">
+          {opts.map((o) => (
+            <label key={o.value} className="flex items-start gap-2.5 cursor-pointer">
+              <input type="radio" name={`${uid}-when`} className="mt-1" value={o.value}
+                     checked={f.when === o.value}
+                     onChange={() => setF({ ...f, when: o.value })} />
+              <span className="text-[13.5px] text-ink">{o.label}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      {chosen?.restates && (
+        <p className="text-[12.5px] text-warn mt-2.5">⚠ {RATE_RESTATE_WARN}</p>
+      )}
+
+      <div className="mt-4">
+        <label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
+        <input id={`${uid}-note`} className="inp" value={f.note}
+               placeholder="ж: утсаар тохиров"
+               onChange={(e) => setF({ ...f, note: e.target.value })} />
+      </div>
+
+      <Receipt className="mt-4"
+        rows={[
+          { label: "Одоогийн тариф", value: `${fmt(row.daily_rate)}₮` },
+          { label: "Шинэ тариф", value: `${fmt(rate)}₮`,
+            accent: rate > row.daily_rate ? "money" : rate < row.daily_rate ? "danger" : "dim" },
+          { label: "Гадаа байгаа тоо", value: `${fmt(row.qty)} ш`, accent: "dim" },
+        ]}
+        total={{ label: `${eff}-ээс өдрийн дүн`, value: money(rate * (row.qty || 0)) }} />
+
+      <div className="flex justify-end gap-2.5 mt-5">
+        <button className="btn-secondary" onClick={onClose}>Болих</button>
+        <button className="btn-primary" disabled={busy || same || rate < 0 || !eff}
+                title={same ? "Тариф өөрчлөгдөөгүй байна" : undefined}
+                onClick={submit}>{busy ? "…" : "Тариф тохирох"}</button>
+      </div>
+    </FormModal>
+  );
+}
+
+function VoidRateModal({ d, rc, onClose, onDone, onRebuild }: {
+  d: any; rc: any; onClose: () => void; onDone: () => void;
+  onRebuild: (p: Pending) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const toast = useToast();
+  const rid = useId();
+  const path = `/api/rate-changes/${rc.id}/void`;
+
+  return (
+    <ConfirmModal
+      title="Тарифын өөрчлөлт хүчингүй болгох"
+      intro={<>
+        <b className="text-ink">{rc.material} · {rateChangeText(rc)}</b> — энэ мөр
+        УСТАХГҮЙ: «ХҮЧИНГҮЙ» тэмдэгтэй, шалтгаантайгаа үлдэнэ. Тариф нь падангийн
+        төрөлх утгадаа эргэж очно. Энэ үйлдлийг буцаах боломжгүй.
+      </>}
+      rows={[{ label: `${rc.effective_from}-ээс хойших циклүүд`,
+               sub: "тариф буцаж хуучин утгаараа бодогдоно",
+               value: `${fmt(rc.new_rate)}₮ → ${rc.old_rate == null ? "төрөлх" : fmt(rc.old_rate) + "₮"}`,
+               accent: "danger" as const }]}
+      note="Нэхэмжлэгдсэн циклд хамаарвал дараагийн алхамд зөрүүг харуулна."
+      confirmLabel="Хүчингүй болгох" confirmDisabled={!reason.trim()} danger
+      onClose={onClose}
+      onConfirm={async () => {
+        const body = { reason: reason.trim() };
+        try {
+          const r = await api(path, { method: "POST", body: JSON.stringify(body) });
+          if (r?.rebuild_required) {
+            onRebuild({ path, body, method: "POST", okMsg: "Тарифын өөрчлөлт хүчингүй болов",
+                        diffs: r.diffs || [], warnings: r.warnings || [] });
+            return;
+          }
+          toast("Тарифын өөрчлөлт хүчингүй болов");
+          onDone();
+        } catch (e: any) { toast(e.message, "err"); }
+      }}>
+      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+        Цуцлах шалтгаан <span className="text-danger">*</span>
+      </label>
+      <input id={rid} className="inp w-full" value={reason} autoFocus
+             placeholder="ж: андуурч бичсэн"
              onChange={(e) => setReason(e.target.value)} />
     </ConfirmModal>
   );
@@ -1393,18 +1579,26 @@ function PdfButton({ pdf, path, children, className = "btn-secondary", busyLabel
   );
 }
 
-/* ---------- Буцаалт ---------- */
-function ReturnModal({ d, grades, seesMoney, onClose, onDone }: any) {
+/* ---------- Буцаалт ----------
+   `prefill` — хаалтын wizard-аас ирэх урьдчилсан утга (H7): гадаа үлдсэн
+   мөрөн дээрх «Буцаалт бүртгэх» / «Дутагдуулсан» хоёр гарц ЯГ ЭНЭ цонхыг
+   нээнэ, зөвхөн тоо нь бөглөгдсөн байна. Тусдаа «дутагдуулсан» цонх
+   ХИЙХГҮЙ: тэр бол буцаалтын мөрийн АКТЛАХ багана, өөр үйлдэл биш. */
+function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
   const toast = useToast();
   const [date, setDate] = useState(today());
   const [rows, setRows] = useState<any[]>(
-    d.items.filter((i: any) => i.qty > 0).map((i: any) => ({
+    applyPrefill(d.items.filter((i: any) => i.qty > 0).map((i: any) => ({
       ...i, ret: 0, return_grade_id: i.grade_id, repair: 0, writeoff: 0,
       /* Аль падангаас хасах вэ («0» = авто, FIFO) ба ТҮҮНИЙ тоолсон хоног
          (хоосон = машины тоо) — хоёулаа бүртгэх агшинд шийдэгдэнэ (H5/R8). */
       pin: "0", days: "",
-    })));
-  const [open, setOpen] = useState<number | null>(null);   // задарсан «Гэмтэл/акт» мөр
+    })), prefill));
+  /* Задарсан «Гэмтэл/акт» мөр. Дутагдуулсан гэж ирсэн бол тэр мөр НЭЭЛТТЭЙ
+     төрнө — актлах тоо нуугдсан хэвээр «Бүртгэх» дарагдвал НБҮнээр нэхэгдэх
+     мөнгө харагдалгүй өнгөрнө (R13). */
+  const [open, setOpen] = useState<number | null>(
+    prefill?.writeoff ? rows.findIndex((r: any) => r.writeoff > 0) : null);
   const [busy, setBusy] = useState(false);
   const uid = useId();
   const setRow = (i: number, patch: any) =>
@@ -1881,6 +2075,286 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
         </button>
       </div>
     </FormModal>
+  );
+}
+
+/* ---------- ХААЛТЫН ЁСЛОЛ (H7) ----------
+   «Хэлцэл хаахад тоолуур зогсдоггүй» байв: эцсийн тасархай цикл ХЭЗЭЭ Ч
+   нэхэмжлэл болдоггүй, ёслолыг чиглүүлэх юу ч байхгүй — ганц улаан товч.
+
+   Отгоо эгчийн жинхэнэ дараалал: гадаа үлдсэнээ шийд (буцаалт эсвэл
+   ДУТАГДУУЛСАН НБҮнээр) → эцсийн хагас циклээ нэх → барьцаагаа суутгаж
+   /буцааж цэвэрлэ → «хаав» гэж бич. Wizard нь ЯГ энэ дарааллыг алхуулна.
+
+   АЛХАМ НЬ ДАТАНААС: гадаа юу ч байхгүй, барьцаа ч алга бол хоёрхон алхам
+   үлдэнэ (`closeSteps`) — хоосон дэлгэц дамжуулах нь ажил нэмнэ.
+
+   БҮХ ТООГ СЕРВЕР ХЭЛНЭ (`/close-preview`): эцсийн нэхэмжлэлийн дүн нь
+   хаах агшинд цаас болох ЯГ ТЭР функцээс (`derivable_invoice_specs`) гарна,
+   тул урьдчилсан тоо ба хэвлэгдэх тоо ХОЁР ӨӨР байх боломжгүй. */
+function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
+  d: any; grades: any[]; onClose: () => void; onDone: () => void;
+  onReload: () => void; pdf: any;
+}) {
+  const toast = useToast();
+  const uid = useId();
+  const [p, setP] = useState<ClosePreview | null>(null);
+  const [closeDate, setCloseDate] = useState(today());
+  const [at, setAt] = useState(0);
+  const [busy, setBusy] = useState(false);
+  /* Дэд цонх: буцаалт (урьдчилсан утгатай) эсвэл барьцааны тооцоо.
+     Хаагдмагц wizard нь СЕРВЕРЭЭС дахин уншина — «гадаа юу үлдэв» гэдэг
+     нь дэлгэц дээрх таамаг биш, амьд байдал. */
+  const [sub, setSub] = useState<null | { kind: "return"; prefill: Prefill }
+                                      | { kind: "deposit" }>(null);
+  const [done, setDone] = useState<any[] | null>(null);
+
+  const load = async () => {
+    try {
+      const q = closeDate ? `?close_date=${closeDate}` : "";
+      setP(await api(`/api/contracts/${d.id}/close-preview${q}`));
+    } catch (e: any) { toast(e.message, "err"); }
+  };
+  useEffect(() => { void load(); }, [closeDate]);
+
+  const steps = closeSteps(p);
+  const step = steps[Math.min(at, steps.length - 1)];
+  const block = p && step ? stepBlock(p, step.key) : null;
+  const last = at >= steps.length - 1;
+
+  const refresh = () => { setSub(null); void load(); onReload(); };
+
+  async function doClose() {
+    setBusy(true);
+    try {
+      const r = await api(`/api/contracts/${d.id}/close`, { method: "POST",
+        body: JSON.stringify({ close_date: closeDate }) });
+      toast(`Гэрээ ${r.closed_date}-нд хаагдлаа`);
+      setDone(r.invoices || []);
+      onReload();
+    } catch (e: any) { toast(e.message, "err"); }
+    setBusy(false);
+  }
+
+  /* ---- Амжилтын төлөв: төрсөн цаасаа ШУУД гартаа авна ---- */
+  if (done) {
+    return (
+      <Modal title="Гэрээ хаагдлаа" onClose={onDone}>
+        <p className="text-[13.5px] text-t2 mb-4">
+          Гэрээ №{d.no} · <b className="text-ink">{d.client}</b> —{" "}
+          <b className="text-ink">{closeDate}</b>-нд хаагдав. Энэ өдрөөс хойш
+          хуримтлал бодогдохгүй.
+        </p>
+        {done.length === 0 ? (
+          <p className="text-[13px] text-t2">Эцсийн циклд нэхэх зүйл гараагүй.</p>
+        ) : done.map((inv: any) => (
+          <div key={inv.id} className="rounded-xl bg-sunken p-3.5 mb-2.5">
+            <div className="flex items-baseline justify-between gap-3 flex-wrap">
+              <b className="text-ink text-[14px]">{invoiceLabel(inv).title}</b>
+              <b className="tabular-nums text-[15px]">{money(inv.total)}</b>
+            </div>
+            <span className="block text-[12px] text-t3 mb-2.5">
+              Эцсийн тасархай цикл · №{inv.no}
+            </span>
+            <div className="flex gap-2 flex-wrap">
+              <PdfButton pdf={pdf} className="btn-secondary btn-row"
+                         path={`/api/invoices/${inv.id}/pdf`}>PDF</PdfButton>
+              <PdfButton pdf={pdf} className="btn-ghost btn-row"
+                         path={`/api/invoices/${inv.id}/appendix-pdf`}>Хавсралт</PdfButton>
+            </div>
+          </div>
+        ))}
+        <div className="flex justify-end mt-5">
+          <button className="btn-primary" autoFocus onClick={onDone}>Хаах</button>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <>
+      <Modal title="Гэрээ хаах" onClose={onClose} wide>
+        {/* Алхмын мөр — хэдэн алхам үлдсэнийг НЭГ харцаар */}
+        <ol className="flex gap-2 flex-wrap mb-5 text-[12.5px]">
+          {steps.map((s, i) => (
+            <li key={s.key}
+                className={`px-2.5 py-1 rounded-full ${
+                  i === at ? "bg-brand-50 text-brand-ink font-bold"
+                  : i < at ? "bg-sunken text-t2" : "bg-sunken text-t3"}`}>
+              {i + 1}. {s.title}{i < at && <span aria-hidden="true"> ✓</span>}
+              {i === at && <span className="sr-only"> — одоогийн алхам</span>}
+            </li>
+          ))}
+        </ol>
+
+        {!p ? <Spinner /> : step?.key === "goods" ? (
+          <>
+            <p className="text-[13.5px] text-t2 mb-4">
+              Түрээсэнд <b className="text-ink tabular-nums">{fmt(outstandingQty(p.outstanding))}</b>ш
+              байсаар байна. Мөр бүрийг шийднэ: ирсэн бол <b>буцаалт</b>, ирээгүй бол{" "}
+              <b>дутагдуулсан</b> (НБҮнээр нэхэгдэж өрөнд нэмэгдэнэ).
+            </p>
+            <div className="divide-y divide-line border-t border-line">
+              {p.outstanding.map((r: OutRow) => (
+                <div key={`${r.material_id}:${r.grade_id}`}
+                     className="py-3 flex items-center gap-3 flex-wrap">
+                  <div className="min-w-0 flex-1">
+                    <b className="text-[14.5px] text-ink block leading-tight">{r.material}</b>
+                    <span className="text-[12.5px] text-t2">
+                      <span className="pill-grey !py-0 mr-1.5">{r.grade}</span>
+                      гадаа <b className="tabular-nums">{fmt(r.qty)}</b>ш ·
+                      НБҮнэ <span className="tabular-nums">{money(r.nb_price)}</span> →{" "}
+                      дутагдуулбал <b className="tabular-nums text-danger">{money(r.writeoff_amount)}</b>
+                    </span>
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    <button className="btn-secondary btn-row"
+                            onClick={() => setSub({ kind: "return",
+                                                    prefill: returnPrefill(r, "return") })}>
+                      Буцаалт бүртгэх<span className="sr-only"> — {r.material} {r.grade}</span>
+                    </button>
+                    <button className="btn-ghost btn-row text-danger"
+                            onClick={() => setSub({ kind: "return",
+                                                    prefill: returnPrefill(r, "writeoff") })}>
+                      Дутагдуулсан<span className="sr-only"> — {r.material} {r.grade}</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Receipt className="mt-4"
+              rows={[{ label: "Гадаа нийт", value: `${fmt(outstandingQty(p.outstanding))} ш` }]}
+              total={{ label: "Бүгдийг дутагдуулсан гэж бичвэл",
+                       value: money(outstandingWriteoff(p.outstanding)), accent: "danger" }} />
+          </>
+        ) : step?.key === "final" ? (
+          <>
+            <label className="lbl" htmlFor={`${uid}-cd`}>Хаах огноо</label>
+            <input id={`${uid}-cd`} type="date" className="inp max-w-[200px] mb-4"
+                   value={closeDate} onChange={(e) => setCloseDate(e.target.value)} />
+            {p.close_error && (
+              <p className="text-[12.5px] text-danger mb-3">⚠ {p.close_error}</p>
+            )}
+            {p.final_invoices.length > 0 ? (
+              <Receipt
+                rows={p.final_invoices.flatMap((fi) => [
+                  { label: fi.label, sub: `№${fi.no} · эцсийн тасархай цикл`,
+                    value: money(fi.rent_amount) },
+                  ...(fi.charge_amount ? [{ label: "үүнд засвар/акт",
+                                            value: money(fi.charge_amount),
+                                            accent: "dim" as const }] : []),
+                  ...(fi.vat_amount ? [{ label: "НӨАТ", value: money(fi.vat_amount),
+                                         accent: "dim" as const }] : []),
+                ])}
+                total={{ label: "Эцсийн нэхэмжлэл",
+                         value: money(p.final_invoices.reduce((s, f) => s + f.total, 0)) }} />
+            ) : (
+              <p className="text-[13px] text-t2">
+                {p.close_error ? "Огноогоо зассаны дараа эцсийн тооцоо гарна."
+                  : "Эцсийн циклд нэхэх зүйл алга — шинэ нэхэмжлэл гарахгүй."}
+              </p>
+            )}
+            <Receipt className="mt-4"
+              rows={[
+                { label: "Төлөгдөөгүй нэхэмжлэл", value: money(p.unpaid),
+                  accent: p.unpaid > 0 ? "danger" : undefined },
+                ...(p.penalty_booked > 0
+                  ? [{ label: "Нэхэгдсэн алданги", value: money(p.penalty_booked),
+                       accent: "danger" as const }] : []),
+                ...(p.penalty_unbooked > 0
+                  ? [{ label: `Алдангийн тооцоол — ${UNCHARGED}`,
+                       value: "≈" + money(p.penalty_unbooked), accent: "dim" as const }] : []),
+              ]}
+              total={{ label: "Хаалтын дараа үлдэх өр",
+                       value: money(p.unpaid + p.penalty_booked
+                                    + p.final_invoices.reduce((s, f) => s + f.total, 0)),
+                       accent: "danger" }} />
+            {p.penalty_unbooked > 0 && (
+              <p className="text-[12.5px] text-t2 mt-2.5">
+                Алдангийн тооцоолол нь нэхэгдээгүй тул хаалтын дүнд ОРОХГҮЙ.
+                Нэхэх бол эхлээд «Алданги нэхэх» товчоор нэхнэ.
+              </p>
+            )}
+          </>
+        ) : step?.key === "deposit" ? (
+          <>
+            <p className="text-[13.5px] text-t2 mb-4">
+              Барьцаа <b className="text-ink tabular-nums">{money(p.deposit.amount)}</b>{" "}
+              тооцоо хийгдээгүй байна. Отгоо эгчийн журам: авлагад суутгаад,
+              зөрүүг нь буцаана.
+            </p>
+            <Receipt
+              rows={[{ label: "Барьцааны дүн", value: money(p.deposit.amount) },
+                     { label: "Одоогийн өр", value: money(p.unpaid + p.penalty_booked),
+                       accent: "danger" }]}
+              total={{ label: "Суутгасны дараа буцаах",
+                       value: money(Math.max(p.deposit.amount - p.unpaid, 0)), accent: "money" }} />
+            <button className="btn-primary w-full justify-center mt-4"
+                    onClick={() => setSub({ kind: "deposit" })}>
+              Барьцааны тооцоо хийх
+            </button>
+            <p className="text-[12.5px] text-warn mt-2.5">
+              ⚠ Алгасвал барьцаа тооцоогүй хэвээр үлдэнэ — дараа нь гэрээний
+              хуудаснаас хийж болно.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-[13.5px] text-t2 mb-4">
+              Гэрээ №{d.no} · <b className="text-ink">{d.client}</b> —{" "}
+              <b className="text-ink">{closeDate}</b>-нд хаагдана. Энэ өдрөөс
+              хойш шинэ хуримтлал бодогдохгүй, эцсийн тасархай цикл нэхэмжлэл
+              болно. Гэрээ хаах үйлдлийг буцаах боломжгүй.
+            </p>
+            <Receipt
+              rows={[
+                ...(p.final_invoices.length
+                  ? [{ label: "Эцсийн нэхэмжлэл төрнө",
+                       value: money(p.final_invoices.reduce((s, f) => s + f.total, 0)),
+                       accent: "money" as const }] : []),
+                { label: "Төлөгдөөгүй нэхэмжлэл", value: money(p.unpaid),
+                  accent: p.unpaid > 0 ? "danger" : undefined },
+                ...(p.penalty_booked > 0
+                  ? [{ label: "Нэхэгдсэн алданги", value: money(p.penalty_booked),
+                       accent: "danger" as const }] : []),
+                ...(p.deposit.amount > 0 && !p.deposit.settled
+                  ? [{ label: "⚠ Барьцааны тооцоо хийгдээгүй",
+                       value: money(p.deposit.amount), accent: "danger" as const }] : []),
+              ]}
+              total={{ label: "Хаах үед үлдэх нийт тооцоо",
+                       value: money(p.unpaid + p.penalty_booked
+                                    + p.final_invoices.reduce((s, f) => s + f.total, 0)),
+                       accent: "danger" }} />
+            {block && <p className="text-[12.5px] text-danger mt-3">⚠ {block}</p>}
+          </>
+        )}
+
+        <div className="flex justify-end gap-2.5 mt-5 flex-wrap">
+          <button className="btn-secondary" onClick={onClose}>Болих</button>
+          {at > 0 && (
+            <button className="btn-ghost" onClick={() => setAt(at - 1)}>← Буцах</button>
+          )}
+          {!last ? (
+            <button className="btn-primary" disabled={!p || !!block}
+                    title={block || undefined}
+                    onClick={() => setAt(at + 1)}>Цааш →</button>
+          ) : (
+            <button className="btn-primary !bg-danger" disabled={busy || !p || !!block}
+                    title={block || undefined} onClick={doClose}>
+              {busy ? "…" : "Гэрээ хаах"}
+            </button>
+          )}
+        </div>
+      </Modal>
+
+      {sub?.kind === "return" && (
+        <ReturnModal d={d} grades={grades} seesMoney prefill={sub.prefill}
+                     onClose={() => setSub(null)} onDone={refresh} />
+      )}
+      {sub?.kind === "deposit" && (
+        <DepositModal d={d} onClose={() => setSub(null)} onDone={refresh} />
+      )}
+    </>
   );
 }
 
