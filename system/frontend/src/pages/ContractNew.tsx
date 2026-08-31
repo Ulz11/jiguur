@@ -12,6 +12,10 @@ const today = () => todayIso();
 
 type Item = { material_id: number; grade_id: number; qty: number; daily_rate: number; unit_price: number };
 
+/** Тохиргоо ирэх хүртэлх утга — нийлүүлэгдэх анхны утгатай ИЖИЛ байх ёстой:
+ *  сүлжээ удаашрахад талбар нь «0.5» гэж эхлээд гэнэт «0» болж үсрэхгүй. */
+const PENALTY_FALLBACK = "0";
+
 export default function ContractNew() {
   const nav = useNavigate();
   const toast = useToast();
@@ -27,8 +31,15 @@ export default function ContractNew() {
      хаагдтал явдаг. Хоосон орхигддог талбар нь «би юу бөглөх ёстой юм бол»
      гэсэн эргэлзээ л төрүүлдэг байв. Шаардлагатай гэрээнд огноог үүссэний
      дараа, гэрээн дотроос нь тавина (ContractDetail-ийн InlineEdit). */
-  const cond0 = useMemo(() => ({ start_date: today(), penalty_percent: "0.5",
-                                 deposit: "", vat_percent: "0", note: "", no: "" }), []);
+  /* Алдангийн анхны утга нь ТОХИРГООНООС урсана (`Setting("penalty_default")`).
+     Тэр түлхүүр DB-д байсан ч ЮУ Ч УНШИХГҮЙ байв — wizard 0.5%-ийг хатуу
+     бичдэг байсан тул Отгоо гэрээ бүрээ санамсаргүй ЗЭВСЭГЛЭДЭГ байв. Одоо
+     нийлүүлэгдэх утга нь 0: алданги бол ХӨШҮҮРЭГ, автомат төлбөр биш
+     (Чадварын харьцуулалт R25 / H2). */
+  const [penDefault, setPenDefault] = useState(PENALTY_FALLBACK);
+  const cond0 = useMemo(() => ({ start_date: today(), penalty_percent: penDefault,
+                                 deposit: "", vat_percent: "0", note: "", no: "" }),
+                        [penDefault]);
   const [cond, setCond] = useState(cond0);
   const uid = useId();
   /* Хадгалж дуусаад БИД ӨӨРСДӨӨ гэрээ рүү шилжинэ — тэр шилжилтийг өөрсдийнхөө
@@ -39,6 +50,16 @@ export default function ContractNew() {
   useEffect(() => {
     api("/api/clients").then(setClients);
     api("/api/materials").then(setMaterials);
+    /* Тохиргоо ирэхэд анхны утгыг нь солино — ГЭХДЭЭ Отгоо хараахан юу ч
+       бичээгүй бол л. Хамгаалалт (dirty) нь `cond0`-ыг ч хамт дагах тул
+       «Хадгалагдаагүй» анхааруулга дэмий асахгүй. */
+    api("/api/settings").then((s: any) => {
+      const v = String(s?.penalty_default ?? "").trim();
+      if (!v || v === PENALTY_FALLBACK) return;
+      setPenDefault(v);
+      setCond((c) => (c.penalty_percent === PENALTY_FALLBACK
+                      ? { ...c, penalty_percent: v } : c));
+    }).catch(() => {});
   }, []);
 
   /* ---- Дундуур гарахаас хамгаалах ----
@@ -80,9 +101,9 @@ export default function ContractNew() {
       const body = {
         client_id: cid, type, no: cond.no, start_date: cond.start_date,
         end_date: null,                    // хугацаагүй — гэрээ хаагдтал явна
-        // Хоосон орхивол л суурь 0.5% — санаатай бичсэн 0-ийг 0.5 болгож
-        // сольж болохгүй (`|| 0.5` нь яг тэгж байсан).
-        penalty_percent: cond.penalty_percent.trim() === "" ? 0.5 : parseMoney(cond.penalty_percent),
+        // Хоосон орхивол АЛДАНГИГҮЙ (0). Санаатай бичсэн 0-ийг ямар нэг
+        // хувь болгож сольж БОЛОХГҮЙ — тэр бол «нэхэхгүй» гэсэн шийдвэр.
+        penalty_percent: cond.penalty_percent.trim() === "" ? 0 : parseMoney(cond.penalty_percent),
         deposit: parseMoney(cond.deposit), vat_percent: parseMoney(cond.vat_percent),
         note: cond.note,
         items: items.filter((i) => i.qty > 0),
@@ -249,7 +270,13 @@ export default function ContractNew() {
                 <input id={`${uid}-start`} type="date" className="inp" value={cond.start_date} onChange={(e) => setCond({ ...cond, start_date: e.target.value })} /></div>
               <div><label className="lbl" htmlFor={`${uid}-penalty`}>Алданги %/хоног</label>
                 <input id={`${uid}-penalty`} className="inp" inputMode="decimal" value={cond.penalty_percent}
-                       onChange={(e) => setCond({ ...cond, penalty_percent: e.target.value })} /></div>
+                       aria-describedby={`${uid}-penalty-hint`}
+                       onChange={(e) => setCond({ ...cond, penalty_percent: e.target.value })} />
+                {/* Талбар нь ХӨШҮҮРЭГ гэдгээ өөрөө хэлнэ: гэрээнд бичигдсэн
+                    хувь нь машиныг ажиллуулдаггүй, нэхэх нь ТҮҮНИЙ үйлдэл. */}
+                <p id={`${uid}-penalty-hint`} className="text-[12px] text-t3 mt-1.5">
+                  0 = алданги автоматаар нэхэгдэхгүй (гараар нэхэж болно)
+                </p></div>
               <div><label className="lbl" htmlFor={`${uid}-deposit`}>Барьцаа ₮ (заавал биш)</label>
                 {/* Excel-ээс "6,000,000" хуулж тавихад ажиллана; бичиж байх үед
                     мянгатыг өөрөө бүлэглэж, юу бичсэнээ хараад л мэдэхээр. */}
@@ -307,7 +334,10 @@ export default function ContractNew() {
                 ...(type === "rent"
                   ? [{ label: "Өдрийн тооцоо", value: money(daySum) },
                      { label: "30 хоногийн цикл", value: money(daySum * 30) },
-                     { label: "Алданги", value: cond.penalty_percent + " %/хоног", accent: "dim" }]
+                     { label: "Алданги", accent: "dim" as const,
+                       value: parseMoney(cond.penalty_percent) > 0
+                         ? cond.penalty_percent + " %/хоног"
+                         : "нэхэхгүй (гараар нэхэж болно)" }]
                   : [{ label: "Худалдааны дүн", value: money(saleSum) }]),
                 ...(vat > 0 ? [{ label: `НӨАТ ${vat}%`, value: "+" + money(vatAmt), accent: "violet" }] : []),
                 ...(deposit > 0

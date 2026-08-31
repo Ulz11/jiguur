@@ -55,9 +55,16 @@ export default function SettingsPage() {
             <label className="lbl" htmlFor={`${uid}-company`}>Компанийн нэр</label>
             <input id={`${uid}-company`} className="inp mb-3.5" value={settings.company_name || ""}
                    onChange={(e) => setSettings({ ...settings, company_name: e.target.value })} />
+            {/* Энэ түлхүүрийг ХЭН Ч уншдаггүй байсан — шинэ гэрээний wizard
+                0.5%-ийг хатуу бичдэг байв. Одоо wizard эндээс уншина. */}
             <label className="lbl" htmlFor={`${uid}-penalty`}>Алдангийн суурь %/хоног</label>
-            <input id={`${uid}-penalty`} className="inp mb-3.5" value={settings.penalty_default || "0.5"}
+            <input id={`${uid}-penalty`} className="inp mb-1" value={settings.penalty_default ?? "0"}
+                   aria-describedby={`${uid}-penalty-hint`}
                    onChange={(e) => setSettings({ ...settings, penalty_default: e.target.value })} />
+            <p id={`${uid}-penalty-hint`} className="text-[12px] text-t3 mb-4">
+              Шинэ гэрээний анхны утга. 0 = алданги автоматаар нэхэгдэхгүй
+              (гэрээ бүр дээр «Алданги нэхэх» товчоор гараар нэхнэ).
+            </p>
             <label className="lbl" htmlFor={`${uid}-cycle`}>Циклийн урт (хоног)</label>
             <input id={`${uid}-cycle`} className="inp mb-3.5" value={settings.cycle_days_default || "30"}
                    onChange={(e) => setSettings({ ...settings, cycle_days_default: e.target.value })} />

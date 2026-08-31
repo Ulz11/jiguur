@@ -10,6 +10,7 @@ import { useDownload } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import { contractHref } from "../lib/links";
 import { dueLabel, todayIso } from "../lib/schedule";
+import { penaltySplit, UNCHARGED } from "../lib/penalty";
 import {
   buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth, dayCellLabel,
   parseIso, isoOf, WEEKDAYS_MN, monthLabelMN, type TLEvent, type YearMonth,
@@ -102,8 +103,22 @@ export default function ClientProfile() {
               нэхэх, тулгах дүн нь доор нь бүтнээрээ зогсоно. */}
           <div className="grid grid-cols-4 gap-6 max-sm:grid-cols-2">
             <Stat label="Авлага" val={sayaFmt(d.receivable) + "₮"} exact={money(d.receivable)} danger={d.overdue} />
-            <Stat label="Алданги" val={d.penalty > 0 ? sayaFmt(d.penalty) + "₮" : "—"}
-                  exact={d.penalty > 0 ? money(d.penalty) : undefined} danger={d.penalty > 0} />
+            {/* АЛДАНГИ ХОЁР НҮҮРТЭЙ (R25 / H2): нэхэгдсэн нь ӨР (улаан),
+                нэхэгдээгүй нь зөвхөн ТООЦООЛОЛ — ≈ угтвартай, бүдэг, доор нь
+                «нэхэгдээгүй» гэж бичигдэнэ. Нэг тоо болгож нийлүүлбэл Отгоо
+                «машин өр зохиов» гэж уншина. */}
+            {(() => {
+              const pen = penaltySplit(d.penalty, d.penalty_booked);
+              return pen.booked > 0
+                ? <Stat label="Нэхэгдсэн алданги" val={sayaFmt(pen.booked) + "₮"}
+                        exact={money(pen.booked)} danger
+                        note={pen.showUnbooked
+                          ? `≈${sayaFmt(pen.unbooked)}₮ ${UNCHARGED}` : undefined} />
+                : <Stat label="Алдангийн тооцоолол"
+                        val={pen.showUnbooked ? "≈" + sayaFmt(pen.unbooked) + "₮" : "—"}
+                        exact={pen.showUnbooked ? money(pen.unbooked) : undefined}
+                        note={pen.showUnbooked ? UNCHARGED : undefined} />;
+            })()}
             <Stat label="Барьцаа" val={d.deposit > 0 ? sayaFmt(d.deposit) + "₮" : "—"}
                   exact={d.deposit > 0 ? money(d.deposit) : undefined} />
             <Stat label="Гэрээ" val={String(d.contracts.length)} />
@@ -181,7 +196,8 @@ export default function ClientProfile() {
                     </Link>
                     <b className="text-[13px] text-ink"> · {inv.cycle_start}</b>
                     <span className="block text-xs text-t3 tabular-nums">{money(inv.total)}
-                      {inv.penalty > 0 && <span className="text-danger"> + алданги {money(inv.penalty)}</span>}</span>
+                      {inv.penalty_due > 0 && <span className="text-danger"> + алданги {money(inv.penalty_due)}</span>}
+                      {inv.penalty_unbooked > 0 && <span className="text-t3"> · ≈{money(inv.penalty_unbooked)} {UNCHARGED}</span>}</span>
                   </div>
                   <StatePill state={inv.status} />
                 </div>
@@ -222,7 +238,7 @@ export default function ClientProfile() {
             <table className="w-full min-w-[720px]">
               <thead><tr><th className="th">Нэхэмжлэл</th><th className="th text-right">Дүн</th>
                 <th className="th text-right">Төлсөн</th><th className="th text-right">Үлдэгдэл</th>
-                <th className="th text-right">Алданги</th><th className="th">Төлөв</th></tr></thead>
+                <th className="th text-right">Нэхэгдсэн алданги</th><th className="th">Төлөв</th></tr></thead>
               <tbody>
                 {d.invoices.map((inv: any) => (
                   <tr key={inv.id}>
@@ -243,7 +259,14 @@ export default function ClientProfile() {
                           : inv.outstanding > 0 ? "text-ink" : "text-t3"}`}>
                       {inv.outstanding > 0 ? money(inv.outstanding) : "—"}
                     </td>
-                    <td className="td text-right tabular-nums text-danger">{inv.penalty > 0 ? money(inv.penalty) : "—"}</td>
+                    {/* НЭХЭГДСЭН нь л мөнгө. Нэхэгдээгүй тооцоолол нь доор,
+                        бүдэг, ≈ угтвартай — багана нь өрийн багана хэвээр. */}
+                    <td className="td text-right tabular-nums">
+                      <span className="text-danger">{inv.penalty_due > 0 ? money(inv.penalty_due) : "—"}</span>
+                      {inv.penalty_unbooked > 0 && (
+                        <span className="block text-[12px] text-t3">
+                          ≈{money(inv.penalty_unbooked)} {UNCHARGED}</span>)}
+                    </td>
                     <td className="td"><StatePill state={inv.status} /></td>
                   </tr>
                 ))}
@@ -379,13 +402,16 @@ export default function ClientProfile() {
 /** `exact` — бүтэн төгрөгийн дүн. Дугуйлсан тоо нь ХАРАХАД, бүтэн тоо нь
  *  АЖИЛЛАХАД хэрэгтэй (нэхэх, тулгах, шилжүүлэг бичих). Хоёуланг нь нэг
  *  багана дээр шатлан харуулна. */
-function Stat({ label, val, exact, danger }: any) {
+/** `note` — тооны доорх нэг үгийн тайлбар («нэхэгдээгүй»): тоо нь ЮУ болохыг
+ *  хэлнэ, бүтэн дүнгээ орлохгүй. */
+function Stat({ label, val, exact, danger, note }: any) {
   return (
     <div>
       <div className="text-[12px] text-t3 font-bold uppercase tracking-wider mb-1">{label}</div>
       <div className={`text-lg font-extrabold tabular-nums ${danger ? "text-danger" : "text-ink"}`}
            title={exact}>{val}</div>
       {exact && <div className="text-[12px] text-t2 tabular-nums mt-0.5">{exact}</div>}
+      {note && <div className="text-[12px] text-t3 tabular-nums">{note}</div>}
     </div>
   );
 }

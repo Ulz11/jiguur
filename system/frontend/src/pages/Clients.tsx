@@ -6,6 +6,7 @@ import { formDirty } from "../lib/dirty";
 import { useDownload } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import { clientHref } from "../lib/links";
+import { UNCHARGED } from "../lib/penalty";
 
 export default function Clients() {
   const [rows, setRows] = useState<any[] | null>(null);
@@ -85,8 +86,13 @@ export default function Clients() {
                 <td className="td text-right tabular-nums">
                   <span className={`font-bold ${c.overdue ? "text-danger" : "text-ink"}`}
                         title={money(c.receivable)}>{sayaFmt(c.receivable)}₮</span>
-                  {c.penalty > 0 && <span className="block text-[12px] text-danger"
-                                          title={money(c.penalty)}>+ алданги {sayaFmt(c.penalty)}₮</span>}
+                  {/* Нэхэгдсэн нь ӨР (улаан «+»); нэхэгдээгүй нь зөвхөн
+                      тооцоолол (бүдэг «≈» + шошго) — нийлүүлж болохгүй (H2). */}
+                  {c.penalty_booked > 0 && <span className="block text-[12px] text-danger"
+                                          title={money(c.penalty_booked)}>+ алданги {sayaFmt(c.penalty_booked)}₮</span>}
+                  {c.penalty_unbooked > 0 && <span className="block text-[12px] text-t3"
+                                          title={`Тооцоолол — ${money(c.penalty_unbooked)} · ${UNCHARGED}`}>
+                    ≈{sayaFmt(c.penalty_unbooked)}₮ {UNCHARGED}</span>}
                 </td>
                 <td className="td text-right tabular-nums" title={c.deposit > 0 ? money(c.deposit) : undefined}>
                   {c.deposit > 0 ? sayaFmt(c.deposit) + "₮" : "—"}</td>

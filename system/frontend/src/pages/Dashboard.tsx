@@ -9,6 +9,7 @@ import { rowClickProps } from "../lib/rowClick";
 import { clientHref, contractHref, contractsHref, invoiceHref, notificationHref } from "../lib/links";
 import { invoiceLabel } from "../lib/invoice";
 import { dueLabel, todayIso } from "../lib/schedule";
+import { UNCHARGED } from "../lib/penalty";
 import RevChart from "../components/RevChart";
 
 /** Даргад хамаарах мэдэгдлүүд — ачилт, гэрээний хугацаа. Нэхэмжлэлийн
@@ -264,8 +265,22 @@ export default function Dashboard() {
                title={money(k.receivable)}>
             {sayaFmt(k.receivable)} <span className="text-sm text-white/70 font-semibold">₮</span>
           </div>
-          <div className="mt-2"><span className="pill bg-white/10 text-white/80"
-                                      title={money(k.penalty)}>алданги +{sayaFmt(k.penalty)}₮</span></div>
+          {/* АЛДАНГИ ХОЁР ТЭМДЭГ (R25 / H2). Дүүрэн тэмдэг = НЭХЭГДСЭН, өр —
+              «+». Тасархай хүрээтэй, ≈ угтвартай нь ТООЦООЛОЛ: Отгоо хэдийг
+              өршөөж байгаагаа анх удаа харна. Нэг тэмдэг болгож нийлүүлбэл
+              «машин өр зохиов» гэж уншигдана. */}
+          <div className="mt-2 flex gap-1.5 flex-wrap">
+            {k.penalty_booked > 0 && (
+              <span className="pill bg-white/10 text-white/80"
+                    title={money(k.penalty_booked)}>алданги +{sayaFmt(k.penalty_booked)}₮</span>
+            )}
+            {k.penalty_unbooked > 0 && (
+              <span className="pill border border-dashed border-white/35 text-white/70"
+                    title={`Тооцоолол — ${money(k.penalty_unbooked)} · нэхэгдээгүй`}>
+                ≈{sayaFmt(k.penalty_unbooked)}₮ {UNCHARGED}
+              </span>
+            )}
+          </div>
         </div>
         {/* «3 нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг
             хэлдэггүй байв — Отгоо тоог хараад хэнд залгахаа мэдэхгүй үлддэг.

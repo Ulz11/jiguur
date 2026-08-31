@@ -4,6 +4,7 @@ import { api, money, sayaFmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Empty, Refreshing, useToast } from "../ui";
 import { rowClickProps } from "../lib/rowClick";
 import { contractFilterFrom, contractHref, type ContractFilter } from "../lib/links";
+import { UNCHARGED } from "../lib/penalty";
 import { useScope, ScopeSwitch } from "../App";
 
 export default function Contracts() {
@@ -136,8 +137,12 @@ export default function Contracts() {
                           title={money(c.balance)}>
                       {sayaFmt(c.balance)}₮
                     </span>
-                    {c.penalty > 0 && <span className="block text-[12px] text-danger"
-                                            title={money(c.penalty)}>+ алданги {sayaFmt(c.penalty)}₮</span>}
+                    {/* Нэхэгдсэн нь ӨР; нэхэгдээгүй нь ХӨШҮҮРЭГ — тусдаа мөр (H2) */}
+                    {c.penalty_booked > 0 && <span className="block text-[12px] text-danger"
+                                            title={money(c.penalty_booked)}>+ алданги {sayaFmt(c.penalty_booked)}₮</span>}
+                    {c.penalty_unbooked > 0 && <span className="block text-[12px] text-t3"
+                                            title={`Тооцоолол — ${money(c.penalty_unbooked)} · ${UNCHARGED}`}>
+                      ≈{sayaFmt(c.penalty_unbooked)}₮ {UNCHARGED}</span>}
                   </td>
                   <td className="td"><StatePill state={c.state} /></td>
                   {/* Мөр дарагддаг гэдгийг ЗӨВХӨН хулгана дээр нь ирэхэд хэлдэг

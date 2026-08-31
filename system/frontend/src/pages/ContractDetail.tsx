@@ -12,6 +12,7 @@ import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import { lotOptions, materialSections, MaterialSection } from "../lib/lots";
+import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED } from "../lib/penalty";
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { todayIso } from "../lib/schedule";
 import { isVoided, movementStockRows, voidRowClass, voidTitle } from "../lib/void";
@@ -27,7 +28,8 @@ export default function ContractDetail() {
   const { id } = useParams();
   const [d, setD] = useState<any>(null);
   const [grades, setGrades] = useState<any[]>([]);
-  const [modal, setModal] = useState<"" | "return" | "add" | "pay" | "extend" | "deposit" | "close">("");
+  const [modal, setModal] = useState<"" | "return" | "add" | "pay" | "extend" | "deposit"
+                                        | "close" | "penalty">("");
   const [openMv, setOpenMv] = useState<number | null>(null);
   /* Задарсан материалын мөр — `material_id:grade_id` түлхүүрээр санана, тул
      тоо засаад хуудас дахин ачаалагдахад ЯГ тэр мөр задарсан хэвээр үлдэнэ. */
@@ -103,6 +105,11 @@ export default function ContractDetail() {
   /* Цуцлалт бол МӨНГӨНИЙ засвар — менежер, санхүүчийнх (сервер ч тэгж
      хардаг). Үйлдвэрийн даргад төлбөрийн хэсэг огт харагддаггүй. */
   const canVoid = u?.role === "manager" || u?.role === "finance";
+  /* Алданги НЭХЭХ нь мөнгөний шийдвэр — цуцлалттай ижил хүрээ. Товч нь
+     нэхэх зүйл БАЙВАЛ л гарна: нэхэх юмгүй үед товч байх нь «дараад юу ч
+     болсонгүй» гэсэн бүтэлгүй үйлдэл болно (Чадварын харьцуулалт H2). */
+  const pen = penaltySplit(d.penalty, d.penalty_booked);
+  const canCharge = canVoid && d.penalty_percent > 0 && pen.showUnbooked;
   const sections = materialSections(d.items || [], d.material_lines || []);
   const pendingMv = d.movements.filter((m: any) => m.status === "pending").length;
   const showHist = histOpen ?? pendingMv > 0;
@@ -188,6 +195,13 @@ export default function ContractDetail() {
                            busyLabel="Гаргаж байна…">Энэ циклийн хавсралт</PdfButton>
               )}
               <button className="btn-secondary" onClick={() => setModal("pay")}>Төлбөр бүртгэх</button>
+              {/* Алданги нэхэх нь ТҮҮНИЙ шийдвэр — систем хэзээ ч өөрөө нэхэхгүй.
+                  Товч нь нэхэгдээгүй тооцоолол байгаа үед л гарна. */}
+              {canCharge && (
+                <button className="btn-ghost text-danger" onClick={() => setModal("penalty")}>
+                  Алданги нэхэх
+                </button>
+              )}
             </>
           )}
           {canManage && d.type === "rent" && d.status === "active" && (
@@ -213,7 +227,17 @@ export default function ContractDetail() {
         {seesMoney && (
           <Num label="Нийт үлдэгдэл" val={money(d.balance)} danger={d.state === "overdue"} />
         )}
-        {seesMoney && d.penalty > 0 && <Num label="Алданги (өнөөдрөөр)" val={money(d.penalty)} danger />}
+        {/* АЛДАНГИ ХОЁР НҮҮРТЭЙ (R25 / H2). «Нэхэгдсэн» нь МӨНГӨ — улаан,
+            төлөгдөнө. «Тооцоолол» нь ХӨШҮҮРЭГ — бүдэг, ≈ угтвартай, доор нь
+            «нэхэгдээгүй» гэж бичигдэнэ. Отгоо хэдийг өршөөж байгаагаа анх
+            удаа харна; нийлүүлж нэг тоо болговол «машин өр зохиов» болно. */}
+        {seesMoney && pen.booked > 0 && (
+          <Num label="Нэхэгдсэн алданги" val={money(pen.booked)} danger />
+        )}
+        {seesMoney && pen.showUnbooked && (
+          <Num label="Алдангийн тооцоолол" val={"≈" + money(pen.unbooked)}
+               sub={UNCHARGED} dim />
+        )}
         {cyc && (
           <div className="flex-1 min-w-[210px]">
             <div className="text-[12px] text-t3 font-semibold uppercase tracking-wider mb-2.5">
@@ -359,7 +383,10 @@ export default function ContractDetail() {
                     </td>
                     <td className="td text-right tabular-nums">
                       {money(inv.total)}
-                      {inv.penalty > 0 && <span className="block text-[12px] text-danger">+ алданги {money(inv.penalty)}</span>}
+                      {/* Нэхэгдсэн нь ӨР (улаан «+»), нэхэгдээгүй нь зөвхөн
+                          тооцоолол (бүдэг «≈») — нийлүүлж болохгүй. */}
+                      {inv.penalty_due > 0 && <span className="block text-[12px] text-danger">+ алданги {money(inv.penalty_due)}</span>}
+                      {inv.penalty_unbooked > 0 && <span className="block text-[12px] text-t3">≈{money(inv.penalty_unbooked)} алданги · {UNCHARGED}</span>}
                       {inv.charge_amount > 0 && <span className="block text-[12px] text-t3">үүнд засвар/акт {money(inv.charge_amount)}</span>}
                     </td>
                     <td className="td text-right tabular-nums">{money(inv.paid)}</td>
@@ -656,6 +683,8 @@ export default function ContractDetail() {
       {modal === "pay" && <PayModal d={d} invoices={d.invoices} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "extend" && <ExtendModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "deposit" && <DepositModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+      {modal === "penalty" && <ChargePenaltyModal d={d} onClose={() => setModal("")}
+                                                  onDone={() => { setModal(""); load(); }} />}
       {modal === "close" && (() => {
         /* Гэрээ хаах нь буцаагдахгүй үйлдэл — юу үлдэж байгааг эхлээд харуулна. */
         const depositOpen = d.deposit > 0 && d.deposit_status !== "settled";
@@ -663,18 +692,23 @@ export default function ContractDetail() {
           <ConfirmModal
             title="Гэрээ хаах"
             intro={<>Гэрээ №{d.no} · <b className="text-ink">{d.client}</b> — хаасны дараа шинэ хуримтлал
-                    бодогдохгүй. Үлдэгдэл авлага, алданги хэвээр үлдэнэ.</>}
+                    бодогдохгүй. Үлдэгдэл авлага, нэхэгдсэн алданги хэвээр үлдэнэ.</>}
             rows={[
               { label: "Үлдэгдэл авлага", value: money(d.balance),
                 accent: d.balance > 0 ? "danger" : undefined },
-              ...(d.penalty > 0
-                ? [{ label: "Алданги (өнөөдрөөр)", value: money(d.penalty), accent: "danger" as const }] : []),
+              /* НЭХЭГДСЭН нь нийлбэрт орно; НЭХЭГДЭЭГҮЙ нь зөвхөн мэдээлэл —
+                 хаалтын дүнд оруулбал хэзээ ч шийдээгүй мөнгө өр болно. */
+              ...(pen.booked > 0
+                ? [{ label: "Нэхэгдсэн алданги", value: money(pen.booked), accent: "danger" as const }] : []),
+              ...(pen.showUnbooked
+                ? [{ label: `Алдангийн тооцоол — ${UNCHARGED}`,
+                     value: "≈" + money(pen.unbooked), accent: "dim" as const }] : []),
               ...(depositOpen
                 ? [{ label: "⚠ Барьцааны тооцоо хийгдээгүй байна", value: money(d.deposit),
                      accent: "danger" as const }] : []),
             ]}
-            total={{ label: "Хаах үед үлдэх нийт тооцоо", value: money(d.balance + d.penalty),
-                     accent: d.balance + d.penalty > 0 ? "danger" : "money" }}
+            total={{ label: "Хаах үед үлдэх нийт тооцоо", value: money(d.balance + pen.booked),
+                     accent: d.balance + pen.booked > 0 ? "danger" : "money" }}
             note={depositOpen
               ? "Барьцааг эхлээд «Барьцааны тооцоо хийх»-ээр суутгаж/буцааж дуусгахыг зөвлөе."
               : undefined}
@@ -1014,11 +1048,17 @@ function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit, onVoid }: {
   );
 }
 
-function Num({ label, val, danger }: { label: string; val: string; danger?: boolean }) {
+/** `dim` — тоо нь БАРИМТ БИШ (тооцоолол, төсөөлөл). `sub` нь яагаад гэдгийг
+ *  тооныхоо доор нэг үгээр хэлнэ («нэхэгдээгүй»). */
+function Num({ label, val, danger, dim, sub }: {
+  label: string; val: string; danger?: boolean; dim?: boolean; sub?: string;
+}) {
   return (
     <div>
       <div className="text-[12px] text-t3 font-semibold uppercase tracking-wider mb-1">{label}</div>
-      <div className={`text-xl font-extrabold tabular-nums ${danger ? "text-danger" : "text-ink"}`}>{val}</div>
+      <div className={`text-xl font-extrabold tabular-nums ${
+            danger ? "text-danger" : dim ? "text-t2" : "text-ink"}`}>{val}</div>
+      {sub && <div className="text-[12px] text-t3 -mt-0.5">{sub}</div>}
     </div>
   );
 }
@@ -1309,12 +1349,21 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   // null = автомат хуваарилалт (хуучин зам). Object = дарга гараар чиглүүлж байна.
   const [manual, setManual] = useState<Record<number, string> | null>(null);
   const amt = parseMoney(amount);
-  // penalty = бүртгэгдсэн + амьд алданги; төлбөр бүртгэх агшинд яг энэ дүн хөлдөнө
+  /* Хуваарилалт ЗӨВХӨН НЭХЭГДСЭН алдангийг хааж чадна (`penalty_due`).
+     Урьд нь энд `i.penalty` (нийт) бичигдсэн байсан: төлбөр бүртгэх агшинд
+     сервер бүх амьд алдангийг өөрөө номжиж байсан тул тэр нь «зөв» байв.
+     Нэхэлт ил болсон одоо тэр тоо ХУДАЛ болно — сервер нэхэгдээгүй
+     алданги руу мөнгө оруулахгүй, баримт нь зөрнө (H2). */
   const list = (invoices || []).map((i: any) => ({
     id: i.id, no: i.no, outstanding: i.outstanding, due_date: i.due_date,
     cycle_start: i.cycle_start, cycle_end: i.cycle_end,
-    penalty_due: i.penalty || 0 }));
+    penalty_due: i.penalty_due || 0 }));
   const preview = allocationPreview(amt, list);
+  /* Нэхэгдээгүй тооцоолол — энэ төлбөр түүнийг ХӨНДӨХГҮЙ гэдгийг хадгалахаас
+     ӨМНӨ хэлнэ. Урьд нь энд «энэ төлбөрийг бүртгэхэд алданги X₮ нэхэгдэнэ»
+     гэсэн анхааруулга хэрэгтэй байсан; одоо чимээгүй номжих зүйл алга. */
+  const uncharged = (invoices || []).reduce(
+    (s: number, i: any) => s + (i.penalty_unbooked || 0), 0);
   // Гэрээний нэхэмжлэлийн хүснэгттэй ИЖИЛ нэрээр дуудна — нэг объект, нэг нэр.
   const nameOf = (id: number, no: string) =>
     invoiceLabel(list.find((i: any) => i.id === id) ?? { no });
@@ -1448,6 +1497,15 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
       )) : (
         <p className="text-[12.5px] text-t2">Төлбөр хамгийн хуучин нэхэмжлэлээс эхэлж автоматаар хуваарилагдана.</p>
       )}
+      {/* Хадгалахаас ӨМНӨ: энэ төлбөр алданги НЭХЭХГҮЙ гэдгийг ил хэлнэ.
+          Урьд нь энд «энэ төлбөрийг бүртгэхэд алданги X₮ нэхэгдэнэ» гэсэн
+          анхааруулга хэрэгтэй байсан — одоо чимээгүй номжих зүйл алга. */}
+      {uncharged > 0.5 && (
+        <p className="text-[12.5px] text-t3 mt-2.5">
+          Алдангийн тооцоолол <b className="tabular-nums text-t2">≈{money(uncharged)}</b> — {UNCHARGED}.
+          Энэ төлбөр түүнийг хөндөхгүй; нэхэх бол «Алданги нэхэх» товчоор нэхнэ.
+        </p>
+      )}
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <button className="btn-primary !bg-money" disabled={busy || manualOver} onClick={submit}
@@ -1463,6 +1521,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
 function DepositModal({ d, onClose, onDone }: any) {
   const toast = useToast();
   const debt = Math.max(d.balance, 0);
+  const pen = penaltySplit(d.penalty, d.penalty_booked);
   const suggestApply = Math.min(d.deposit, debt);
   // Санал болгосон хуваарилалт нь ЭХНИЙ утга — үүнийг хөндөөгүй бол цэвэрхэн
   const f0 = { date: today(), apply: String(Math.round(suggestApply)),
@@ -1481,6 +1540,11 @@ function DepositModal({ d, onClose, onDone }: any) {
         Гэрээ №{d.no} · <b className="text-ink">{d.client}</b>. Барьцаа{" "}
         <b className="text-ink tabular-nums">{money(d.deposit)}</b>
         {debt > 0 && <> · одоогийн үлдэгдэл өр <b className="text-danger tabular-nums">{money(debt)}</b></>}
+        {/* Суутгал ЗӨВХӨН үндсэн өрийг хаадаг — нэхэгдсэн алданги нь тусдаа
+            үлдэнэ, тиймээс энд нэрлэгдэнэ. Нэхэгдээгүй тооцоолол нь энэ
+            үйлдэлд огт хамаагүй тул мөрөнд ч, дүнд ч ОРОХГҮЙ (H2). */}
+        {pen.booked > 0 && <> · нэхэгдсэн алданги{" "}
+          <b className="text-danger tabular-nums">{money(pen.booked)}</b> (суутгалд ОРОХГҮЙ)</>}
       </p>
       <div className="grid grid-cols-2 gap-3.5">
         <div><label className="lbl" htmlFor={`${uid}-apply`}>Авлагад суутгах ₮</label>
@@ -1520,6 +1584,59 @@ function DepositModal({ d, onClose, onDone }: any) {
         }}>{busy ? "…" : "Тооцоо хийх"}</button>
       </div>
     </FormModal>
+  );
+}
+
+/* ---------- Алданги НЭХЭХ ----------
+   Отгоо эгч 20 жилийн Excel-дээ алданги ганц ч удаа тооцоогүй: хуудас бүр
+   дээр «гэрээний 4.2-т зааснаар алданга тооцно» гэж зарладаг ч хэзээ ч
+   нэхдэггүй — тэр бол утсаар ярихад хэрэглэдэг ХӨШҮҮРЭГ (R25 / H2).
+   Систем нь урьд нь төлбөр бүртгэх агшинд ӨӨРӨӨ номжиж байсан. Одоо
+   нэхэлт нь ЗӨВХӨН энэ цонхоор — нэхэмжлэл бүрийн тоог хараад л. */
+function ChargePenaltyModal({ d, onClose, onDone }: any) {
+  const toast = useToast();
+  const [asOf, setAsOf] = useState(today());
+  const uid = useId();
+  const rows = penaltyChargeRows(d.invoices, d.penalty_percent, asOf);
+  const total = penaltyChargeTotal(rows);
+  const nameOf = (id: number, no: string) =>
+    invoiceLabel((d.invoices || []).find((i: any) => i.id === id) ?? { no });
+
+  return (
+    <ConfirmModal
+      title="Алданги нэхэх"
+      intro={<>Гэрээ №{d.no} · <b className="text-ink">{d.client}</b> · алданги{" "}
+             <b className="text-ink tabular-nums">{d.penalty_percent}%</b>/хоног.
+             Нэхсэн алданги нь ӨР болж, төлбөрөөр хаагдана — энэ үйлдлийг буцаах боломжгүй.</>}
+      rows={[
+        ...rows.map((r) => {
+          const n = nameOf(r.id, r.no);
+          return { label: `${n.title} · ${r.days} хоног`, sub: n.sub,
+                   value: money(r.amount), accent: "danger" as const };
+        }),
+        ...(rows.length === 0
+          ? [{ label: `${asOf} өдрөөр нэхэх алданги алга`, value: money(0), accent: "dim" as const }]
+          : []),
+      ]}
+      total={{ label: "Нийт нэхэгдэх алданги", value: money(total),
+               accent: total > 0 ? "danger" : "dim" }}
+      note="Аль хэдийн нэхсэн хоногууд дахин тоологдохгүй."
+      confirmLabel="Алданги нэхэх" confirmDisabled={rows.length === 0} danger
+      onClose={onClose}
+      onConfirm={async () => {
+        try {
+          const r = await api(`/api/contracts/${d.id}/book-penalty`,
+                              { method: "POST", body: JSON.stringify({ as_of: asOf }) });
+          toast(`${money(r.total)} алданги нэхэгдлээ`);
+          onDone();
+        } catch (e: any) { toast(e.message, "err"); }
+      }}>
+      {/* Огноо нь баримтын ДООР — тоонууд нь эндээс хамаарна гэдгийг
+          дараалал нь өөрөө хэлнэ (өөрчлөхөд дээрх мөрүүд дахин бодогдоно). */}
+      <label className="lbl" htmlFor={`${uid}-asof`}>Ямар өдрөөр нэхэх вэ</label>
+      <input id={`${uid}-asof`} type="date" className="inp max-w-[200px]" value={asOf}
+             onChange={(e) => setAsOf(e.target.value)} />
+    </ConfirmModal>
   );
 }
 

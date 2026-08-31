@@ -8,6 +8,7 @@ import { useLive } from "../lib/live";
 import { nextSort, ariaSort, sortByNumber, type SortState } from "../lib/sort";
 import { clientHref } from "../lib/links";
 import { todayIso } from "../lib/schedule";
+import { UNCHARGED } from "../lib/penalty";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
 // хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
@@ -113,7 +114,7 @@ export default function Collections() {
           <thead><tr>
             <th className="th">Харилцагч</th>
             {sortTh("overdue", "Хэтэрсэн", true)}
-            <th className="th text-right">Алданги</th>
+            <th className="th text-right">Нэхэгдсэн алданги</th>
             {sortTh("oldest", "Хамгийн хуучин")}
             <th className="th">Сүүлд холбогдсон</th>
             <th className="th">Амлалт</th>
@@ -143,8 +144,15 @@ export default function Collections() {
                 {/* Жагсаалт нь «хэнд эхэлж залгах вэ» гэдгийг хэлдэг тул сая нь
                     зөв — харин залгахын өмнө нэхэх дүнгээ бүтнээр нь хардаг. */}
                 <td className="td text-right tabular-nums font-bold text-danger" title={money(r.overdue)}>{sayaFmt(r.overdue)}₮</td>
-                <td className="td text-right tabular-nums text-t2" title={r.penalty > 0 ? money(r.penalty) : undefined}>
-                  {r.penalty > 0 ? sayaFmt(r.penalty) + "₮" : "—"}
+                {/* Утсаар ярихад ХОЁР өөр зэвсэг: нэхсэн нь өр, нэхээгүй нь
+                    хөшүүрэг. Отгоо хэдийг өршөөж байгаагаа энд харна (R25). */}
+                <td className="td text-right tabular-nums text-t2"
+                    title={r.penalty_booked > 0 ? money(r.penalty_booked) : undefined}>
+                  {r.penalty_booked > 0 ? sayaFmt(r.penalty_booked) + "₮" : "—"}
+                  {r.penalty_unbooked > 0 && (
+                    <span className="block text-[12px] text-t3"
+                          title={`Тооцоолол — ${money(r.penalty_unbooked)} · ${UNCHARGED}`}>
+                      ≈{sayaFmt(r.penalty_unbooked)}₮ {UNCHARGED}</span>)}
                 </td>
                 <td className="td">
                   <span className={r.oldest_days >= 90 ? "pill-red" : r.oldest_days >= 30 ? "pill-amber" : "pill-grey"}>
@@ -200,7 +208,8 @@ function NoteModal({ r, onClose, onDone }: any) {
     <FormModal title={`Тэмдэглэл — ${r.client}`} onClose={onClose} dirty={formDirty(f0, f)}>
       <div className="bg-sunken rounded-lg px-3.5 py-2.5 mb-4 text-[13px] text-t2">
         Хэтэрсэн <b className="text-danger tabular-nums">{money(r.overdue)}</b>
-        {r.penalty > 0 && <> · алданги <b className="tabular-nums">{money(r.penalty)}</b></>}
+        {r.penalty_booked > 0 && <> · нэхэгдсэн алданги <b className="tabular-nums">{money(r.penalty_booked)}</b></>}
+        {r.penalty_unbooked > 0 && <> · тооцоолол <b className="tabular-nums text-t3">≈{money(r.penalty_unbooked)}</b> ({UNCHARGED})</>}
         {r.phone && <> · <a href={telHref(r.phone)} title={`${r.phone} руу залгах`}
                             className="font-bold text-ink hover:text-brand-ink hover:underline">☎ {r.phone}</a></>}
       </div>
