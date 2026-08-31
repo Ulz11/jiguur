@@ -1,4 +1,7 @@
 @echo off
+chcp 65001 >nul
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
 title Jiguur Zam - Udirdlagiin sistem
 cd /d "%~dp0backend"
 
