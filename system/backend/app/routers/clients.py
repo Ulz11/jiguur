@@ -85,8 +85,13 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
             sub = " · ".join(f"{mmap.get(l.material_id)} ×{l.qty:g}" for l in mv.lines[:3])
             if charge:
                 sub += f" · төлбөр {charge:,.0f}₮"
+            # Цуцлагдсан хөдөлгөөн хэлхээнээс алга болохгүй (тэр өдөр бичилт
+            # хийгдсэн нь үнэн) — гэхдээ энд ХҮЧИНГҮЙ гэдгээ хэлнэ.
+            if mv.voided_at is not None:
+                sub += " · ХҮЧИНГҮЙ" + (f" ({mv.void_reason})" if mv.void_reason else "")
             timeline.append({"date": str(mv.date), "kind": mv.type.lower(),
-                             "title": f"{kind} — {qty:g}ш · №{ct.no}", "sub": sub})
+                             "title": f"{kind} — {qty:g}ш · №{ct.no}", "sub": sub,
+                             "voided": mv.voided_at is not None})
     for p in payments:
         m = {"CASH": "Бэлэн", "BANK": "Данс", "BARTER": "Бартер"}[p["method"]]
         sub = m + (f" · {p['barter_desc']}" if p["barter_desc"] else "")

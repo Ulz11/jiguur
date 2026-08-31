@@ -69,3 +69,30 @@ export function releaseRows(allocs: Allocation[] | undefined | null): ReleaseRow
 export function releasedTotal(allocs: Allocation[] | undefined | null): number {
   return (allocs || []).reduce((s, a) => s + a.amount, 0);
 }
+
+/* ---------- Хөдөлгөөн цуцлах: нөөц ХААШАА хөдлөх вэ ---------- */
+
+export type MvLine = {
+  material?: string; grade?: string; qty: number; return_grade?: string | null;
+};
+export type MvForVoid = { type: string; status: string; lines?: MvLine[] };
+
+/** Цуцлалт нөөцөд хийх ЯГ тэр хөдөлгөөнийг баримтын мөр болгоно.
+ *
+ *  Сервер тал `unapply_movement_stock`-оор толин тусгалыг буцаадаг; Отгоо
+ *  дарахаасаа ӨМНӨ тэр урвуу хөдөлгөөнөө уншина. Хүлээгдэж буй ачилт нөөц
+ *  хөдөлгөөгүй тул мөр гаргахгүй — хий мөр «бараа хөдөллөө» гэж уншигдана.
+ *
+ *  Буцаалтын мөр нь БУЦАЖ ИРСЭН зэрэглэлээр нэрлэгдэнэ: агуулахад тэр
+ *  зэрэглэлээр нэмэгдсэн тул хасагдах нь ч мөн тэр. */
+export function movementStockRows(mv: MvForVoid | undefined | null):
+    { key: string; label: string; sub: string; value: string }[] {
+  if (!mv || mv.status !== "done") return [];
+  const issue = mv.type === "ISSUE";
+  return (mv.lines || []).map((l, i) => ({
+    key: String(i),
+    label: `${l.material || "?"} (${(issue ? l.grade : l.return_grade || l.grade) || "?"})`,
+    sub: issue ? "агуулахад буцна" : "агуулахаас гарч, дахин түрээсэнд",
+    value: `${issue ? "+" : "−"}${Math.round(l.qty).toLocaleString("en-US")}ш`,
+  }));
+}

@@ -14,7 +14,7 @@ import { rowClickProps } from "../lib/rowClick";
 import { materialSections, MaterialSection } from "../lib/lots";
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { todayIso } from "../lib/schedule";
-import { isVoided, voidRowClass, voidTitle } from "../lib/void";
+import { isVoided, movementStockRows, voidRowClass, voidTitle } from "../lib/void";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -39,6 +39,7 @@ export default function ContractDetail() {
   const [pending, setPending] = useState<Pending | null>(null);
   /* Цуцлах гэж буй төлбөр — баталгаажуулах цонх нь мөрөө өөртөө авч явна. */
   const [voidPay, setVoidPay] = useState<any>(null);
+  const [voidMv, setVoidMv] = useState<any>(null);
   const toast = useToast();
   const pdf = usePdf();
   const u = user();
@@ -320,7 +321,9 @@ export default function ContractDetail() {
                     {open && (
                       <tr id={pid}><td colSpan={seesMoney ? 6 : 4} className="td !bg-canvas !p-0">
                         <MaterialLedger sec={sec} sale={d.type === "sale"} seesMoney={seesMoney}
-                          canEdit={u?.role === "manager"} onEdit={gatedPatch} />
+                          canEdit={u?.role === "manager"} onEdit={gatedPatch}
+                          onVoid={(mid) => setVoidMv(
+                            d.movements.find((m: any) => m.id === mid))} />
                       </td></tr>
                     )}
                   </Fragment>
@@ -428,16 +431,27 @@ export default function ContractDetail() {
                   <i className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-white border-[3px] ${
                     mv.type === "ISSUE" ? "border-brand" : mv.type === "RETURN" ? "border-warn" : "border-danger"}`} />
                   {/* Задардаг мөр — хулганаар ч, Tab+Enter-ээр ч нээгдэнэ */}
-                  <div className="cursor-pointer" title="Дарж дэлгэрэнгүйг нээнэ"
+                  <div className="cursor-pointer" title={voidTitle(mv) || "Дарж дэлгэрэнгүйг нээнэ"}
                        {...disclosureProps(open, mvPid)}
                        {...rowClickProps(() => setOpenMv(open ? null : mv.id),
                          `${mv.date} · ${mvName(mv.type)} — дэлгэрэнгүйг ${open ? "хаах" : "нээх"}`)}>
                     <span className="text-[12px] text-t3 font-semibold">{mv.date}</span>
-                    {mv.status === "pending" && <span className="pill-amber ml-2">хүлээгдэж буй</span>}
-                    <b className="block text-[13.5px] text-ink font-semibold">
+                    {mv.status === "pending" && !isVoided(mv) &&
+                      <span className="pill-amber ml-2">хүлээгдэж буй</span>}
+                    {isVoided(mv) && <span className="pill-red ml-2">ХҮЧИНГҮЙ</span>}
+                    <b className={`block text-[13.5px] text-ink font-semibold ${voidRowClass(mv)}`}>
                       <Chevron open={open} />{" "}
                       {mvName(mv.type)} — {fmt(mv.lines.reduce((s: number, l: any) => s + l.qty, 0))}ш
                     </b>
+                    {/* Шалтгаан нь ГОЛ мэдээлэл — tooltip дотор нуугдвал
+                        Отгоо «яагаад» гэдгээ уншихын тулд хулгана барих
+                        хэрэгтэй болно. Мөрөндөө ил гарна. */}
+                    {isVoided(mv) && mv.void_reason && (
+                      <span className="block text-[12px] text-danger">
+                        {mv.void_reason}
+                        {mv.voided_by && <span className="text-t3"> · {mv.voided_by}</span>}
+                      </span>
+                    )}
                   </div>
                   {!open ? (
                     <div className="text-[12.5px] text-t2">
@@ -473,6 +487,16 @@ export default function ContractDetail() {
                             confirmText="Огноо солих уу?"
                             onSave={(v) => gatedPatch(`/api/movements/${mv.id}`, { date: v },
                                                       "Хөдөлгөөний огноо шинэчлэгдлээ")} />
+                        </div>
+                      )}
+                      {/* Хөдөлгөөн ЦУЦЛАХ нь менежерийн засварын зам: устгал
+                          байхгүй тул буруу бичсэн ачилт/буцаалтыг зогсоох
+                          ганц арга. Дэлгэрэнгүй дотор — жагсаалт дундуур
+                          санамсаргүй дарагдахгүй. */}
+                      {u?.role === "manager" && !isVoided(mv) && (
+                        <div className="mb-2">
+                          <VoidButton label={`${mv.date} · ${mvName(mv.type)}`}
+                                      onClick={() => setVoidMv(mv)} />
                         </div>
                       )}
                       {mv.lines.map((l: any) => (
@@ -655,12 +679,18 @@ export default function ContractDetail() {
                                 onDone={() => { setPending(null); load(); }} />}
       {voidPay && <VoidPaymentModal payment={voidPay} onClose={() => setVoidPay(null)}
                                     onDone={() => { setVoidPay(null); load(); }} />}
+      {voidMv && <VoidMovementModal mv={voidMv} onClose={() => setVoidMv(null)}
+                                    onDone={() => { setVoidMv(null); load(); }}
+                                    onRebuild={(p) => { setVoidMv(null); setPending(p); }} />}
     </div>
   );
 }
 
 /* ---------- Дахин бодох баталгаажуулалт ---------- */
-type Pending = { path: string; body: any; okMsg: string; diffs: any[]; warnings: string[] };
+/** `method` — хөдөлгөөн ЦУЦЛАХ нь POST-оор явдаг тул үйл үг нь тогтмол байхаа
+ *  больсон. Заагаагүй бол PATCH (inline засварын хуучин зам). */
+type Pending = { path: string; body: any; okMsg: string; diffs: any[];
+                 warnings: string[]; method?: "PATCH" | "POST" };
 
 function RebuildModal({ p, onClose, onDone }: {
   p: Pending; onClose: () => void; onDone: () => void;
@@ -695,13 +725,76 @@ function RebuildModal({ p, onClose, onDone }: {
         <button className="btn-primary" disabled={busy} onClick={async () => {
           setBusy(true);
           try {
-            await api(p.path, { method: "PATCH", body: JSON.stringify({ ...p.body, confirm: true }) });
+            await api(p.path, { method: p.method || "PATCH",
+                                body: JSON.stringify({ ...p.body, confirm: true }) });
             toast(p.okMsg + " — тооцоо дахин бодогдлоо");
             onDone();
           } catch (e: any) { toast(e.message, "err"); setBusy(false); }
         }}>{busy ? "…" : "Баталгаажуулж дахин бодох"}</button>
       </div>
     </Modal>
+  );
+}
+
+/* ---------- Хөдөлгөөн хүчингүй болгох ----------
+   Гэрээний түүх ба материалын дэвтэр ХОЁУЛАА энэ цонхыг дуудна.
+
+   Хоёр шаттай зам: эхлээд нөөц ЮУ буцахыг Receipt дээр харуулж шалтгаан
+   асууна; сервер «энэ нэхэмжлэгдсэн цонхонд байна» гэвэл ХОЁРДУГААР цонх
+   (RebuildModal) циклүүдийн хуучин→шинэ дүнг харуулна. Отгоо мөнгө хөдөлгөх
+   бүрд юу болохоо ХАРЖ байж зөвшөөрнө. */
+function VoidMovementModal({ mv, onClose, onDone, onRebuild }: {
+  mv: any;
+  onClose: () => void;
+  onDone: () => void;
+  onRebuild: (p: Pending) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const toast = useToast();
+  const rid = useId();
+  const rows = movementStockRows(mv);
+  const name = `${mv.date} · ${mvName(mv.type)}`;
+
+  return (
+    <ConfirmModal
+      title={`${mvName(mv.type)} хүчингүй болгох`}
+      intro={<>
+        <b className="text-ink">{name}</b> — энэ бичилт УСТАХГҮЙ: түүхэндээ
+        «ХҮЧИНГҮЙ» тэмдэгтэй, шалтгаантайгаа хамт үлдэнэ. Тооцоо түүнийг
+        хараагүй мэт ажиллана. Энэ үйлдлийг буцаах боломжгүй.
+      </>}
+      rows={rows.length
+        ? rows.map((r) => ({ label: r.label, sub: r.sub, value: r.value,
+                             accent: "danger" as const }))
+        : [{ label: "Нөөц хөдлөхгүй", sub: "хараахан баталгаажаагүй ачилт",
+             value: "—", accent: "dim" as const }]}
+      note="Нэхэмжлэгдсэн циклд хамаарвал дараагийн алхамд зөрүүг харуулна."
+      confirmLabel="Хүчингүй болгох"
+      confirmDisabled={!reason.trim()}
+      danger
+      onClose={onClose}
+      onConfirm={async () => {
+        const body = { reason: reason.trim() };
+        try {
+          const r = await api(`/api/movements/${mv.id}/void`, {
+            method: "POST", body: JSON.stringify(body) });
+          if (r?.rebuild_required) {
+            onRebuild({ path: `/api/movements/${mv.id}/void`, body, method: "POST",
+                        okMsg: `${mvName(mv.type)} хүчингүй болов`,
+                        diffs: r.diffs || [], warnings: r.warnings || [] });
+            return;
+          }
+          toast(`${mvName(mv.type)} хүчингүй болов`);
+          onDone();
+        } catch (e: any) { toast(e.message, "err"); }
+      }}>
+      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+        Цуцлах шалтгаан <span className="text-danger">*</span>
+      </label>
+      <input id={rid} className="inp w-full" value={reason} autoFocus
+             placeholder="ж: буруу гэрээнд бичсэн"
+             onChange={(e) => setReason(e.target.value)} />
+    </ConfirmModal>
   );
 }
 
@@ -715,7 +808,7 @@ function RebuildModal({ p, onClose, onDone }: {
    нэхэмжлэгдсэн циклд хүрвэл эхлээд зөрүүг харуулж, баталгаажуулсан үед л
    дахин бодно. Хөдөлгүүр татгалзвал (жишээ нь гадаа байгаагаас их буцаалт)
    серверийн монгол шалтгаан мэдэгдэл болж гарна. */
-function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit }: {
+function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit, onVoid }: {
   sec: MaterialSection;
   sale: boolean;
   /** Даргад: тоо, огноо, падангийн ХАМААРАЛ, үлдэгдэл нь ажил тул ХЭВЭЭР;
@@ -723,6 +816,8 @@ function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit }: {
   seesMoney: boolean;
   canEdit: boolean;
   onEdit: (path: string, body: any, okMsg: string) => Promise<void>;
+  /** Дэвтрийн мөрөөс хөдөлгөөнөө цуцлах — цонхыг гэрээний хуудас эзэмшинэ. */
+  onVoid: (movementId: number) => void;
 }) {
   const th = "th !text-[11px] !py-1.5 !px-2.5";
   const td = "td !text-[12.5px] !py-2 !px-2.5 align-top";
@@ -754,11 +849,23 @@ function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit }: {
             const issue = ln.type === "ISSUE";
             const name = `${sec.material} · ${ln.date} · ${mvName(ln.type)}`;
             return (
-            <tr key={ln.id}>
-              <td className={`${td} whitespace-nowrap tabular-nums`}>{ln.date}</td>
+            <tr key={ln.id} title={voidTitle(ln)}>
+              <td className={`${td} whitespace-nowrap tabular-nums ${voidRowClass(ln)}`}>{ln.date}</td>
               <td className={td}>
-                <b className="text-ink">{mvName(ln.type)}</b>
-                {ln.status === "pending" && <span className="pill-amber ml-1.5">хүлээгдэж буй</span>}
+                <b className={`text-ink ${voidRowClass(ln)}`}>{mvName(ln.type)}</b>
+                {ln.status === "pending" && !isVoided(ln) &&
+                  <span className="pill-amber ml-1.5">хүлээгдэж буй</span>}
+                {isVoided(ln) && <span className="pill-red ml-1.5">ХҮЧИНГҮЙ</span>}
+                {isVoided(ln) && ln.void_reason && (
+                  <span className="block text-[12px] text-danger">{ln.void_reason}</span>
+                )}
+                {/* Дэвтрийн мөр дээр ч цуцлах зам байна: Отгоо материалын
+                    түүхээ уншиж байгаад буруу мөрөө таньдаг — тэндээсээ
+                    гарахгүйгээр засна. */}
+                {canEdit && !isVoided(ln) && (
+                  <VoidButton label={`${ln.date} · ${mvName(ln.type)}`}
+                              onClick={() => onVoid(ln.movement_id)} />
+                )}
                 {!!ln.return_grade && ln.return_grade !== sec.grade && (
                   <span className="text-t3"> → {ln.return_grade}</span>
                 )}

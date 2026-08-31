@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { isVoided, voidTitle, voidRowClass, releaseRows, releasedTotal } from "./void";
+import { isVoided, voidTitle, voidRowClass, releaseRows, releasedTotal,
+         movementStockRows } from "./void";
 
 /* Цуцлалт бол УСТГАЛ БИШ. Хоёр мөр хоёулаа үлдэх ёстой тул харагдацын дүрэм
    бас нэг л газраас гарна: юу зурагдсан, юу бүдэгрсэн, title-д юу бичигдэх.
@@ -82,5 +83,41 @@ describe("releasedTotal", () => {
 
   it("хоосон дээр 0", () => {
     expect(releasedTotal(undefined)).toBe(0);
+  });
+});
+
+/* ---- Хөдөлгөөн цуцлах: НӨӨЦ ХААШАА хөдлөх вэ ----
+   Отгоо дарахаасаа өмнө «юу буцаж явах» гэдгээ баримт дээрээс уншина.
+   Хүлээгдэж буй ачилт нөөц хөдөлгөөгүй тул мөр ч гарахгүй — хий мөр гаргавал
+   «бараа хөдөллөө» гэж уншигдана. */
+
+describe("movementStockRows", () => {
+  const issue = {
+    type: "ISSUE", status: "done",
+    lines: [{ material: "Хэв хашмал 6012", grade: "А", qty: 100 }],
+  };
+
+  it("олголт цуцлахад бараа агуулахдаа буцна", () => {
+    expect(movementStockRows(issue)).toEqual([
+      { key: "0", label: "Хэв хашмал 6012 (А)", sub: "агуулахад буцна", value: "+100ш" },
+    ]);
+  });
+
+  it("буцаалт цуцлахад бараа ДАХИН түрээсэнд гарна — буцаж ирсэн зэрэглэлээр", () => {
+    expect(movementStockRows({
+      type: "RETURN", status: "done",
+      lines: [{ material: "Хэв хашмал 5012", grade: "А", qty: 40, return_grade: "В" }],
+    })).toEqual([
+      { key: "0", label: "Хэв хашмал 5012 (В)", sub: "агуулахаас гарч, дахин түрээсэнд",
+        value: "−40ш" },
+    ]);
+  });
+
+  it("хүлээгдэж буй ачилт нөөц хөдөлгөөгүй — мөр огт гарахгүй", () => {
+    expect(movementStockRows({ ...issue, status: "pending" })).toEqual([]);
+  });
+
+  it("мөргүй хөдөлгөөн дээр унахгүй", () => {
+    expect(movementStockRows({ type: "ISSUE", status: "done", lines: [] })).toEqual([]);
   });
 });

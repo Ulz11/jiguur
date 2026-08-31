@@ -1,6 +1,6 @@
 """Гэрээ, хөдөлгөөн, нэхэмжлэл."""
 import re
-from datetime import date
+from datetime import date, datetime
 from datetime import date as _date_t
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -439,6 +439,72 @@ def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends
     return {**out, "rebuilt": rebuilt} if rebuilt else out
 
 
+class MovementVoidIn(_BM):
+    reason: str = ""
+    confirm: bool = False
+
+
+@router.post("/movements/{mid}/void")
+def void_movement(mid: int, body: MovementVoidIn, db: Session = Depends(get_db),
+                  user=Depends(auth.require_roles("manager"))):
+    """Хөдөлгөөнийг ХҮЧИНГҮЙ болгоно — устгахгүй, нөөцийн толийг нь буцаана.
+
+    «Буруу гэрээнд олгосон падан ХЭЗЭЭ Ч ЗОГСОХГҮЙ түрээс тооцно»
+    (Чадварын харьцуулалт §3 H1). Хөдөлгөөн устгагддаггүй тул засварын
+    ганц зам нь энэ.
+
+    Гурван бодит байдал, гурван зам:
+      · ХҮЛЭЭГДЭЖ БУЙ — нөөц ч, тооцоо ч хөдлөөгүй: зүгээр л тэмдэглэнэ
+        (үйлдвэрийн жагсаалтаас гарна).
+      · ОЛГОЛТ — дараагийн буцаалт энэ падангаас хассан бол ТАТГАЛЗАНА
+        (эс бөгөөс тэр буцаалт эх үүсвэргүй үлдэж, үлдэгдэл сөрөг болно).
+      · БУЦААЛТ / АКТ — бараа дахин ТҮРЭЭСЭНД гарна; хооронд нь дахин
+        олгогдсон байвал агуулахаас хасах юм үлдээгүй тул ТАТГАЛЗАНА.
+
+    Нэхэмжлэгдсэн цонхонд байсан бол засварын ЯГ тэр хаалгаар (`_gated`)
+    дамжина: эхлээд зөрүүг харуулж, `confirm` ирсэн үед л дахин бодно.
+    """
+    mv = db.get(models.Movement, mid)
+    if not mv:
+        raise HTTPException(404, "Хөдөлгөөн олдсонгүй")
+    if mv.voided_at is not None:
+        raise HTTPException(409, "Энэ хөдөлгөөн аль хэдийн хүчингүй болсон байна")
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "Цуцлах шалтгаан заавал бичигдэнэ")
+    c = mv.contract
+    done = mv.status == "done"
+    if done:
+        if mv.type == "ISSUE" and billing.lot_consumers(c, mv.id):
+            raise HTTPException(409, billing.LOT_CONSUMED_ERR)
+        blocked = billing.reversal_block(db, mv)
+        if blocked:
+            raise HTTPException(409, blocked)
+
+    gmap, mmap = _maps(db)
+    days = [mv.date] if done else []
+
+    def mutate():
+        # Нөөцийг ЭХЛЭЭД буцаана — `_apply_movement_edit`-тэй ижил дараалал:
+        # хасах юмаа хасчихаад дараа нь тэмдэглэнэ.
+        if mv.status == "done":
+            billing.unapply_movement_stock(db, mv)
+        mv.voided_at = datetime.utcnow()
+        mv.void_reason = reason
+        mv.voided_by = getattr(user, "name", "") or ""
+
+    rebuilt, preview = _gated(db, user, c, mutate, days, body.confirm,
+                              f"хөдөлгөөн #{mv.id} хүчингүй болгов")
+    if preview:
+        return preview
+    qty = sum(ln.qty for ln in mv.lines)
+    audit.log(db, user, "void", "movement", mv.id,
+              f"№{c.no} · {mv.date} · {mv.type} {qty:g}ш — ХҮЧИНГҮЙ: {reason}")
+    db.refresh(mv)
+    out = serializers.movement(mv, gmap, mmap)
+    return {**out, "rebuilt": rebuilt} if rebuilt else out
+
+
 @router.patch("/contracts/{cid}/items")
 def patch_item(cid: int, body: ItemPatch, db: Session = Depends(get_db),
                user=Depends(auth.require_roles("manager"))):
@@ -535,6 +601,8 @@ def confirm_movement(mid: int, db: Session = Depends(get_db),
     mv = db.get(models.Movement, mid)
     if not mv:
         raise HTTPException(404, "Олдсонгүй")
+    if mv.voided_at is not None:
+        raise HTTPException(409, "Энэ ачилт хүчингүй болсон — баталгаажуулах боломжгүй")
     if mv.status == "done":
         return {"ok": True}
     for ln in mv.lines:

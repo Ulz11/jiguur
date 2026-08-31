@@ -141,6 +141,13 @@ class Movement(Base):
     note: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(12), default="done")  # pending | done (ачилт дарга баталгаажуулна)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # ---- ХҮЧИНГҮЙ (void) — «буруу гэрээнд олгосон падан хэзээ ч зогсохгүй» ----
+    # Төлбөртэй ЯГ ижил журам: мөр устахгүй, зөвхөн тооцооноос гарна. Нөөцийн
+    # толин тусгал нь `unapply_movement_stock`-оор ЯГ буцаагдаж, нэхэмжлэгдсэн
+    # цонхонд байсан бол дахин бодолтын хаалгаар (RebuildModal) дамжина.
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_by: Mapped[str] = mapped_column(String(100), default="")
 
     contract: Mapped["Contract"] = relationship(back_populates="movements")
     lines: Mapped[list["MovementLine"]] = relationship(back_populates="movement")

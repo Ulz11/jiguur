@@ -311,3 +311,239 @@ def test_voided_barter_asset_cannot_be_sold(client, as_role):
     client.post(f"/api/payments/{p['id']}/void", headers=h, json={"reason": "алдаа"})
     assert client.post(f"/api/barter/{aid}/sell", headers=h,
                        json={"date": iso(0), "amount": 1}).status_code == 400
+
+
+# ==================== ХӨДӨЛГӨӨН ХҮЧИНГҮЙ БОЛГОХ ====================
+#
+# «Буруу гэрээнд олгосон падан ХЭЗЭЭ Ч ЗОГСОХГҮЙ түрээс тооцно» (H1). Хөдөлгөөн
+# устгагддаггүй тул засварын ганц зам нь цуцлалт: нөөцийн толин тусгалыг яг
+# буцааж, тооцоог дахин бодуулж, мөрийг нь ХҮЧИНГҮЙ тэмдэгтэй үлдээнэ.
+
+
+def _stock_of(client, h, material_id, grade_id):
+    m = next(x for x in client.get("/api/materials", headers=h).json()
+             if x["id"] == material_id)
+    return next(s for s in m["stock"] if s["grade_id"] == grade_id)
+
+
+def _pending_ids(client, as_role, cid):
+    dash = client.get("/api/dashboard", headers=as_role("darga")).json()
+    return [p["id"] for p in dash["pending_shipments"] if p["contract_id"] == cid]
+
+
+def test_void_pending_movement_leaves_factory_queue(client, as_role):
+    """Хүлээгдэж буй ачилт тооцоо ч, нөөц ч хөдөлгөөгүй — цуцлахад зүгээр л
+    үйлдвэрийн жагсаалтаас гарна, түүхэндээ ХҮЧИНГҮЙ болж үлдэнэ."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    before = _stock_of(client, h, m["id"], st["grade_id"])
+    [mid] = _pending_ids(client, as_role, cid)
+
+    r = client.post(f"/api/movements/{mid}/void", headers=h,
+                    json={"reason": "Буруу гэрээнд бичив"})
+    assert r.status_code == 200, r.text
+
+    assert _pending_ids(client, as_role, cid) == []
+    mvs = _movements(client, h, cid)
+    row = next(x for x in mvs if x["id"] == mid)
+    assert row["voided"] is True and row["void_reason"] == "Буруу гэрээнд бичив"
+    after = _stock_of(client, h, m["id"], st["grade_id"])
+    assert after["on_hand"] == before["on_hand"] and after["on_rent"] == before["on_rent"]
+
+
+def test_void_pending_movement_cannot_be_confirmed(client, as_role):
+    """Цуцлагдсан ачилтыг дарга дараа нь баталгаажуулж чадахгүй."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    [mid] = _pending_ids(client, as_role, cid)
+    client.post(f"/api/movements/{mid}/void", headers=h, json={"reason": "алдаа"})
+    r = client.post(f"/api/movements/{mid}/confirm", headers=as_role("darga"))
+    assert r.status_code == 409
+
+
+def test_void_done_issue_unapplies_stock_and_stops_accrual(client, as_role):
+    """Баталгаажсан олголтыг цуцлахад бараа агуулахдаа буцаж ирнэ, тооцоо зогсоно."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    before = _stock_of(client, h, m["id"], st["grade_id"])
+    _confirm_pending(client, as_role, cid)
+    mid = next(x for x in _movements(client, h, cid) if x["type"] == "ISSUE")["id"]
+    live = _stock_of(client, h, m["id"], st["grade_id"])
+    assert live["on_hand"] == before["on_hand"] - 100
+    assert live["on_rent"] == before["on_rent"] + 100
+
+    r = client.post(f"/api/movements/{mid}/void", headers=h, json={"reason": "буруу гэрээ"})
+    assert r.status_code == 200, r.text
+
+    back = _stock_of(client, h, m["id"], st["grade_id"])
+    assert back["on_hand"] == before["on_hand"]
+    assert back["on_rent"] == before["on_rent"]
+    d = client.get(f"/api/contracts/{cid}", headers=h).json()
+    assert d["qty_out"] == 0
+    assert d["day_amount"] == 0                     # хуримтлал ЗОГССОН
+    assert next(x for x in d["movements"] if x["id"] == mid)["voided"] is True
+
+
+def test_void_done_issue_blocked_when_return_consumed_from_it_409(client, as_role):
+    """Дараагийн буцаалт энэ падангаас хассан бол цуцлалт ТАТГАЛЗАНА —
+    эс бөгөөс буцаалт нь эх үүсвэргүй үлдэж, үлдэгдэл сөрөг болно."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    _confirm_pending(client, as_role, cid)
+    mid = next(x for x in _movements(client, h, cid) if x["type"] == "ISSUE")["id"]
+    assert client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": iso(5),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 40}]
+    }).status_code == 200
+
+    r = client.post(f"/api/movements/{mid}/void", headers=h, json={"reason": "алдаа"})
+    assert r.status_code == 409
+    assert r.json()["detail"] == ("Дараагийн буцаалт энэ падангаас хасагдсан — "
+                                  "эхлээд түүнийг цуцална уу")
+    assert next(x for x in _movements(client, h, cid)
+                if x["id"] == mid)["voided"] is False
+
+
+def test_void_done_return_sends_goods_back_out(client, as_role):
+    """Буцаалт цуцлахад бараа дахин ТҮРЭЭСЭНД гарна — толин тусгал нь яг урвуу."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    _confirm_pending(client, as_role, cid)
+    assert client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": iso(5),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 40}]
+    }).status_code == 200
+    mid = next(x for x in _movements(client, h, cid) if x["type"] == "RETURN")["id"]
+    mid_stock = _stock_of(client, h, m["id"], st["grade_id"])
+    assert client.get(f"/api/contracts/{cid}", headers=h).json()["qty_out"] == 60
+
+    assert client.post(f"/api/movements/{mid}/void", headers=h,
+                       json={"reason": "буцаалт ирээгүй"}).status_code == 200
+
+    after = _stock_of(client, h, m["id"], st["grade_id"])
+    assert after["on_hand"] == mid_stock["on_hand"] - 40
+    assert after["on_rent"] == mid_stock["on_rent"] + 40
+    assert client.get(f"/api/contracts/{cid}", headers=h).json()["qty_out"] == 100
+
+
+def test_void_done_return_blocked_when_goods_reissued_409(client, as_role):
+    """Буцаж ирсэн бараа дахин олгогдсон бол цуцлалт ТАТГАЛЗАНА:
+    агуулахаас хасах юм үлдээгүй, тоо сөрөг болно."""
+    h = as_role("otgoo")
+    mats = client.get("/api/materials", headers=h).json()
+    m = next(x for x in mats if x["name"] == "Хэв хашмал 5012")
+    ga = next(s for s in m["stock"] if s["grade"] == "А")
+    grades = client.get("/api/grades", headers=h).json()
+    g_new = next(g for g in grades if g["code"] == "шинэ")
+
+    cl = client.post("/api/clients", json={"name": "Буцаалт ХХК"}, headers=h).json()
+    r = client.post("/api/contracts", headers=h, json={
+        "client_id": cl["id"], "type": "rent", "start_date": iso(10),
+        "penalty_percent": 0, "items": [{"material_id": m["id"],
+                                         "grade_id": ga["grade_id"], "qty": 100,
+                                         "daily_rate": 330}]})
+    cid = r.json()["id"]
+    _confirm_pending(client, as_role, cid)
+    # 40ш «шинэ» зэрэглэлээр буцаж ирнэ → тэр зэрэглэлийн нөөц 0-ээс 40 болно
+    assert client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": iso(5),
+        "lines": [{"material_id": m["id"], "grade_id": ga["grade_id"], "qty": 40,
+                   "return_grade_id": g_new["id"]}]}).status_code == 200
+    assert _stock_of(client, h, m["id"], g_new["id"])["on_hand"] == 40
+
+    # тэр 40ш ДАХИН олгогдоно — агуулахад юу ч үлдэхгүй
+    cl2 = client.post("/api/clients", json={"name": "Дараагийн ХХК"}, headers=h).json()
+    r2 = client.post("/api/contracts", headers=h, json={
+        "client_id": cl2["id"], "type": "rent", "start_date": iso(3),
+        "penalty_percent": 0, "items": [{"material_id": m["id"],
+                                         "grade_id": g_new["id"], "qty": 40,
+                                         "daily_rate": 330}]})
+    _confirm_pending(client, as_role, r2.json()["id"])
+    assert _stock_of(client, h, m["id"], g_new["id"])["on_hand"] == 0
+
+    mid = next(x for x in _movements(client, h, cid) if x["type"] == "RETURN")["id"]
+    bad = client.post(f"/api/movements/{mid}/void", headers=h, json={"reason": "алдаа"})
+    assert bad.status_code == 409
+    assert "дахин олгогдсон" in bad.json()["detail"]
+    assert _stock_of(client, h, m["id"], g_new["id"])["on_hand"] == 0   # хөндөгдөөгүй
+
+
+def test_void_movement_previews_then_rebuilds_when_invoiced(client, as_role):
+    """Нэхэмжлэгдсэн цонхонд буй хөдөлгөөнийг цуцлахад эхлээд ЗӨРҮҮГ харуулна
+    (RebuildModal), баталгаажуулсан үед л тооцоо дахин бодогдоно."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = _setup(client, as_role, days_ago=40, qty=100)
+    inv = _invoices(client, h, cid)[0]
+    assert inv["total"] == 990_000
+    mid = next(x for x in _movements(client, h, cid) if x["type"] == "ISSUE")["id"]
+
+    dry = client.post(f"/api/movements/{mid}/void", headers=h, json={"reason": "буруу гэрээ"})
+    assert dry.status_code == 200, dry.text
+    assert dry.json()["rebuild_required"] is True
+    diffs = dry.json()["diffs"]
+    assert len(diffs) == 1 and diffs[0]["old_total"] == 990_000 and diffs[0]["new_total"] == 0
+    # ХУУРАЙ: DB хөндөгдөөгүй
+    assert _invoices(client, h, cid)[0]["total"] == 990_000
+    assert next(x for x in _movements(client, h, cid) if x["id"] == mid)["voided"] is False
+
+    ok = client.post(f"/api/movements/{mid}/void", headers=h,
+                     json={"reason": "буруу гэрээ", "confirm": True})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["rebuilt"]["deleted"] == 1 and ok.json()["rebuilt"]["created"] == 0
+    assert _invoices(client, h, cid) == []
+    assert next(x for x in _movements(client, h, cid) if x["id"] == mid)["voided"] is True
+
+
+def test_void_movement_manager_only_403(client, as_role):
+    hf = as_role("sanhuu")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    [mid] = _pending_ids(client, as_role, cid)
+    assert client.post(f"/api/movements/{mid}/void", headers=hf,
+                       json={"reason": "алдаа"}).status_code == 403
+    assert client.post(f"/api/movements/{mid}/void", headers=as_role("darga"),
+                       json={"reason": "алдаа"}).status_code == 403
+
+
+def test_double_void_movement_409(client, as_role):
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    [mid] = _pending_ids(client, as_role, cid)
+    assert client.post(f"/api/movements/{mid}/void", headers=h,
+                       json={"reason": "алдаа"}).status_code == 200
+    assert client.post(f"/api/movements/{mid}/void", headers=h,
+                       json={"reason": "дахиад"}).status_code == 409
+
+
+def test_void_movement_requires_reason(client, as_role):
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    [mid] = _pending_ids(client, as_role, cid)
+    assert client.post(f"/api/movements/{mid}/void", headers=h,
+                       json={"reason": " "}).status_code == 400
+
+
+def test_voided_movement_leaves_ledger_totals_but_stays_visible(client, as_role):
+    """Дэвтэрт мөр нь ХАРАГДАНА (`counted: false`), гэхдээ үлдэгдэлд ОРОХГҮЙ —
+    хүлээгдэж буй ачилттай яг ижил журам."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    _confirm_pending(client, as_role, cid)
+    mid = next(x for x in _movements(client, h, cid) if x["type"] == "ISSUE")["id"]
+    client.post(f"/api/movements/{mid}/void", headers=h, json={"reason": "алдаа"})
+
+    d = client.get(f"/api/contracts/{cid}", headers=h).json()
+    sec = next(g for g in d["material_lines"] if g["material_id"] == m["id"])
+    assert sec["held"] == 0
+    row = next(ln for ln in sec["lines"] if ln["movement_id"] == mid)
+    assert row["counted"] is False                 # тооцоонд ороогүй
+    assert row["voided"] is True                   # харагдсаар, тэмдэгтэйгээ
+
+
+def test_void_movement_writes_audit(client, as_role):
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    [mid] = _pending_ids(client, as_role, cid)
+    client.post(f"/api/movements/{mid}/void", headers=h, json={"reason": "давхар бичив"})
+    trail = client.get("/api/audit?entity=movement", headers=h).json()
+    assert any(a["action"] == "void" and a["entity_id"] == mid
+               and "давхар бичив" in a["detail"] for a in trail)

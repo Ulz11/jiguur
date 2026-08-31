@@ -34,7 +34,8 @@ def material_yield(db: Session, months: int = 6, today: date | None = None):
         else:
             prices = {(i.material_id, i.grade_id): i.unit_price for i in c.items}
             for mv in c.movements:
-                if mv.type != "ISSUE" or mv.status != "done" or not (d_from <= mv.date <= today):
+                if (mv.type != "ISSUE" or not billing.movement_active(mv)
+                        or not (d_from <= mv.date <= today)):
                     continue
                 for ln in mv.lines:
                     key = (ln.material_id, ln.grade_id)

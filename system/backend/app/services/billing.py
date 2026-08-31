@@ -16,11 +16,23 @@ from .. import models
 
 # ---------- тоо ширхэгийн хугацааны шугам ----------
 
+def movement_active(mv: models.Movement) -> bool:
+    """Хөдөлгөөн ТООЦООНД ОРОХ уу — баталгаажсан БА хүчингүй болоогүй.
+
+    Тооцооны хөдөлгүүр рүү орох ГАНЦ хаалга. Хоёр өөр шалтгаанаар (хараахан
+    баталгаажаагүй / цуцлагдсан) хөдөлгөөн тооцооноос гардаг ч үр дүн нь адил:
+    нөөц ч, түрээс ч, нэхэмжлэл ч түүнийг ХАРААГҮЙ мэт ажиллана. Дэлгэц дээр
+    ХАРАГДСААР үлдэх нь тусдаа асуудал (`serializers`) — тэнд аль нь ч
+    алга болохгүй.
+    """
+    return mv.status == "done" and getattr(mv, "voided_at", None) is None
+
+
 def _deltas(contract: models.Contract):
     """(material_id, grade_id) бүрээр огноот өөрчлөлтүүд: ISSUE +qty, RETURN/WRITEOFF -qty."""
     out: dict[tuple[int, int], list[tuple[date, float]]] = {}
     for mv in contract.movements:
-        if mv.status != "done":
+        if not movement_active(mv):
             continue
         for ln in mv.lines:
             key = (ln.material_id, ln.grade_id)
@@ -85,7 +97,7 @@ def _lots(contract: models.Contract) -> list[dict]:
     lots: list[dict] = []
     eats: list[tuple] = []
     for mv in contract.movements:
-        if mv.status != "done":
+        if not movement_active(mv):
             continue
         for ln in mv.lines:
             key = (mv.date, mv.id, ln.id or 0)
@@ -288,7 +300,7 @@ def charges_in(contract: models.Contract, d_from: date, d_to: date):
     total = 0.0
     items = []
     for mv in contract.movements:
-        if mv.status != "done" or not (d_from <= mv.date < d_to):
+        if not movement_active(mv) or not (d_from <= mv.date < d_to):
             continue
         for ln in mv.lines:
             if ln.repair_fee:
@@ -343,7 +355,7 @@ def derivable_invoice_specs(contract: models.Contract, today: date | None = None
         # мөр бүр өөрийн нэгж үнэтэй; байхгүй бол гэрээний мөрийнхөөр
         prices = default_rates(contract)
         for mv in contract.movements:
-            if mv.type != "ISSUE" or mv.status != "done":
+            if mv.type != "ISSUE" or not movement_active(mv):
                 continue
             amount = sum(ln.qty * line_rate(contract, ln, prices) for ln in mv.lines)
             detail = [{"material_id": ln.material_id, "grade_id": ln.grade_id, "qty": ln.qty,
@@ -779,6 +791,78 @@ def apply_movement_stock(db: Session, mv: models.Movement):
     db.commit()
 
 
+LOT_CONSUMED_ERR = ("Дараагийн буцаалт энэ падангаас хасагдсан — "
+                    "эхлээд түүнийг цуцална уу")
+
+
+def lot_consumers(contract: models.Contract, movement_id: int) -> list[int]:
+    """Энэ ОЛГОЛТЫН падангуудаас хассан буцаалт/актын мөрүүдийн id.
+
+    Хоосон бол падан нь ХӨНДӨГДӨӨГҮЙ — олголтыг цуцлахад хэн ч эх үүсвэргүй
+    үлдэхгүй. Хоосон биш бол цуцлалт нь дараагийн буцаалтыг агаарт үлдээж,
+    үлдэгдлийг сөрөг болгоно — тиймээс ЭХЛЭЭД тэр буцаалтаа цуцлах ёстой.
+
+    Хамаарлыг тооцоолж (хадгалдаггүй) гаргадаг тул энд ЯГ тэр `_lots`-ийн
+    хуваарилалтаар алхана: дэлгэц дээр «#12 падангаас 40ш» гэж харагдсан мөр
+    ЯГ энэ хоригийг үүсгэнэ.
+    """
+    out: list[int] = []
+    for lot in _lots(contract):
+        if lot["movement_id"] != movement_id:
+            continue
+        out += [t["line_id"] for t in lot["takes"] if t["qty"] > 0]
+    return out
+
+
+def reversal_block(db: Session, mv: models.Movement) -> str | None:
+    """`unapply_movement_stock` нөөцийг сөрөг болгох уу? Болгох бол ЯАГААДЫГ хэлнэ.
+
+    Толин тусгалыг буцаах нь зарим тоог БУУРУУЛДАГ (буцаалт цуцлах ⇒ агуулахаас
+    хасна). Хооронд нь бараа дахин олгогдсон бол хасах юм үлдээгүй — тэр
+    үед бид үлдэгдлийг сөрөг болгохын оронд шалтгааныг нь монголоор хэлж
+    ТАТГАЛЗАНА.
+    """
+    sale = mv.contract.type == "sale"
+    need: dict[tuple[int, int, str], float] = {}
+
+    def take(material_id: int, grade_id: int, field: str, q: float):
+        if q > 0.0001:
+            key = (material_id, grade_id, field)
+            need[key] = need.get(key, 0.0) + q
+
+    for ln in mv.lines:
+        if mv.type == "ISSUE":
+            if not sale:
+                take(ln.material_id, ln.grade_id, "on_rent", ln.qty)
+        elif mv.type == "RETURN":
+            tgt = ln.return_grade_id or ln.grade_id
+            take(ln.material_id, tgt, "on_hand", ln.qty - ln.repair_qty - ln.writeoff_qty)
+            take(ln.material_id, tgt, "in_repair", ln.repair_qty)
+            take(ln.material_id, tgt, "written_off", ln.writeoff_qty)
+        elif mv.type == "WRITEOFF":
+            take(ln.material_id, ln.grade_id, "written_off", ln.qty)
+
+    for (material_id, grade_id, field), q in need.items():
+        st = db.query(models.Stock).filter_by(material_id=material_id,
+                                              grade_id=grade_id).first()
+        have = getattr(st, field, 0.0) if st else 0.0
+        if have + 0.0001 >= q:
+            continue
+        m = db.get(models.Material, material_id)
+        name = m.name if m else "Материал"
+        if field == "on_hand":
+            return (f"{name}: буцаж ирсэн бараа дахин олгогдсон — агуулахад "
+                    f"{have:g}ш л байна ({q:g}ш хасах шаардлагатай). Эхлээд "
+                    f"дараагийн олголтыг цуцална уу")
+        if field == "on_rent":
+            return (f"{name}: түрээсэнд {have:g}ш л байна ({q:g}ш хасах "
+                    f"шаардлагатай) — энэ олголтыг буцаах боломжгүй")
+        label = "засварт" if field == "in_repair" else "акталсан"
+        return (f"{name}: {label} тоо аль хэдийн өөрчлөгдсөн ({have:g}ш, "
+                f"{q:g}ш хасах шаардлагатай) — цуцлах боломжгүй")
+    return None
+
+
 def unapply_movement_stock(db: Session, mv: models.Movement):
     """`apply_movement_stock`-ийн ЯГ УРВУУ үйлдэл — хөдөлгөөнийг засахын өмнө.
 
@@ -811,7 +895,9 @@ def pending_shipments(db: Session, scope: str = "all") -> list[models.Movement]:
     """Баталгаажаагүй ачилтууд — `scope` төрлийн гэрээнийх. Мэдэгдэл ба
     дашбоардын самбар ХОЁУЛАА эндээс уншина: нэг жагсаалт хоёр газар өөр
     байвал «3 ачилт хүлээгдэж байна» гэсэн мэдэгдлийн доор 5 мөр гарна."""
-    rows = db.query(models.Movement).filter_by(status="pending", type="ISSUE").all()
+    rows = (db.query(models.Movement)
+            .filter_by(status="pending", type="ISSUE")
+            .filter(models.Movement.voided_at.is_(None)).all())
     if scope == "all":
         return rows
     return [mv for mv in rows if mv.contract.type == scope]

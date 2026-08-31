@@ -74,7 +74,7 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
         if c.type != "rent":
             continue
         for mv in c.movements:
-            if mv.type != "ISSUE" or mv.status == "done":
+            if mv.type != "ISSUE" or mv.status == "done" or mv.voided_at is not None:
                 continue
             for ln in mv.lines:
                 if ln.material_id != m.id:
@@ -162,7 +162,9 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
                 moves.append({
                     "id": ln.id, "movement_id": mv.id, "type": mv.type,
                     "date": str(mv.date), "status": mv.status,
-                    "counted": mv.status == "done", "note": mv.note,
+                    "counted": billing.movement_active(mv), "note": mv.note,
+                    "voided": mv.voided_at is not None,
+                    "void_reason": mv.void_reason or "",
                     "contract_id": c.id, "contract_no": c.no, "contract_type": c.type,
                     "client_id": c.client_id, "client": c.client.name,
                     "grade_id": ln.grade_id, "grade": gname.get(ln.grade_id, "?"),
@@ -260,8 +262,14 @@ def upcoming_row(c: models.Contract, today: date):
 
 
 def movement(mv: models.Movement, gmap: dict, mmap: dict):
+    """Хөдөлгөөний мөр. ХҮЧИНГҮЙ болсон нь ч ЭНД гарна — цуцлалт бол устгал БИШ:
+    түүхэн дэх мөр нь тэмдэгтэйгээ үлдэж, зөвхөн тооцооноос гарна."""
     return {"id": mv.id, "type": mv.type, "date": str(mv.date), "note": mv.note,
             "status": mv.status,
+            "voided": mv.voided_at is not None,
+            "void_reason": mv.void_reason or "",
+            "voided_by": mv.voided_by or "",
+            "voided_at": str(mv.voided_at)[:19] if mv.voided_at else None,
             "lines": [{"id": l.id,
                        "material_id": l.material_id, "material": mmap.get(l.material_id, "?"),
                        "grade_id": l.grade_id, "grade": gmap.get(l.grade_id, "?"),
@@ -317,7 +325,12 @@ def material_lines(c: models.Contract, gmap: dict, mmap: dict, today: date):
                 "id": ln.id, "movement_id": mv.id, "type": mv.type,
                 "date": str(mv.date), "status": mv.status, "note": mv.note,
                 "qty": ln.qty, "delta": sign * ln.qty,
-                "counted": mv.status == "done",
+                # Цуцлагдсан мөр ХАРАГДАНА, гэхдээ `counted: False` — хүлээгдэж
+                # буй ачилттай яг ижил журам, тул тэнцэл хэвээр:
+                # sum(delta for counted) == held.
+                "counted": billing.movement_active(mv),
+                "voided": mv.voided_at is not None,
+                "void_reason": mv.void_reason or "",
                 "rate": billing.line_rate(c, ln, defaults) if mv.type == "ISSUE" else None,
                 "sources": attribution.get(ln.id, []) if mv.type != "ISSUE" else None,
                 "return_grade": gmap.get(ln.return_grade_id) if ln.return_grade_id else None,

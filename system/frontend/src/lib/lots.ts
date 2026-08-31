@@ -34,6 +34,12 @@ export type LedgerLine = {
   delta: number;                // тэмдэгтэй: олголт +, буцаалт/акт −
   rate: number | null;          // зөвхөн олголтын мөр — падангийн тариф
   sources: LotSource[] | null;  // зөвхөн буцаалт/акт — аль падангаас хассан
+  /* Цуцлагдсан хөдөлгөөн — мөр нь ХАРАГДАНА, `counted` нь `false` (хүлээгдэж
+     буй ачилттай яг ижил журам), тул тэнцэл хэвээр. */
+  voided?: boolean;
+  void_reason?: string;
+  voided_by?: string;
+  voided_at?: string | null;
   /* Доорхи нь зөвхөн ХАРУУЛАХ талбарууд — үлдэгдлийн тооцоонд оролцохгүй */
   note?: string;
   return_grade?: string | null;
