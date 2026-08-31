@@ -124,8 +124,12 @@ export default function Barter() {
                   ) : <span className="text-t3 text-[12.5px]">—</span>}
                 </td>
                 <td className="td">
+                  {/* «voided» = бартер ТӨЛБӨР нь хүчингүй болсон тул хамт
+                      цуцлагдсан хөрөнгө. Мөр нь устдаггүй (энд ч устгал
+                      байхгүй) — нийлбэр, зогсонгийн тооцоонд л орохоо болино. */}
                   {a.status === "held" ? <span className="pill-blue">Хадгалагдаж буй</span> :
                    a.status === "sold" ? <span className="pill-grey">Зарагдсан</span> :
+                   a.status === "voided" ? <span className="pill-red">ХҮЧИНГҮЙ</span> :
                    <span className="pill-green">Нөөцөд орсон</span>}
                 </td>
                 <td className="td text-right tabular-nums">

@@ -90,8 +90,15 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
     for p in payments:
         m = {"CASH": "Бэлэн", "BANK": "Данс", "BARTER": "Бартер"}[p["method"]]
         sub = m + (f" · {p['barter_desc']}" if p["barter_desc"] else "")
+        # Цуцлагдсан төлбөр он цагийн хэлхээнээс АЛГА БОЛОХГҮЙ — тэр өдөр
+        # бичилт хийгдсэн нь үнэн. Гэхдээ хэлхээ дээр л ХҮЧИНГҮЙ гэдгээ хэлнэ,
+        # эс бөгөөс жагсаалт дээр зурагдсан мөнгө энд хэвийн байдлаар дахин
+        # тоологдож харагдана.
+        if p["voided"]:
+            sub += " · ХҮЧИНГҮЙ" + (f" ({p['void_reason']})" if p["void_reason"] else "")
         timeline.append({"date": p["date"], "kind": "payment",
-                         "title": f"Төлбөр — {p['amount']:,.0f}₮", "sub": sub})
+                         "title": f"Төлбөр — {p['amount']:,.0f}₮", "sub": sub,
+                         "voided": p["voided"]})
     timeline.sort(key=lambda t: t["date"], reverse=True)
 
     barter = [barter_ser(a) for a in

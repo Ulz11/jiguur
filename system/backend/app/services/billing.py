@@ -9,7 +9,7 @@
 - Алданги = үлдэгдэл × %/хоног × хэтэрсэн хоног (амьд тооцоолол).
 """
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 from .. import models
 
@@ -562,10 +562,26 @@ def payment_unallocated(payment: models.Payment) -> float:
     return payment.amount - sum(a.amount for a in payment.allocations)
 
 
+# ХҮЧИНГҮЙ болсон төлбөрийг ХАСАХ ганц шүүлтүүр. Хаана мөнгө НИЙЛҮҮЛЖ байна,
+# тэнд энэ нь заавал: хуваарилалт, replay, орлого, мөнгөн урсгал. Жагсаалт
+# (харагдац) нь ЭСРЭГЭЭР — цуцлагдсан мөр ХАРАГДСААР үлдэх ёстой.
+LIVE_PAYMENT = models.Payment.voided_at.is_(None)
+
+
+def payment_active(p: models.Payment) -> bool:
+    """ORM объект дээрх ижил шалгуур (query биш, ачаалагдсан цуглуулгад)."""
+    return getattr(p, "voided_at", None) is None
+
+
 def apply_client_credit(db: Session, client_id: int) -> float:
     """Хуваарилагдаагүй үлдсэн (урьдчилж төлсөн) мөнгийг шинэ нэхэмжлэлүүдэд
-    автоматаар хаана — хамгийн хуучин төлбөрөөс, хамгийн хуучин нэхэмжлэл рүү."""
+    автоматаар хаана — хамгийн хуучин төлбөрөөс, хамгийн хуучин нэхэмжлэл рүү.
+
+    Цуцлагдсан төлбөр эндээс ХАСАГДАНА: түүний мөнгө «урьдчилсан төлбөр» болж
+    үлдвэл сулласан алдаа шинэ нэхэмжлэл дээр өөрөө дахин наалдана.
+    """
     payments = (db.query(models.Payment).filter_by(client_id=client_id)
+                .filter(LIVE_PAYMENT)
                 .order_by(models.Payment.date, models.Payment.id).all())
     applied = 0.0
     for p in payments:
@@ -579,9 +595,13 @@ def apply_client_credit(db: Session, client_id: int) -> float:
 
 
 def _stored_status(inv: models.Invoice) -> str:
-    """`inv.status` талбарт хадгалагдах төлөв (invoice_status-тай нэг утгатай)."""
+    """`inv.status` талбарт хадгалагдах төлөв (invoice_status-тай нэг утгатай).
+
+    `paid == 0` салаа нь ЗӨВХӨН хуваарилалт СУЛАРСАН үед (void) хэрэгтэй:
+    `_fill_one` үүнийг мөнгө орсны дараа л дууддаг тул тэнд зан төлөв өөрчлөгдөөгүй.
+    """
     if inv.total - inv.paid > 0.005:
-        return "partial"
+        return "partial" if inv.paid > 0.005 else "open"
     return "penalty" if invoice_penalty_due(inv) > 0.005 else "paid"
 
 
@@ -662,6 +682,68 @@ def allocate_payment(db: Session, payment: models.Payment,
     filled += _fill_invoices(db, payment, remain, principal_only=principal_only)
     db.commit()
     return filled
+
+
+# ---------- хүчингүй болгох (устгалын ОРОНД) ----------
+
+def payment_release_preview(payment: models.Payment) -> list[dict]:
+    """Энэ төлбөрийг цуцлавал АЛЬ нэхэмжлэлээс ХЭД суларах вэ (зөвхөн УНШИНА).
+
+    `void_payment`-ийн үр дүнтэй ЯГ ижил жагсаалт — Отгоо баталгаажуулах цонхон
+    дээр «юу буцаж нээгдэх» гэдгээ хийхээсээ ӨМНӨ уншина. Хоёр газарт хоёр
+    өөр тоо гарах боломжгүй байх ёстой тул нэг л дүрмээр бодогдоно.
+    """
+    rows: dict[tuple[int, str], dict] = {}
+    for a in payment.allocations:
+        key = (a.invoice_id, a.part)
+        row = rows.get(key)
+        if row is None:
+            row = rows[key] = {"invoice_id": a.invoice_id, "no": a.invoice.no,
+                               "part": a.part, "amount": 0.0}
+        row["amount"] += a.amount
+    return sorted(rows.values(), key=lambda r: (r["no"], r["part"]))
+
+
+def void_payment(db: Session, payment: models.Payment, reason: str,
+                 user_name: str = "") -> list[dict]:
+    """Төлбөрийг ХҮЧИНГҮЙ болгоно — мөрийг нь УСТГАХГҮЙ.
+
+    Гурван алхам:
+      1) хуваарилалт бүрийг устгаж нэхэмжлэлийн `paid` / `penalty_paid`-ыг
+         яг тэр дүнгээр буцааж хасна, төлвийг нь дахин бодно;
+      2) төлбөрийг цуцлагдсан гэж тэмдэглэнэ (шалтгаан, хэн, хэзээ);
+      3) харилцагчийн ҮЛДСЭН (цуцлагдаагүй) кредитийг дахин хуваарилна —
+         сулласан нэхэмжлэл рүү урьдчилсан төлбөр өөрөө очно.
+
+    ⚠ БҮРТГЭГДСЭН АЛДАНГИ ҮЛДЭНЭ. Алданги нь төлбөр бүртгэх агшинд хөлдөж
+    (`book_penalties` монотон) бодит болсон — тэр агшин болсон нь үнэн. Цуцлалт
+    нь зөвхөн ТӨЛӨГДСӨН гэсэн тэмдгийг (`penalty_paid`) сулруулна, ХӨЛДӨӨЛТИЙГ
+    (`penalty_booked`, `penalty_booked_until`) буцаахгүй. Шинжилгээ (H1) энэ
+    хялбаршуулалтыг зөвшөөрсөн: буцаах гэвэл монотон загвар нурж, дараагийн
+    хөлдөөлт бүр өмнөхөө дахин тоолж эхэлнэ.
+
+    Буцна: сулларсан мөрүүд (нэхэмжлэл, хэсэг, дүн) — audit ба баримтад.
+    """
+    released = payment_release_preview(payment)
+    touched: dict[int, models.Invoice] = {}
+    for a in list(payment.allocations):
+        inv = a.invoice
+        if a.part == "penalty":
+            inv.penalty_paid = max((inv.penalty_paid or 0.0) - a.amount, 0.0)
+        else:
+            inv.paid = max(inv.paid - a.amount, 0.0)
+        touched[inv.id] = inv
+        db.delete(a)
+    db.flush()
+    for inv in touched.values():
+        inv.status = _stored_status(inv)
+    payment.voided_at = datetime.utcnow()
+    payment.void_reason = reason
+    payment.voided_by = user_name
+    db.commit()
+    db.expire_all()
+    apply_client_credit(db, payment.client_id)
+    return released
 
 
 # ---------- нөөцөд хөдөлгөөн тусгах ----------

@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, fmt, money, sayaFmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit } from "../ui";
 import { PayModal } from "./ContractDetail";
+import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
+import { isVoided, voidRowClass, voidTitle } from "../lib/void";
 import { invoiceLabel } from "../lib/invoice";
 import { useDownload } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
@@ -18,6 +20,7 @@ export default function ClientProfile() {
   const [d, setD] = useState<any>(null);
   const [tab, setTab] = useState("overview");
   const [pay, setPay] = useState(false);
+  const [voidPay, setVoidPay] = useState<any>(null);
   const nav = useNavigate();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -29,6 +32,8 @@ export default function ClientProfile() {
   if (!d) return <Spinner />;
   const upcoming = d.upcoming || [];
   const today = todayIso();
+  /* Төлбөр цуцлах нь мөнгөний засвар — менежер, санхүүчийнх (сервер ч тэгнэ). */
+  const canVoid = u?.role === "manager" || u?.role === "finance";
 
   async function saveClient(patch: Record<string, string>) {
     await api(`/api/clients/${id}`, { method: "PUT", body: JSON.stringify({
@@ -250,17 +255,36 @@ export default function ClientProfile() {
 
         {tab === "payments" && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px]">
-              <thead><tr><th className="th">Огноо</th><th className="th text-right">Дүн</th><th className="th">Хэлбэр</th><th className="th">Гэрээ</th></tr></thead>
+            <table className="w-full min-w-[620px]">
+              <thead><tr><th className="th">Огноо</th><th className="th text-right">Дүн</th>
+                <th className="th">Хэлбэр</th><th className="th">Гэрээ</th>
+                {canVoid && <th className="th">Үйлдэл</th>}</tr></thead>
               <tbody>
                 {d.payments.map((p: any) => (
-                  <tr key={p.id}>
-                    <td className="td">{p.date}</td>
-                    <td className="td text-right tabular-nums font-bold text-ink">{money(p.amount)}</td>
+                  /* Цуцлагдсан мөр УСТАХГҮЙ: зурагдаж, бүдгэрч, «ХҮЧИНГҮЙ»
+                     тэмдэг, шалтгаантайгаа хамт үлдэнэ. Гэрээний хуудсан дээрх
+                     дүрэмтэй ЯГ ижил (lib/void.ts) — нэг бичилт хоёр дэлгэц
+                     дээр өөр харагдвал аль нь үнэн бэ гэж эргэлзэнэ. */
+                  <tr key={p.id} title={voidTitle(p)}>
+                    <td className={`td ${voidRowClass(p)}`}>{p.date}</td>
+                    <td className={`td text-right tabular-nums font-bold text-ink ${voidRowClass(p)}`}>
+                      {money(p.amount)}
+                    </td>
                     <td className="td">
-                      <span className={p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green" : "pill-blue"}>
+                      <span className={`${voidRowClass(p)} ${p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green" : "pill-blue"}`}>
                         {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн" : "Данс"}
                       </span>
+                      {isVoided(p) && (
+                        <>
+                          {" "}<span className="pill-red">ХҮЧИНГҮЙ</span>
+                          {p.void_reason && (
+                            <span className="block text-[12px] text-danger">
+                              {p.void_reason}
+                              {p.voided_by && <span className="text-t3"> · {p.voided_by}</span>}
+                            </span>
+                          )}
+                        </>
+                      )}
                     </td>
                     <td className="td text-t2">
                       {p.contract_id
@@ -269,6 +293,14 @@ export default function ClientProfile() {
                           </Link>
                         : "—"}
                     </td>
+                    {canVoid && (
+                      <td className="td">
+                        {isVoided(p)
+                          ? <span className="text-t3">—</span>
+                          : <VoidButton label={`${money(p.amount)} · ${p.date}`}
+                                        onClick={() => setVoidPay(p)} />}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -291,6 +323,7 @@ export default function ClientProfile() {
                     <td className="td">
                       {a.status === "held" ? <span className="pill-blue">Хадгалагдаж буй</span> :
                        a.status === "sold" ? <span className="pill-grey">Зарагдсан</span> :
+                       a.status === "voided" ? <span className="pill-red">ХҮЧИНГҮЙ</span> :
                        <span className="pill-green">Нөөцөд орсон</span>}
                     </td>
                     <td className="td text-right tabular-nums">
@@ -337,6 +370,8 @@ export default function ClientProfile() {
       </div>
 
       {pay && <PayModal client_id={d.id} d={null} invoices={d.invoices} onClose={() => setPay(false)} onDone={() => { setPay(false); load(); }} />}
+      {voidPay && <VoidPaymentModal payment={voidPay} onClose={() => setVoidPay(null)}
+                                    onDone={() => { setVoidPay(null); load(); }} />}
     </div>
   );
 }

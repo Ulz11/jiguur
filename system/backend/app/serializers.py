@@ -367,11 +367,23 @@ def invoice(inv: models.Invoice, today: date):
 
 
 def payment(p: models.Payment):
+    """Төлбөрийн мөр. ХҮЧИНГҮЙ болсон нь ч ЭНД гарна — цуцлалт бол устгал БИШ.
+
+    `allocations` нь цуцлах цонхны баримтад ХЭРЭГТЭЙ: «энэ мөнгө аль
+    нэхэмжлэлээс суларна» гэдгийг Отгоо дарахаасаа ӨМНӨ уншина.
+    """
     return {"id": p.id, "client_id": p.client_id, "client": p.client.name,
             "contract_id": p.contract_id,
             "contract_no": p.contract.no if p.contract else None,
             "date": str(p.date), "amount": p.amount, "method": p.method,
-            "barter_desc": p.barter_desc, "note": p.note}
+            "barter_desc": p.barter_desc, "note": p.note,
+            "voided": p.voided_at is not None,
+            "void_reason": p.void_reason or "",
+            "voided_by": p.voided_by or "",
+            "voided_at": str(p.voided_at)[:19] if p.voided_at else None,
+            "allocations": [{"invoice_id": a.invoice_id, "invoice_no": a.invoice.no,
+                             "amount": a.amount, "part": a.part}
+                            for a in p.allocations]}
 
 
 def attachment(a: models.Attachment):

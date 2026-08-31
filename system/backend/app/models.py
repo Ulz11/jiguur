@@ -207,6 +207,14 @@ class Payment(Base):
     barter_desc: Mapped[str] = mapped_column(String(200), default="")  # ж: Автомашин 9957УКК
     note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # ---- ХҮЧИНГҮЙ (void) — устгалын ОРОНД ----
+    # Буруу бичсэн төлбөр мөнхөд үлдэх нь Отгоог Excel рүү буцаадаг №1 шалтгаан
+    # (Чадварын харьцуулалт H1). Мөр нь УСТАХГҮЙ: хуваарилалт нь суларч,
+    # тооцоо нь түүнийг хараагүй мэт ажиллана, харин жагсаалтад ХҮЧИНГҮЙ
+    # тэмдэгтэй, шалтгаан, хэн/хэзээ цуцалсантайгаа хамт ХАРАГДСААР үлдэнэ.
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_by: Mapped[str] = mapped_column(String(100), default="")
 
     client: Mapped["Client"] = relationship()
     contract: Mapped["Contract"] = relationship()

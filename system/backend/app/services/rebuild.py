@@ -101,9 +101,13 @@ def rebuild_contract_invoices(db: Session, contract: models.Contract,
                   for i in contract.invoices
                   if not i.no.startswith("OB-")}
 
-    # 4) ТӨЛБӨРҮҮДИЙГ REPLAY — харилцагчийн БҮХ төлбөр (date, id) дарааллаар
+    # 4) ТӨЛБӨРҮҮДИЙГ REPLAY — харилцагчийн БҮХ ХҮЧИНТЭЙ төлбөр (date, id) дарааллаар.
+    # ХҮЧИНГҮЙ болсон нь энд ОРОХГҮЙ: replay нь хуваарилалтыг тэглээд шинээр
+    # хийдэг тул цуцлагдсан төлбөр орвол сулласан алдаа засвар хийх бүрд ӨӨРӨӨ
+    # амилж, «цуцалсан мөнгө буцаад ирлээ» гэсэн итгэл эвдэх алдаа болно.
     warnings: list[str] = []
     payments = (db.query(models.Payment).filter_by(client_id=contract.client_id)
+                .filter(billing.LIVE_PAYMENT)
                 .order_by(models.Payment.date, models.Payment.id).all())
     for p in payments:
         # Алданги тухайн төлбөрийн ӨДРӨӨР дахин хөлдөнө (өөр гэрээнийхэд

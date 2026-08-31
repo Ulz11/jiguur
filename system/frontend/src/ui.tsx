@@ -194,13 +194,20 @@ export function SubmitButton({ children, onSubmit, disabled, className = "btn-pr
 /* ---------- Мөнгө хөдөлгөх үйлдлийн баталгаажуулалт ----------
    RebuildModal-ийн "үр дагаврыг эхлээд харуул" загварыг дахин ашиглах хэлбэр:
    болох гэж буй зүйлээ navy Receipt дээр харуулаад л асууна. */
-export function ConfirmModal({ title, intro, rows, total, note, confirmLabel, cancelLabel = "Болих",
+export function ConfirmModal({ title, intro, rows, total, note, children, confirmDisabled,
+                               confirmLabel, cancelLabel = "Болих",
                                danger, onConfirm, onClose }: {
   title: string;
   intro?: ReactNode;
   rows?: ReceiptRow[];
   total?: ReceiptRow;
   note?: ReactNode;
+  /** Баримтын ДООР орох нэмэлт талбар — цуцлалтын «шалтгаан» мэт ЗААВАЛ
+   *  бөглөх оролт. Баталгаажуулах цонх нь асуултаа Receipt-ээр хэлсэн хэвээр
+   *  үлдэж, зөвхөн нэг мөр өгөгдөл нэмэгдэнэ. */
+  children?: ReactNode;
+  /** Оролт дутуу байхад гүйцэтгэх товчийг түгжинэ (шалтгаангүй цуцлалт алга). */
+  confirmDisabled?: boolean;
   confirmLabel: string;
   cancelLabel?: string;
   /** ДҮРЭМ: «буцаагдахгүй» ⇒ `danger`.
@@ -236,13 +243,15 @@ export function ConfirmModal({ title, intro, rows, total, note, confirmLabel, ca
     <Modal title={title} onClose={onClose}>
       {intro && <p className="text-[13.5px] text-t2 mb-4">{intro}</p>}
       {(rows?.length || total) && <Receipt rows={rows || []} total={total} />}
+      {children && <div className="mt-4">{children}</div>}
       {note && <p className="text-[12.5px] text-t2 mt-3">{note}</p>}
       <div className="flex justify-end gap-2.5 mt-5">
         {/* Устгах/хаах төрлийн үйлдэлд Enter дарахад ЦУЦЛАХ нь сонгогдоно —
             санамсаргүй товшилт мөнгө хөдөлгөх ёсгүй. */}
         <button className="btn-secondary" disabled={busy} autoFocus={danger}
                 onClick={onClose}>{cancelLabel}</button>
-        <button className={`btn-primary ${danger ? "!bg-danger" : ""}`} disabled={busy} autoFocus={!danger}
+        <button className={`btn-primary ${danger ? "!bg-danger" : ""}`}
+                disabled={busy || confirmDisabled} autoFocus={!danger}
                 onClick={async () => {
                   setBusy(true);
                   // Амжилттай бол дуудагч тал биднийг хаана; амжилтгүй бол

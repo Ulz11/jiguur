@@ -1,6 +1,7 @@
-"""Төлбөр — бэлэн / данс / бартер, автомат хуваарилалт."""
+"""Төлбөр — бэлэн / данс / бартер, автомат хуваарилалт, хүчингүй болгох."""
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..db import get_db
 from .. import models, schemas, serializers, auth
@@ -8,6 +9,9 @@ from ..services import billing
 from ..services import audit
 
 router = APIRouter(prefix="/api")
+
+METHOD_MN = {"CASH": "бэлэн", "BANK": "данс", "BARTER": "бартер"}
+BARTER_LOCKED = "Бартерын хөрөнгө зарагдсан/нөөцөд орсон тул цуцлах боломжгүй"
 
 
 @router.get("/payments")
@@ -84,9 +88,61 @@ def add_payment(body: schemas.PaymentIn, db: Session = Depends(get_db),
         db.commit()
     allocated = billing.allocate_payment(db, p, allocs)
     audit.log(db, user, "create", "payment", p.id,
-              f"{client.name} · {p.amount:,.0f}₮ · "
-              f"{ {'CASH':'бэлэн','BANK':'данс','BARTER':'бартер'}[p.method] }"
+              f"{client.name} · {p.amount:,.0f}₮ · {METHOD_MN[p.method]}"
               + (f" ({p.barter_desc})" if p.barter_desc else "")
               + (" · гараар хуваарилав" if allocs else ""))
     return {**serializers.payment(p), "allocated": allocated,
             "unallocated": round(p.amount - allocated)}
+
+
+# ---------------- Хүчингүй болгох (void) ----------------
+
+class VoidIn(BaseModel):
+    reason: str = ""
+
+
+@router.post("/payments/{pid}/void")
+def void_payment(pid: int, body: VoidIn, db: Session = Depends(get_db),
+                 user=Depends(auth.require_roles("manager", "finance"))):
+    """Буруу бүртгэсэн төлбөрийг ХҮЧИНГҮЙ болгоно — УСТГАХГҮЙ.
+
+    Отгоо эгч эхний долоо хоногтоо буруу дүн бичих нь баталгаатай; өнөөдрийн
+    систем түүнийг МӨНХӨД үлдээдэг нь Excel рүү буцаах №1 шалтгаан
+    (Чадварын харьцуулалт §3 H1). Гэвч засвар нь бүрэн бүтэн байдлыг
+    сүйтгэж болохгүй: мөр нь хоёулаа үлдэж, ХҮЧИНГҮЙ тэмдэгтэй харагдана.
+
+    Бартер: автоматаар үүссэн хөрөнгө нь ЗАРАГДААГҮЙ бол хамт хүчингүй болно
+    (мөр нь Бартерын жагсаалтад «ХҮЧИНГҮЙ» төлөвтэй үлдэнэ — тэнд ч устгал
+    байхгүй). Зарагдсан/нөөцөд орсон бол хожмын баримт аль хэдийн үүссэн тул
+    цуцлалт ТАТГАЛЗАНА — эхлээд тэр гинжийг нь тайлах ёстой.
+    """
+    p = db.get(models.Payment, pid)
+    if not p:
+        raise HTTPException(404, "Төлбөр олдсонгүй")
+    if p.voided_at is not None:
+        raise HTTPException(409, "Энэ төлбөр аль хэдийн хүчингүй болсон байна")
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "Цуцлах шалтгаан заавал бичигдэнэ")
+
+    asset = None
+    if p.method == "BARTER":
+        asset = db.query(models.BarterAsset).filter_by(payment_id=p.id).first()
+        if asset and asset.status not in ("held", "voided"):
+            raise HTTPException(409, BARTER_LOCKED)
+
+    released = billing.void_payment(db, p, reason, getattr(user, "name", "") or "")
+
+    if asset is not None and asset.status == "held":
+        asset.status = "voided"
+        asset.note = (asset.note + " · " if asset.note else "") + f"Хүчингүй: {reason}"
+        db.commit()
+
+    freed = ", ".join(f"{r['no']} {r['amount']:,.0f}₮"
+                      + (" (алданги)" if r["part"] == "penalty" else "")
+                      for r in released) or "хуваарилалтгүй"
+    audit.log(db, user, "void", "payment", p.id,
+              f"{p.client.name} · {p.amount:,.0f}₮ · {METHOD_MN.get(p.method, p.method)} — "
+              f"ХҮЧИНГҮЙ: {reason} · сулласан: {freed}")
+    db.refresh(p)
+    return {**serializers.payment(p), "released": released}

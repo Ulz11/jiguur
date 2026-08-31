@@ -103,7 +103,8 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
     # БҮХ ТӨРЛИЙГ хамарна, дэлгэц дээр тэрийгээ ил хэлнэ (Dashboard.tsx).
     keys = month_keys(today)
     series = {"rent": [0.0] * 6, "sale": [0.0] * 6, "barter": [0.0] * 6}
-    for p in db.query(models.Payment).all():
+    # Хүчингүй болсон төлбөр орлого БИШ — графикт ч, нийлбэрт ч орохгүй.
+    for p in db.query(models.Payment).filter(billing.LIVE_PAYMENT).all():
         k = (p.date.year, p.date.month)
         if k not in keys:
             continue

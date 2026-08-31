@@ -14,6 +14,8 @@ import { rowClickProps } from "../lib/rowClick";
 import { materialSections, MaterialSection } from "../lib/lots";
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { todayIso } from "../lib/schedule";
+import { isVoided, voidRowClass, voidTitle } from "../lib/void";
+import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
 // хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
@@ -35,6 +37,8 @@ export default function ContractDetail() {
      ачилт байвал өөрөө нээлттэй, эс бөгөөс хумигдсан. */
   const [histOpen, setHistOpen] = useState<boolean | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  /* Цуцлах гэж буй төлбөр — баталгаажуулах цонх нь мөрөө өөртөө авч явна. */
+  const [voidPay, setVoidPay] = useState<any>(null);
   const toast = useToast();
   const pdf = usePdf();
   const u = user();
@@ -95,6 +99,9 @@ export default function ContractDetail() {
 
   const cyc = d.cycle;
   const canManage = u?.role === "manager" || u?.role === "factory";
+  /* Цуцлалт бол МӨНГӨНИЙ засвар — менежер, санхүүчийнх (сервер ч тэгж
+     хардаг). Үйлдвэрийн даргад төлбөрийн хэсэг огт харагддаггүй. */
+  const canVoid = u?.role === "manager" || u?.role === "finance";
   const sections = materialSections(d.items || [], d.material_lines || []);
   const pendingMv = d.movements.filter((m: any) => m.status === "pending").length;
   const showHist = histOpen ?? pendingMv > 0;
@@ -532,14 +539,29 @@ export default function ContractDetail() {
             <h2 className="font-bold text-ink text-[15.5px] mb-3">Төлбөрүүд</h2>
             {d.payments.length === 0 && <p className="text-t3 text-sm">Төлбөр бүртгэгдээгүй.</p>}
             {d.payments.map((p: any) => (
-              <div key={p.id} className="flex items-center gap-3 py-2.5 border-b border-sunken last:border-0">
-                <div>
+              <div key={p.id} className="flex items-center gap-3 py-2.5 border-b border-sunken last:border-0 flex-wrap">
+                {/* Цуцлагдсан бичилт УСТДАГГҮЙ — зурагдаж, бүдгэрч, дэргэдээ
+                    «ХҮЧИНГҮЙ» гэсэн ҮГТЭЙГЭЭ үлдэнэ (өнгө дангаараа утга
+                    зөөхгүй), шалтгаан нь tooltip дээр. */}
+                <div className={voidRowClass(p)} title={voidTitle(p)}>
                   <b className="text-[13.5px] tabular-nums text-ink">{money(p.amount)}</b>
                   <span className="block text-[12px] text-t3">{p.date}</span>
                 </div>
-                <span className={`ml-auto ${p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green" : "pill-blue"}`}>
+                {isVoided(p) && <span className="pill-red" title={voidTitle(p)}>ХҮЧИНГҮЙ</span>}
+                <span className={`ml-auto ${voidRowClass(p)} ${p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green" : "pill-blue"}`}>
                   {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн" : "Данс"}
                 </span>
+                {canVoid && !isVoided(p) && (
+                  <VoidButton label={`${money(p.amount)} · ${p.date}`}
+                              onClick={() => setVoidPay(p)} />
+                )}
+                {isVoided(p) && p.void_reason && (
+                  <span className="basis-full text-[12px] text-danger">
+                    Шалтгаан: {p.void_reason}
+                    {p.voided_by && <span className="text-t3"> · {p.voided_by}</span>}
+                    {p.voided_at && <span className="text-t3"> · {p.voided_at}</span>}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -631,6 +653,8 @@ export default function ContractDetail() {
       })()}
       {pending && <RebuildModal p={pending} onClose={() => setPending(null)}
                                 onDone={() => { setPending(null); load(); }} />}
+      {voidPay && <VoidPaymentModal payment={voidPay} onClose={() => setVoidPay(null)}
+                                    onDone={() => { setVoidPay(null); load(); }} />}
     </div>
   );
 }

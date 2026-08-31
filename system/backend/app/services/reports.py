@@ -35,10 +35,14 @@ def pnl(db: Session, d_from: date, d_to: date):
 
     # Алдангийн орлого — КАССЫН зарчмаар (бодит төлөгдсөн, төлбөрийн огноогоор).
     # Түрээс/худалдаа аккруэл боловч алданги бол цуглуулсан цагтаа л орлого.
+    # Хүчингүй болсон төлбөрийн хуваарилалт устдаг тул энд аяндаа ороогүй байх
+    # ёстой — гэхдээ шүүлтүүрийг ИЛЭРХИЙ бичнэ: орлогын нийлбэр хэзээ ч
+    # цуцлагдсан мөнгөнөөс хамаарч болохгүй.
     penalty_income = sum(
         a.amount for a in db.query(models.PaymentAllocation)
         .join(models.Payment, models.PaymentAllocation.payment_id == models.Payment.id)
         .filter(models.PaymentAllocation.part == "penalty",
+                models.Payment.voided_at.is_(None),
                 models.Payment.date >= d_from, models.Payment.date <= d_to).all())
 
     logs = db.query(models.MachineLog).filter(
@@ -109,7 +113,9 @@ def cashflow_series(db: Session, today: date, n: int = 6):
     f_cash, f_bank, f_barter = [], [], []
     for (y, m) in keys:
         d1, d2 = month_bounds(y, m)
+        # Цуцлагдсан төлбөр мөнгөн урсгалд ОРООГҮЙ — тэр мөнгө хэзээ ч ороогүй.
         pays = db.query(models.Payment).filter(
+            models.Payment.voided_at.is_(None),
             models.Payment.date >= d1, models.Payment.date <= d2).all()
         logs = db.query(models.MachineLog).filter(
             models.MachineLog.date >= d1, models.MachineLog.date <= d2).all()
