@@ -96,13 +96,19 @@ def export_receivables(db: Session = Depends(get_db), user=Depends(guard)):
     wb = Workbook()
     ws = wb.active
     ws.title = "Авлага"
+    # Авлагын НИЙТ дүн нь дэлгэц бүрийнхтэй ЯГ ижил (H9b); хажууд нь
+    # задаргаа — цаас дээр тулгахад «энэ хоёр тоо яагаад зөрөв» гэж
+    # асуух шаардлагагүй байхын тулд.
     ws.append(["Харилцагч", "Регистр", "Утас", "Идэвхтэй гэрээ",
-               "Авлагын үлдэгдэл", "Нэхэгдсэн алданги",
+               "Авлагын үлдэгдэл", "үүнээс нэхэмжилсэн",
+               "үүнээс нэхэмжлэгдээгүй", "Нэхэгдсэн алданги",
                "Алдангийн тооцоолол (нэхэгдээгүй)", "Барьцаа", "Хэтэрсэн эсэх"])
     for c in db.query(models.Client).order_by(models.Client.name).all():
         row = serializers.client_row(c, today)
         ws.append([row["name"], row["reg"], row["phone"], row["active_contracts"],
-                   row["receivable"], row["penalty_booked"], row["penalty_unbooked"],
+                   row["receivable"], row["receivable_invoiced"],
+                   row["receivable_uninvoiced"],
+                   row["penalty_booked"], row["penalty_unbooked"],
                    row["deposit"], "Тийм" if row["overdue"] else ""])
     ws.column_dimensions["A"].width = 32
     return Response(_xlsx(wb), media_type=XLSX_MIME,

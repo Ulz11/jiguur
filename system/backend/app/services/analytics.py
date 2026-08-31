@@ -244,21 +244,27 @@ def collections(db: Session, today: date | None = None):
 
     rows = []
     for cl in db.query(models.Client).all():
-        overdue = penalty = booked = balance = 0.0
+        overdue = 0.0
         oldest_days = 0
         for ct in cl.contracts:
             for inv in ct.invoices:
                 out = billing.invoice_outstanding(inv)
-                if out <= 0:
+                if out <= 0 or inv.due_date >= today:
                     continue
-                balance += out
-                if inv.due_date < today:
-                    overdue += out
-                    penalty += billing.invoice_penalty(inv, today)
-                    booked += billing.invoice_penalty_due(inv)
-                    oldest_days = max(oldest_days, (today - inv.due_date).days)
+                # «Хэтэрсэн» нь ХЭВЭЭР: нэхэгдсэн, хугацаа нь өнгөрсөн хэсэг.
+                # Энэ бол залгах дараалал — авлагын НИЙТ дүн биш.
+                overdue += out
+                oldest_days = max(oldest_days, (today - inv.due_date).days)
         if overdue <= 0.5:
             continue
+        # Үлдэгдэл нь АВЛАГЫН ГАНЦ ТОДОРХОЙЛОЛТООС (H9b): нэхэмжилсэн +
+        # одоогийн циклийн хуримтлал. Урьд нь энэ дэлгэц зөвхөн нэхэмжилсэнийг
+        # харуулж, дашбоард/харилцагчийн мөртэй зөрдөг байв — нэг харилцагч
+        # хоёр нийт дүнтэй. `overdue ≤ invoiced ≤ total` эрэмбэ хэвээр тул
+        # эрэмбэлэлт, шүүлтүүр, «хамгийн хуучин» бүгд хөндөгдөөгүй.
+        rc = billing.client_receivable(cl, today)
+        rv = billing.receivable_display(rc["total"], rc["invoiced"])
+        penalty, booked = rc["penalty"], rc["penalty_booked"]
         notes = sorted(cl.notes if hasattr(cl, "notes") else [], key=lambda n: n.date) \
             if False else sorted(db.query(models.CollectionNote).filter_by(client_id=cl.id).all(),
                                  key=lambda n: (n.date, n.id))
@@ -266,7 +272,12 @@ def collections(db: Session, today: date | None = None):
         promise = next((n for n in reversed(notes) if n.status == "open" and n.promise_date), None)
         rows.append({
             "client_id": cl.id, "client": cl.name, "person": cl.person, "phone": cl.phone,
-            "overdue": round(overdue), "penalty": round(penalty), "balance": round(balance),
+            "overdue": round(overdue), "penalty": round(penalty),
+            # НЭГ авлага (H9b) — `/api/clients`, `/api/clients/{id}`,
+            # дашбоардын хуваарийн мөртэй ЯГ ижил тоо, задаргаатайгаа.
+            "balance": rv["total"],
+            "balance_invoiced": rv["invoiced"],
+            "balance_uninvoiced": rv["uninvoiced"],
             # Утсаар ярихад «нэхсэн» ба «нэхэж болох» хоёр өөр зэвсэг (H2 / R25)
             "penalty_booked": round(booked),
             "penalty_unbooked": round(max(penalty - booked, 0.0)),

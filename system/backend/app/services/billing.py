@@ -1035,6 +1035,72 @@ def contract_balance(contract: models.Contract, today: date | None = None):
             "accruing": cur["accrued"] if cur else 0.0}
 
 
+# ---------- АВЛАГА: НЭГ ТОДОРХОЙЛОЛТ, БҮХ ДЭЛГЭЦЭД (H9b) ----------
+#
+# Урьд нь нэг харилцагч ХОЁР өөр нийт дүнтэй байв: дашбоард/харилцагчийн мөр
+# нь «нэхэмжилсэн + одоогийн циклийн хуримтлал», Авлага цуглуулах нь зөвхөн
+# «нэхэмжилсэн». Отгоо эгч хоёр дэлгэцийг зэрэгцүүлэн хараад «хуудсууд минь
+# шиг л зөрж байна» гэнэ — шилжилтийн шалтгаан нь бүтнээрээ унана.
+#
+# ГАНЦ тодорхойлолт нь ТҮҮНИЙ удирддаг бүтэн үнэн:
+#     авлага = нэхэмжилсэн үлдэгдэл + одоогийн циклийн хуримтлал
+# БҮРЭЛДЭХҮҮН нь харагдаж болно («үүнээс нэхэмжлэгдээгүй: X₮»), НИЙТ дүн нь
+# хаана ч ГАНЦ. Алданги энэ тоонд ОРОХГҮЙ — тэр бол тусдаа хоёр нүүр (H2).
+
+def contract_receivable(contract: models.Contract, today: date | None = None) -> dict:
+    """Нэг гэрээний авлага, задаргаатайгаа. Алдангийн хоёр нүүр дагалдана —
+    дуудагч `contract_balance`-ыг ДАХИН дуудах шаардлагагүй (хуримтлалыг
+    хоёр удаа бодох нь жагсаалт бүр дээр давхар зардал)."""
+    b = contract_balance(contract, today)
+    return {"total": b["outstanding"] + b["accruing"],
+            "invoiced": b["outstanding"], "uninvoiced": b["accruing"],
+            "penalty": b["penalty"], "penalty_booked": b["penalty_booked"],
+            "penalty_unbooked": b["penalty_unbooked"]}
+
+
+def client_receivable(client: models.Client, today: date | None = None) -> dict:
+    """Харилцагчийн авлага — ДЭЛГЭЦ БҮРИЙН ТОО ЭНДЭЭС ГАРНА.
+
+    `serializers.client_row` (жагсаалт, профайл, дашбоардын хуваарийн мөр) ба
+    `analytics.collections` (авлагын жагсаалт) хоёул ЭНЭ функцийг дууддаг.
+    Шинэ дэлгэц нэмэгдвэл мөн эндээс — өөр газар дахин нийлүүлж БОЛОХГҮЙ.
+    """
+    today = today or date.today()
+    invoiced = uninvoiced = 0.0
+    penalty = booked = deposit = 0.0
+    active = 0
+    # `contract_balance` нь циклийн хуримтлалыг дахин боддог тул гэрээ бүрд
+    # НЭГ л удаа дуудна (жагсаалт нь бүх харилцагчийг алхдаг).
+    for ct in client.contracts:
+        b = contract_balance(ct, today)
+        invoiced += b["outstanding"]
+        uninvoiced += b["accruing"]
+        penalty += b["penalty"]
+        booked += b["penalty_booked"]
+        deposit += ct.deposit
+        if ct.status == "active":
+            active += 1
+    total = invoiced + uninvoiced
+    return {"total": total, "invoiced": invoiced, "uninvoiced": uninvoiced,
+            "penalty": penalty, "penalty_booked": booked,
+            "penalty_unbooked": max(penalty - booked, 0.0),
+            "deposit": deposit, "active_contracts": active,
+            "overdue": any(invoice_status(i, today) == "overdue"
+                           for ct in client.contracts for i in ct.invoices)}
+
+
+def receivable_display(total: float, invoiced: float) -> dict:
+    """Дугуйлалтын ГАНЦ дүрэм: НИЙТ дүн эрх мэдэлтэй, задаргаа нь түүн рүү нийлнэ.
+
+    Хэсэг бүрийг тусад нь дугуйлбал «12,000,001 = 11,000,000 + 1,000,000»
+    гэсэн нэг төгрөгийн зөрүү гарч ирдэг — Отгоогийн нүдэнд энэ нь тоо
+    буруу гэсэн үг, тайлбар биш.
+    """
+    t = round(total)
+    inv = round(invoiced)
+    return {"total": t, "invoiced": inv, "uninvoiced": t - inv}
+
+
 # ---------- төлбөрийн хуваарилалт ----------
 
 def payment_unallocated(payment: models.Payment) -> float:

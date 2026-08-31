@@ -37,7 +37,12 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
         return scope == "all" or (c is not None and c.type == scope)
 
     # ---- KPI ----
-    receivable = penalty = penalty_booked = overdue_amt = 0.0
+    # Авлага нь ГАНЦ тодорхойлолтоор (H9b): нэхэмжилсэн + одоогийн циклийн
+    # хуримтлал. KPI нь гэрээ тус бүрээр нийлдэг (топбарын Түрээс/Худалдаа
+    # шүүлтүүр гэрээний төрлөөр ажилладаг) — томьёо нь `billing`-ийн ганц эх
+    # сурвалж, харилцагчийн мөр, авлагын жагсаалттай ижил.
+    receivable = receivable_invoiced = 0.0
+    penalty = penalty_booked = overdue_amt = 0.0
     overdue_cnt = 0
     active_cnt = ending_cnt = 0
     # «N нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг хэлж
@@ -47,10 +52,11 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
     for c in contracts:
         if not in_scope(c):
             continue
-        b = billing.contract_balance(c, today)
-        receivable += b["outstanding"] + b["accruing"]
-        penalty += b["penalty"]
-        penalty_booked += b["penalty_booked"]
+        r = billing.contract_receivable(c, today)
+        receivable += r["total"]
+        receivable_invoiced += r["invoiced"]
+        penalty += r["penalty"]
+        penalty_booked += r["penalty_booked"]
         if c.status == "active" and not c.no.startswith("OB-"):
             active_cnt += 1
             if c.end_date and 0 <= (c.end_date - today).days <= 7:
@@ -81,13 +87,17 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
     # Хүлээгдэж буй төлбөр — хамгийн ойрын огноо тэргүүнд. Мөр бүрд харилцагчийн
     # авлагын үлдэгдэл дагалдана: «энэ сар 4 сая ирнэ» гэдэг нь «өмнөх 12 саяа
     # төлөөгүй байгаа» гэдгийг мэдэхгүйгээр утгагүй.
-    receivable_of: dict[int, float] = {}
+    receivable_of: dict[int, dict] = {}
     for row in schedule:
         cid = row["client_id"]
         if cid not in receivable_of:
             cl = db.get(models.Client, cid)
-            receivable_of[cid] = serializers.client_row(cl, today)["receivable"]
-        row["receivable"] = receivable_of[cid]
+            receivable_of[cid] = serializers.client_row(cl, today)
+        # Мөрийн авлага нь харилцагчийн мөртэй ЯГ ижил тоо (H9b) — задаргаа нь
+        # дагалдана, дэлгэц «үүнээс нэхэмжлэгдээгүй» гэсэн дэд мөр гаргана.
+        row["receivable"] = receivable_of[cid]["receivable"]
+        row["receivable_invoiced"] = receivable_of[cid]["receivable_invoiced"]
+        row["receivable_uninvoiced"] = receivable_of[cid]["receivable_uninvoiced"]
     schedule.sort(key=lambda r: (r["expected_date"], r["client"]))
 
     stocks = db.query(models.Stock).all()
@@ -192,7 +202,12 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
             if (inv.cycle_start.year, inv.cycle_start.month) == (today.year, today.month):
                 month_sale += inv.total
 
-    return {"kpi": {"receivable": round(receivable), "penalty": round(penalty),
+    rv = billing.receivable_display(receivable, receivable_invoiced)
+    return {"kpi": {"receivable": rv["total"],
+                    # НИЙТ дүн ганц; «үүнээс нэхэмжлэгдээгүй» нь дэд мөр (H9b)
+                    "receivable_invoiced": rv["invoiced"],
+                    "receivable_uninvoiced": rv["uninvoiced"],
+                    "penalty": round(penalty),
                     # Самбарын алдангийн тэмдэг НЭХЭГДСЭНийг хэлнэ — нэхэгдээгүй
                     # тооцоолол нь тусдаа, «≈ … нэхэгдээгүй» гэж (H2 / R25).
                     "penalty_booked": round(penalty_booked),

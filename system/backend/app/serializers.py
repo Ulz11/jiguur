@@ -198,26 +198,26 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
 
 
 def client_row(c: models.Client, today: date):
-    outstanding = penalty = booked = deposit = 0.0
-    active = 0
-    for ct in c.contracts:
-        b = billing.contract_balance(ct, today)
-        outstanding += b["outstanding"] + b["accruing"]
-        penalty += b["penalty"]
-        booked += b["penalty_booked"]
-        deposit += ct.deposit
-        if ct.status == "active":
-            active += 1
-    overdue = any(billing.invoice_status(i, today) == "overdue"
-                  for ct in c.contracts for i in ct.invoices)
+    """Харилцагчийн мөр — жагсаалт, профайл, дашбоардын хуваарь ЭНДЭЭС уншина.
+
+    Авлагын тоо нь `billing.client_receivable`-ээс шууд гарна: НЭГ
+    тодорхойлолт, бүх дэлгэцэд (H9b). Задаргаа нь дагалдана — дэлгэц
+    «үүнээс нэхэмжлэгдээгүй: X₮» гэсэн дэд мөр гаргаж чадна.
+    """
+    r = billing.client_receivable(c, today)
+    rv = billing.receivable_display(r["total"], r["invoiced"])
     return {"id": c.id, "name": c.name, "reg": c.reg, "person": c.person,
-            "phone": c.phone, "note": c.note, "active_contracts": active,
-            "receivable": round(outstanding), "penalty": round(penalty),
+            "phone": c.phone, "note": c.note, "active_contracts": r["active_contracts"],
+            "receivable": rv["total"],
+            # НИЙТ дүн нь ганц; БҮРЭЛДЭХҮҮН нь харагдаж болно.
+            "receivable_invoiced": rv["invoiced"],
+            "receivable_uninvoiced": rv["uninvoiced"],
+            "penalty": round(r["penalty"]),
             # НЭХЭГДСЭН нь мөнгө, НЭХЭГДЭЭГҮЙ нь хөшүүрэг — хоёрыг нэг тоо
             # болгож нийлүүлбэл «машин өр зохиов» гэж уншигдана (H2).
-            "penalty_booked": round(booked),
-            "penalty_unbooked": round(max(penalty - booked, 0.0)),
-            "deposit": deposit, "overdue": overdue}
+            "penalty_booked": round(r["penalty_booked"]),
+            "penalty_unbooked": round(r["penalty_unbooked"]),
+            "deposit": r["deposit"], "overdue": r["overdue"]}
 
 
 def contract_row(c: models.Contract, today: date):
