@@ -242,6 +242,8 @@ def contract_row(c: models.Contract, today: date):
             "deposit_returned": c.deposit_returned,
             "deposit_settled_date": str(c.deposit_settled_date) if c.deposit_settled_date else None,
             "state": state, "status": c.status,
+            # ХААСАН ӨДӨР (H7) — эцсийн тасархай циклийн төгсгөлийг тодорхойлно
+            "closed_date": str(c.closed_date) if getattr(c, "closed_date", None) else None,
             "balance": round(b["outstanding"] + b["accruing"]),
             "penalty": round(b["penalty"]),
             "penalty_booked": round(b["penalty_booked"]),

@@ -654,7 +654,29 @@ def cycle_index(contract: models.Contract, cycle_start: date) -> int:
     return (cycle_start - contract.start_date).days // contract.cycle_days + 1
 
 
-def derivable_invoice_specs(contract: models.Contract, today: date | None = None) -> list[dict]:
+def last_movement_day(contract: models.Contract) -> date | None:
+    """Тооцоонд орох СҮҮЛЧИЙН хөдөлгөөний огноо — хаалтын ДООД хил (H7).
+
+    Хаах огноо түүнээс ӨМНӨ байвал бүртгэгдсэн буцаалт хаалтын дараа болсон
+    болж хувирна: гарын үсэгтэй цаас өөрөө өөртэйгээ зөрчилдөнө.
+    """
+    days = [mv.date for mv in contract.movements if movement_active(mv)]
+    return max(days) if days else None
+
+
+def close_day(contract: models.Contract) -> date | None:
+    """Хаагдсан гэрээний ХААСАН ӨДӨР — эцсийн тасархай цонхны төгсгөл (H7).
+
+    NULL (хуучин, огноогүй хаалт) бол зан төлөв ЯГ ХЭВЭЭР: stub төрөхгүй,
+    цонхнууд өнөөдрийг хүртэл ердийнхөөрөө гарна.
+    """
+    if contract.status != "closed":
+        return None
+    return getattr(contract, "closed_date", None)
+
+
+def derivable_invoice_specs(contract: models.Contract, today: date | None = None,
+                            *, close_date: date | None = None) -> list[dict]:
     """Гэрээний өгөгдлөөс ГАРГАЖ БОЛОХ бүх нэхэмжлэлийн ЦЭВЭР жагсаалт.
 
     DB-д юу ч бичихгүй — зөвхөн тооцоолно. `ensure_invoices` (нэмэх) ба
@@ -663,8 +685,18 @@ def derivable_invoice_specs(contract: models.Contract, today: date | None = None
 
     Мөр бүр: no, cycle_start, cycle_end, due_date, rent_amount, charge_amount,
     vat_amount, total, detail_json — models.Invoice-ийн талбарууд.
+
+    ХААЛТ (H7). Хаагдсан гэрээнд эцсийн ТАСАРХАЙ цикл ч нэхэмжлэл болно:
+    цонх нь [циклийн эхлэл, closed_date + 1) — Отгоо эгчийн ёслолын эхний
+    алхам («эцсийн хагас сарыг нэхээд хаана»). Хаалтын огнооноос ХОЙШ юу ч
+    нэхэгдэхгүй: тоолуур ҮНЭХЭЭР зогсоно. Дугаар нь ЦОНХНЫ эхлэлээс гарах тул
+    (`cycle_index`) дугаарлалт ХЭВЭЭР — stub нь ээлжийн дугаараа авна.
+
+    `close_date=` нь ХААГААГҮЙ гэрээн дээр «хаавал юу болох вэ» гэдгийг
+    урьдчилан харуулна (хаалтын wizard) — гэрээнд юу ч хүрэхгүй.
     """
     today = today or date.today()
+    cd = close_date if close_date is not None else close_day(contract)
     specs: list[dict] = []
     if contract.type == "sale":
         # мөр бүр өөрийн нэгж үнэтэй; байхгүй бол гэрээний мөрийнхөөр
@@ -686,9 +718,15 @@ def derivable_invoice_specs(contract: models.Contract, today: date | None = None
                           "total": amount + vat, "detail_json": json.dumps(detail)})
         return specs
 
-    for cs, ce, complete in cycles_of(contract, today):
+    # Хаагдсан бол давхрага нь ХААСАН ӨДРӨӨР зогсоно — хойшхи цонх огт гарахгүй
+    horizon = today if cd is None else min(today, cd)
+    for cs, ce, complete in cycles_of(contract, horizon):
         if not complete:
-            continue
+            if cd is None:
+                continue                       # хаагдаагүй — дуусаагүй цикл нэхэгдэхгүй
+            ce = cd + timedelta(days=1)        # ЭЦСИЙН ТАСАРХАЙ ЦОНХ
+            if ce <= cs:
+                continue
         rent, lines = accrue_rent(contract, cs, ce)
         charge, charge_items = charges_in(contract, cs, ce)
         if rent == 0 and charge == 0:

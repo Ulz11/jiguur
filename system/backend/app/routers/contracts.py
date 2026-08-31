@@ -1081,18 +1081,142 @@ def extend(cid: int, body: schemas.ExtendIn, db: Session = Depends(get_db),
     return {"ok": True, "end_date": str(c.end_date)}
 
 
+# ---------- ХААЛТ (H7) ----------
+#
+# Отгоо эгчийн ёслол: гадаа үлдсэнийг шийд (буцаалт эсвэл ДУТАГДУУЛСАН
+# НБҮнээр) → эцсийн ТАСАРХАЙ циклээ нэх → барьцаагаа суутгаж/буцааж цэвэрлэ →
+# «хаав» гэж бич. Урьд нь систем нь зөвхөн СҮҮЛЧИЙН товчийг мэддэг байсан:
+# эцсийн хагас цикл нэхэмжлэл болдоггүй, ёслолыг чиглүүлэх юу ч байхгүй.
+
+class CloseIn(_BM):
+    """`close_date` заагаагүй бол ӨНӨӨДӨР — хуучин нэг товчийн зам хэвээр."""
+    close_date: _date_t | None = None
+
+
+CLOSE_GOODS_ERR = "Түрээсэнд бараа байсаар байна — эхлээд буцаалт бүртгэнэ үү"
+
+
+def _outstanding_rows(db: Session, c: models.Contract, today: date,
+                      gmap: dict, mmap: dict) -> list[dict]:
+    """Гадаа үлдсэн бараа — материал/зэрэглэл бүрээр, НБҮнэтэйгээ.
+
+    Хаалтын wizard-ийн (a) алхам ЭНЭ мөрүүд дээр зогсоно: мөр бүрд «Буцаалт
+    бүртгэх» ба «Дутагдуулсан» гэсэн хоёр л гарц бий. `writeoff_amount` нь
+    дутагдуулсан гэж бичвэл нэхэгдэх дүн — тэр тоог ХАРАХГҮЙГЭЭР шийдэх нь
+    сохроор гарын үсэг зурахтай адил (R13).
+    """
+    agg: dict[tuple[int, int], float] = {}
+    for lot in billing.lot_qty_on(c, today):
+        if lot["qty_left"] <= 0.0001:
+            continue
+        key = (lot["material_id"], lot["grade_id"])
+        agg[key] = agg.get(key, 0.0) + lot["qty_left"]
+    rows = []
+    for (mid, gid), qty in sorted(agg.items()):
+        price = db.query(models.MaterialGradePrice).filter_by(
+            material_id=mid, grade_id=gid).first()
+        nb = price.nb_price if price else 0
+        rows.append({"material_id": mid, "material": mmap.get(mid, "?"),
+                     "grade_id": gid, "grade": gmap.get(gid, ""),
+                     "qty": round(qty, 3), "nb_price": nb,
+                     "writeoff_amount": round(qty * nb)})
+    return rows
+
+
+def _close_date_error(c: models.Contract, cd: date, today: date) -> str | None:
+    """Хаах огнооны шалгуурууд — 400 ба wizard-ийн урьдчилсан анхааруулга НЭГ эх."""
+    if cd > today:
+        return "Хаах огноо ирээдүйд байж болохгүй"
+    if cd < c.start_date:
+        return f"Хаах огноо гэрээний эхлэлээс ({c.start_date}) өмнө байж болохгүй"
+    last = billing.last_movement_day(c)
+    if last is not None and cd < last:
+        return (f"Хаах огноо сүүлийн хөдөлгөөнөөс ({last}) өмнө байж болохгүй — "
+                f"тэр буцаалт хаалтын дараа болсон болж хувирна")
+    return None
+
+
+@router.get("/contracts/{cid}/close-preview")
+def close_preview(cid: int, close_date: _date_t | None = None,
+                  db: Session = Depends(get_db),
+                  user=Depends(auth.require_roles("manager", "finance"))):
+    """Хаалтын wizard-ийн ГУРВАН асуултын хариу — DB-д юу ч бичихгүй.
+
+    (a) гадаа юу үлдэв, (b) эцсийн тасархай нэхэмжлэл хэд болох ба юу
+    төлөгдөөгүй үлдэх, (c) барьцаа цэвэрлэгдсэн үү.
+
+    ЭЦСИЙН ДҮНГИЙН МЕХАНИЗМ: `derivable_invoice_specs(..., close_date=)` —
+    жинхэнэ хаалт ЯГ ТЭР функцээр нэхэмжлэлээ гаргадаг тул урьдчилсан тоо ба
+    хаасны дараах цаас ХОЁР ӨӨР кодоос гарах боломжгүй. Гэрээнд хүрэхгүй:
+    функц нь цэвэр (pure), `close_date` нь зөвхөн параметр.
+    """
+    c = db.get(models.Contract, cid)
+    if not c:
+        raise HTTPException(404, "Гэрээ олдсонгүй")
+    today = date.today()
+    billing.ensure_invoices(db, c, today)
+    db.refresh(c)
+    gmap, mmap = _maps(db)
+    cd = close_date or today
+    err = _close_date_error(c, cd, today)
+    out_rows = _outstanding_rows(db, c, today, gmap, mmap) if c.type == "rent" else []
+
+    have = {billing.spec_key(c, i.cycle_start, i.cycle_end, i.no) for i in c.invoices}
+    finals = []
+    if c.type == "rent" and err is None:
+        for sp in billing.derivable_invoice_specs(c, today, close_date=cd):
+            if billing.spec_key(c, sp["cycle_start"], sp["cycle_end"], sp["no"]) in have:
+                continue
+            finals.append({"no": sp["no"], "cycle_start": str(sp["cycle_start"]),
+                           "cycle_end": str(sp["cycle_end"]),
+                           "label": billing.cycle_label(sp["cycle_start"], sp["cycle_end"]),
+                           "rent_amount": round(sp["rent_amount"]),
+                           "charge_amount": round(sp["charge_amount"]),
+                           "vat_amount": round(sp["vat_amount"]),
+                           "total": round(sp["total"])})
+
+    b = billing.contract_balance(c, today)
+    return {"close_date": str(cd), "close_error": err,
+            "can_close": err is None and not out_rows,
+            "last_movement": (str(billing.last_movement_day(c))
+                              if billing.last_movement_day(c) else None),
+            "outstanding": out_rows,
+            "final_invoices": finals,
+            # Нэхэмжлэгдсэн ба хуримтлагдсан — гэрээний мөрийн `balance`-тай НЭГ тоо
+            "unpaid": round(b["outstanding"]),
+            "balance": round(b["outstanding"] + b["accruing"]),
+            "penalty_booked": round(b["penalty_booked"]),
+            "penalty_unbooked": round(b["penalty_unbooked"]),
+            "deposit": {"amount": c.deposit, "status": c.deposit_status,
+                        "settled": c.deposit_status == "settled",
+                        "applied": c.deposit_applied, "returned": c.deposit_returned}}
+
+
 @router.post("/contracts/{cid}/close")
-def close(cid: int, db: Session = Depends(get_db), user=Depends(auth.require_roles("manager"))):
+def close(cid: int, body: CloseIn | None = None, db: Session = Depends(get_db),
+          user=Depends(auth.require_roles("manager"))):
+    """Гэрээг ХААНА — хаасан огноогоор эцсийн тасархай нэхэмжлэл ТӨРНӨ (H7)."""
     c = db.get(models.Contract, cid)
     if not c:
         raise HTTPException(404, "Гэрээ олдсонгүй")
     today = date.today()
     out_qty = [billing.qty_on(c, it.material_id, it.grade_id, today) for it in c.items]
     if c.type == "rent" and any(q > 0.001 for q in out_qty):
-        raise HTTPException(400, "Түрээсэнд бараа байсаар байна — эхлээд буцаалт бүртгэнэ үү")
+        raise HTTPException(400, CLOSE_GOODS_ERR)
+    cd = (body.close_date if body and body.close_date else None) or today
+    err = _close_date_error(c, cd, today)
+    if err:
+        raise HTTPException(400, err)
     c.status = "closed"
+    c.closed_date = cd
     db.commit()
-    return {"ok": True}
+    # Эцсийн тасархай цикл ЭНД цаас болно — «нэхээд хаана» гэсэн дараалал
+    created = billing.ensure_invoices(db, c, today)
+    audit.log(db, user, "close", "contract", c.id,
+              f"№{c.no} · {cd}-нд хаав"
+              + (f" · эцсийн нэхэмжлэл {len(created)}" if created else ""))
+    return {"ok": True, "closed_date": str(cd),
+            "invoices": [serializers.invoice(i, today) for i in created]}
 
 
 @router.post("/contracts/{cid}/generate-invoices")

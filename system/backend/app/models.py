@@ -114,6 +114,12 @@ class Contract(Base):
     deposit_settled_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     vat_percent: Mapped[float] = mapped_column(Float, default=0)
     status: Mapped[str] = mapped_column(String(15), default="active")  # active | closed
+    # ХААСАН ӨДӨР (H7). `status="closed"` дангаараа тоолуурыг зогсоодоггүй байв:
+    # эцсийн ТАСАРХАЙ цикл хэзээ ч нэхэмжлэл болдоггүй, хаалт нь Отгоогийн
+    # зан үйлийг (эцсийн тооцоо → барьцаа → хаав) дагадаггүй байсан. Огноо нь
+    # эцсийн цонхны ТӨГСГӨЛИЙГ тодорхойлно: [циклийн эхлэл, closed_date + 1).
+    # NULL (хуучин хаагдсан гэрээ) бол зан төлөв ЯГ ХЭВЭЭР — stub төрөхгүй.
+    closed_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
