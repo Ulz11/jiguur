@@ -5,6 +5,15 @@
 from datetime import date, timedelta
 
 
+def per(n: int) -> str:
+    """Өнөөдрөөс n сарын хойшхи сар (n=0 — энэ сар). Seed нь ӨНГӨРСӨН САРЫН
+    бодолт үүсгэдэг тул n ≥ 0 үед хэзээ ч мөргөлдөхгүй. Тогтмол он-сар бичвэл
+    цаг гүйгээд ирэхэд унана: 2026-09-01-нд «2026-08» seed-тэй мөргөлдөж байв."""
+    t = date.today()
+    m = t.month - 1 + n
+    return f"{t.year + m // 12}-{m % 12 + 1:02d}"
+
+
 def test_salary_run_half_month_calculation(client, as_role):
     """3.0 сая цалинтай НДШ-тэй үндсэн ажилтан: хагас сард 1.5 сая, НДШ 11.5% = 172,500
     суутгаад 1,327,500 гарт олгоно. Өдрийн ажилтан 80,000 × 10 өдөр = 800,000."""
@@ -20,7 +29,7 @@ def test_salary_run_half_month_calculation(client, as_role):
         "daily_rate": 80_000, "ndsh": False}).json()
 
     r = client.post("/api/salary/runs", headers=h, json={
-        "period": "2026-08", "half": 1,
+        "period": per(0), "half": 1,
         "daily_days": {str(e3["id"]): 10}})
     assert r.status_code == 200, r.text
     run = r.json()
@@ -69,7 +78,7 @@ def test_edit_employee_changes_what_the_next_run_pays(client, as_role):
         "name": "Засагдах Ажилтан", "role_title": "Оператор", "type": "main",
         "monthly_salary": 2_000_000, "ndsh": False}).json()
     r1 = client.post("/api/salary/runs", headers=h,
-                     json={"period": "2026-09", "half": 1, "daily_days": {}}).json()
+                     json={"period": per(1), "half": 1, "daily_days": {}}).json()
     assert next(i for i in r1["items"] if i["employee_id"] == e["id"])["base"] == 1_000_000
 
     r = client.put(f"/api/salary/employees/{e['id']}", headers=h, json={
@@ -80,7 +89,7 @@ def test_edit_employee_changes_what_the_next_run_pays(client, as_role):
     assert r.json()["ndsh"] is True
 
     r2 = client.post("/api/salary/runs", headers=h,
-                     json={"period": "2026-09", "half": 2, "daily_days": {}}).json()
+                     json={"period": per(1), "half": 2, "daily_days": {}}).json()
     it = next(i for i in r2["items"] if i["employee_id"] == e["id"])
     assert it["base"] == 1_500_000                     # 3.0 сая / 2
     assert it["ndsh_amount"] == 1_500_000 * 0.115      # НДШ асаасан нь тусав
@@ -96,7 +105,7 @@ def test_edit_employee_to_daily_switches_how_the_run_pays(client, as_role):
         "name": "Төрөл Солигдох", "role_title": "", "type": "daily",
         "monthly_salary": 0, "daily_rate": 90_000, "ndsh": False})
     run = client.post("/api/salary/runs", headers=h, json={
-        "period": "2026-10", "half": 1, "daily_days": {str(e["id"]): 12}}).json()
+        "period": per(2), "half": 1, "daily_days": {str(e["id"]): 12}}).json()
     it = next(i for i in run["items"] if i["employee_id"] == e["id"])
     assert it["days"] == 12 and it["base"] == 12 * 90_000
 
@@ -108,5 +117,5 @@ def test_deactivated_employee_drops_out_of_the_next_run(client, as_role):
     assert client.delete(f"/api/salary/employees/{e['id']}", headers=h).status_code == 200
     assert all(x["id"] != e["id"] for x in client.get("/api/salary/employees", headers=h).json())
     run = client.post("/api/salary/runs", headers=h,
-                      json={"period": "2026-11", "half": 1, "daily_days": {}}).json()
+                      json={"period": per(3), "half": 1, "daily_days": {}}).json()
     assert all(i["employee_id"] != e["id"] for i in run["items"])

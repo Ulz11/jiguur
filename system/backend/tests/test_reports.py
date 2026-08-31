@@ -208,6 +208,165 @@ def test_cashflow_split_by_method_controlled(db):
         assert len(s[k]) == len(s["months"])
 
 
+def test_pnl_detail_breakdown(db):
+    """P&L-ийн ТОО БҮР задаргаатай — задаргааны нийлбэр нь дүнтэйгээ ЯГ тэнцэнэ.
+    Түрээсийн орлого дотор засвар/акт/чөлөөт акт ялгарч, бартер мөр нь
+    орж ирсэн ↔ зарсан бүх мөшгилтөө авч явна."""
+    import json
+    from app.services import reports as R
+
+    cl = models.Client(name="Задаргаа ХХК")
+    db.add(cl)
+    db.flush()
+    c = models.Contract(no="z1", client_id=cl.id, type="rent",
+                        start_date=date(2026, 6, 1), penalty_percent=0.5)
+    db.add(c)
+    db.flush()
+    detail = {"lines": [], "charges": [
+        {"date": "2026-07-02", "desc": "Засвар", "amount": 300_000},
+        {"date": "2026-07-02", "desc": "Акт", "amount": 500_000},
+        {"date": "2026-07-05", "desc": "Акт: Кран дуудлага", "amount": 200_000},
+    ]}
+    db.add(models.Invoice(contract_id=c.id, no="R-z1-1", cycle_start=date(2026, 6, 10),
+                          cycle_end=date(2026, 7, 10), due_date=date(2026, 7, 10),
+                          rent_amount=10_000_000, charge_amount=1_000_000,
+                          total=11_000_000, detail_json=json.dumps(detail)))
+    # Худалдаа
+    sc = models.Contract(no="zs1", client_id=cl.id, type="sale",
+                         start_date=date(2026, 7, 5), penalty_percent=0)
+    db.add(sc)
+    db.flush()
+    db.add(models.Invoice(contract_id=sc.id, no="S-zs1-1", cycle_start=date(2026, 7, 5),
+                          cycle_end=date(2026, 7, 5), due_date=date(2026, 7, 5),
+                          rent_amount=5_000_000, total=5_000_000))
+    # Алданги: нэхсэн 700к (7 сард), төлөгдсөн 500к
+    inv2 = models.Invoice(contract_id=c.id, no="R-z1-0", cycle_start=date(2026, 5, 10),
+                          cycle_end=date(2026, 6, 10), due_date=date(2026, 6, 10),
+                          rent_amount=1_000_000, total=1_000_000)
+    db.add(inv2)
+    db.flush()
+    db.add(models.PenaltyCharge(contract_id=c.id, client_id=cl.id,
+                                as_of=date(2026, 7, 20), amount=700_000, user_name="otgoo"))
+    pay = models.Payment(client_id=cl.id, contract_id=c.id, date=date(2026, 7, 25),
+                         amount=500_000, method="BANK")
+    db.add(pay)
+    db.flush()
+    db.add(models.PaymentAllocation(payment_id=pay.id, invoice_id=inv2.id,
+                                    amount=500_000, part="penalty"))
+    # Механизм: 2 машин
+    m1, m2 = models.Machine(name="Кран-1"), models.Machine(name="Кран-2")
+    db.add_all([m1, m2])
+    db.flush()
+    db.add(models.MachineLog(machine_id=m1.id, date=date(2026, 7, 12), entry="job",
+                             label="Бүтэн өдөр", amount=2_000_000, method="BANK"))
+    db.add(models.MachineLog(machine_id=m1.id, date=date(2026, 7, 14), entry="expense",
+                             label="Түлш", amount=500_000))
+    db.add(models.MachineLog(machine_id=m2.id, date=date(2026, 7, 15), entry="job",
+                             label="Хагас өдөр", amount=800_000, method="CASH"))
+    # Цалин + хүү
+    run = models.SalaryRun(period="2026-07", half=1, paid=1, paid_date=date(2026, 7, 15))
+    db.add(run)
+    db.flush()
+    e = models.Employee(name="А", type="main", monthly_salary=6_000_000)
+    db.add(e)
+    db.flush()
+    db.add(models.SalaryItem(run_id=run.id, employee_id=e.id, base=3_000_000, net=2_800_000))
+    loan = models.Loan(name="Хаан банк", principal=100_000_000, monthly_rate=1.2,
+                       start_date=date(2026, 1, 10))
+    db.add(loan)
+    db.flush()
+    db.add(models.LoanPayment(loan_id=loan.id, date=date(2026, 7, 10),
+                              amount=1_200_000, part="interest"))
+    # Бартер: 10 саяар орж ирсэн машиныг 8 саяд зарав
+    db.add(models.BarterAsset(client_id=cl.id, type="Машин", name="Приус 9957УКК",
+                              date_in=date(2026, 6, 1), value_in=10_000_000,
+                              status="sold", sold_date=date(2026, 7, 20),
+                              sold_amount=8_000_000, sold_to="Бат"))
+    db.commit()
+
+    p = R.pnl(db, date(2026, 7, 1), date(2026, 7, 31))
+    d = p["detail"]
+    # Түрээсийн задаргаа: цэвэр + засвар + акт + чөлөөт акт = түрээсийн орлого
+    assert d["rent_net"] == 10_000_000
+    assert d["charge"]["repair"] == 300_000
+    assert d["charge"]["writeoff"] == 500_000
+    assert d["charge"]["akt"] == 200_000
+    assert d["charge"]["other"] == 0
+    assert (d["rent_net"] + d["charge"]["repair"] + d["charge"]["writeoff"]
+            + d["charge"]["akt"] + d["charge"]["other"]) == p["rent_income"]
+    assert len(d["charge"]["rows"]) == 3
+    # Нэхэмжлэлийн мөрүүд нийлбэрээрээ дүнгээ өгнө
+    assert sum(r["total"] for r in d["rent_invoices"]) == p["rent_income"]
+    assert d["rent_invoices"][0]["client"] == "Задаргаа ХХК"
+    assert d["rent_invoices"][0]["contract_no"] == "z1"
+    assert sum(r["amount"] for r in d["sale_invoices"]) == p["sale_income"]
+    # Алданги: төлөгдсөн нь орлого, нэхэгдсэн нь мэдээлэл
+    assert sum(r["amount"] for r in d["penalty_paid"]) == p["penalty_income"] == 500_000
+    assert d["penalty_paid"][0]["client"] == "Задаргаа ХХК"
+    assert d["penalty_booked"]["total"] == 700_000
+    assert d["penalty_booked"]["rows"][0]["amount"] == 700_000
+    # Механизм машин бүрээр
+    by_name = {r["machine"]: r for r in d["machines"]}
+    assert by_name["Кран-1"]["income"] == 2_000_000
+    assert by_name["Кран-1"]["expense"] == 500_000
+    assert by_name["Кран-2"]["income"] == 800_000
+    assert sum(r["income"] for r in d["machines"]) == p["machine_income"]
+    assert sum(r["expense"] for r in d["machines"]) == p["machine_expense"]
+    # Цалин, хүү
+    assert sum(r["amount"] for r in d["salary"]) == p["salary_expense"]
+    assert d["salary"][0]["label"].startswith("2026-07")
+    assert sum(r["amount"] for r in d["interest"]) == p["interest_expense"]
+    assert d["interest"][0]["loan"] == "Хаан банк"
+    # Бартер: мөр бүр орж ирсэн ↔ зарсан мөшгилттэй
+    b = d["barter"][0]
+    assert b["name"] == "Приус 9957УКК" and b["client"] == "Задаргаа ХХК"
+    assert b["value_in"] == 10_000_000 and b["sold_amount"] == 8_000_000
+    assert b["diff"] == -2_000_000 and b["sold_to"] == "Бат"
+    assert sum(r["diff"] for r in d["barter"]) == p["barter_result"]
+
+
+def test_pnl_detail_unparsed_charge_goes_other(db):
+    """Задаргаагүй (хуучин) нэхэмжлэлийн charge нь «other» халаасанд орж,
+    нийлбэр нь ЯМАГТ таарна — буруу ангилалд чимээгүй орохгүй."""
+    from app.services import reports as R
+
+    cl = models.Client(name="Хуучин мөр")
+    db.add(cl)
+    db.flush()
+    c = models.Contract(no="o1", client_id=cl.id, type="rent",
+                        start_date=date(2026, 6, 1), penalty_percent=0)
+    db.add(c)
+    db.flush()
+    db.add(models.Invoice(contract_id=c.id, no="R-o1-1", cycle_start=date(2026, 6, 10),
+                          cycle_end=date(2026, 7, 10), due_date=date(2026, 7, 10),
+                          rent_amount=4_000_000, charge_amount=1_000_000,
+                          total=5_000_000, detail_json="[]"))
+    db.commit()
+    p = R.pnl(db, date(2026, 7, 1), date(2026, 7, 31))
+    d = p["detail"]
+    assert d["charge"]["other"] == 1_000_000
+    assert (d["rent_net"] + d["charge"]["repair"] + d["charge"]["writeoff"]
+            + d["charge"]["akt"] + d["charge"]["other"]) == p["rent_income"] == 5_000_000
+
+
+def test_reports_api_date_range(client, as_role):
+    """Огнооны завсраар татахад pnl тухайн мужаа хэлнэ; буруу огноо → 400."""
+    h = as_role("otgoo")
+    r = client.get("/api/reports?d_from=2026-07-01&d_to=2026-07-31", headers=h)
+    assert r.status_code == 200
+    p = r.json()["pnl"]
+    assert p["from"] == "2026-07-01" and p["to"] == "2026-07-31"
+    assert "detail" in p
+    assert client.get("/api/reports?d_from=буруу&d_to=2026-07-31",
+                      headers=h).status_code == 400
+    assert client.get("/api/reports?d_from=2026-08-01&d_to=2026-07-01",
+                      headers=h).status_code == 400
+    x = client.get("/api/reports/export.xlsx?d_from=2026-07-01&d_to=2026-07-31", headers=h)
+    assert x.status_code == 200 and x.content[:2] == b"PK"
+    assert client.get("/api/reports/export.xlsx?d_from=2026-08-01&d_to=2026-07-01",
+                      headers=h).status_code == 400
+
+
 def test_reports_api_and_export(client, as_role):
     h = as_role("otgoo")
     r = client.get("/api/reports?months=6", headers=h)

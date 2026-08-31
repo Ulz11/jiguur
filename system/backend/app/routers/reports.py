@@ -15,15 +15,29 @@ guard = auth.require_roles("manager", "finance")
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
+def report_range(months: int, d_from: str, d_to: str, today: date) -> tuple[date, date]:
+    """Тайлангийн муж: огноо өгвөл түүгээр, үгүй бол сүүлийн n сар.
+
+    Буруу огноо, урвуу муж хоёул 400 — чимээгүй 500 болж унахын оронд
+    юу нь буруу байгааг хэлнэ.
+    """
+    if d_from and d_to:
+        try:
+            f, t = date.fromisoformat(d_from), date.fromisoformat(d_to)
+        except ValueError:
+            raise HTTPException(400, "Огноо буруу байна (ЖЖЖЖ-СС-ӨӨ)")
+        if f > t:
+            raise HTTPException(400, "Эхлэх огноо дуусахаасаа хойно байна")
+        return f, t
+    f = (today.replace(day=1) - timedelta(days=30 * (months - 1))).replace(day=1)
+    return f, today
+
+
 @router.get("/reports")
 def reports(months: int = 6, d_from: str = "", d_to: str = "",
             db: Session = Depends(get_db), user=Depends(guard)):
     today = date.today()
-    if d_from and d_to:
-        f, t = date.fromisoformat(d_from), date.fromisoformat(d_to)
-    else:
-        f = (today.replace(day=1) - timedelta(days=30 * (months - 1))).replace(day=1)
-        t = today
+    f, t = report_range(months, d_from, d_to, today)
     return {"pnl": R.pnl(db, f, t),
             "months": months,
             "series": R.cashflow_series(db, today, 6),
@@ -37,19 +51,29 @@ def _xlsx(wb: Workbook) -> bytes:
 
 
 @router.get("/reports/export.xlsx")
-def export_report(months: int = 6, db: Session = Depends(get_db), user=Depends(guard)):
+def export_report(months: int = 6, d_from: str = "", d_to: str = "",
+                  db: Session = Depends(get_db), user=Depends(guard)):
     today = date.today()
-    f = (today.replace(day=1) - timedelta(days=30 * (months - 1))).replace(day=1)
-    p = R.pnl(db, f, today)
+    f, t = report_range(months, d_from, d_to, today)
+    p = R.pnl(db, f, t)
+    dt = p["detail"]
     wb = Workbook()
     ws = wb.active
     ws.title = "Ашиг алдагдал"
     ws.append(["Жигүүр Зам ХХК — Ашиг, алдагдлын тайлан"])
     ws.append([f"Хугацаа: {p['from']} — {p['to']}"])
     ws.append([])
+    ch = dt["charge"]
     rows = [
-        ("ОРЛОГО", ""), ("Түрээсийн орлого", p["rent_income"]),
+        ("ОРЛОГО", ""),
+        ("Түрээсийн орлого", p["rent_income"]),
+        ("    үүнээс цэвэр түрээс", dt["rent_net"]),
+        ("    үүнээс засварын нэхэлт", ch["repair"]),
+        ("    үүнээс акталсан бүтээгдэхүүн", ch["writeoff"]),
+        ("    үүнээс чөлөөт акт (±)", ch["akt"]),
+        *([("    үүнээс задаргаагүй", ch["other"])] if ch["other"] else []),
         ("Худалдааны орлого", p["sale_income"]), ("Механизмын орлого", p["machine_income"]),
+        ("Алдангийн орлого (төлөгдсөн)", p["penalty_income"]),
         ("Нийт орлого", p["total_income"]), ("", ""),
         ("ЗАРДАЛ", ""), ("Механизмын зарлага", p["machine_expense"]),
         ("Цалин", p["salary_expense"]), ("Зээлийн хүү", p["interest_expense"]),
@@ -61,6 +85,62 @@ def export_report(months: int = 6, db: Session = Depends(get_db), user=Depends(g
         ws.append(list(r_))
     ws.column_dimensions["A"].width = 34
     ws.column_dimensions["B"].width = 18
+
+    # ---- Задаргаа: тоо бүр яаж гарсан нь мөр мөрөөрөө ----
+    wz = wb.create_sheet("Задаргаа")
+    wz.column_dimensions["A"].width = 13
+    wz.column_dimensions["B"].width = 32
+    for col in "CDEFG":
+        wz.column_dimensions[col].width = 16
+
+    def section(title: str, header: list, data_rows: list, total=None):
+        wz.append([title])
+        wz.append(header)
+        for r_ in data_rows:
+            wz.append(r_)
+        if total is not None:
+            wz.append(["", "НИЙТ"] + total)
+        wz.append([])
+
+    section("ТҮРЭЭСИЙН НЭХЭМЖЛЭЛҮҮД (дууссан циклээр)",
+            ["Огноо", "Харилцагч", "Гэрээ", "Нэхэмжлэл", "Түрээс", "Засвар/акт", "Дүн"],
+            [[r["date"], r["client"], r["contract_no"], r["no"],
+              r["rent"], r["charge"], r["total"]] for r in dt["rent_invoices"]],
+            [None, None, dt["rent_net"], sum(ch[k] for k in ("repair", "writeoff", "akt", "other")),
+             p["rent_income"]])
+    section("ЗАСВАР / АКТЫН МӨРҮҮД",
+            ["Огноо", "Харилцагч", "Гэрээ", "Төрөл", "Дүн"],
+            [[r["date"], r["client"], r["contract_no"], r["desc"], r["amount"]]
+             for r in ch["rows"]])
+    section("ХУДАЛДАА",
+            ["Огноо", "Харилцагч", "Гэрээ", "Нэхэмжлэл", "Дүн"],
+            [[r["date"], r["client"], r["contract_no"], r["no"], r["amount"]]
+             for r in dt["sale_invoices"]])
+    section("АЛДАНГИ — ТӨЛӨГДСӨН (орлогод орсон)",
+            ["Огноо", "Харилцагч", "Нэхэмжлэл", "Дүн"],
+            [[r["date"], r["client"], r["invoice_no"], r["amount"]]
+             for r in dt["penalty_paid"]])
+    section(f"АЛДАНГИ — ЭНЭ ХУГАЦААНД НЭХЭГДСЭН (нийт {dt['penalty_booked']['total']}₮, орлогод ОРООГҮЙ)",
+            ["Огноо", "Харилцагч", "Гэрээ", "Дүн", "Хэн нэхсэн"],
+            [[r["date"], r["client"], r["contract_no"], r["amount"], r["user"]]
+             for r in dt["penalty_booked"]["rows"]])
+    section("БАРТЕР — орж ирсэн ↔ зарагдсан",
+            ["Хөрөнгө", "Хэнээс", "Орж ирсэн огноо", "Орж ирсэн үнэ",
+             "Зарсан огноо", "Хэнд", "Зарсан үнэ", "Зөрүү"],
+            [[r["name"], r["client"], r["date_in"], r["value_in"],
+              r["sold_date"], r["sold_to"], r["sold_amount"], r["diff"]]
+             for r in dt["barter"]])
+    section("МЕХАНИЗМ — машин бүрээр",
+            ["Машин", "Орлого", "Зарлага", "Цэвэр"],
+            [[r["machine"], r["income"], r["expense"], r["net"]]
+             for r in dt["machines"]])
+    section("ЦАЛИН — олгосон бодолтууд",
+            ["Огноо", "Бодолт", "Ажилтан", "Дүн (base)"],
+            [[r["date"], r["label"], r["employees"], r["amount"]]
+             for r in dt["salary"]])
+    section("ЗЭЭЛИЙН ХҮҮ — төлөлт бүрээр",
+            ["Огноо", "Зээлдүүлэгч", "Дүн"],
+            [[r["date"], r["loan"], r["amount"]] for r in dt["interest"]])
 
     ws2 = wb.create_sheet("Авлага")
     # Алдангийн ХОЁР багана — нэхэгдсэн нь өр, нэхэгдээгүй нь зөвхөн тооцоолол.

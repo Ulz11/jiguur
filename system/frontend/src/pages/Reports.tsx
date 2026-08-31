@@ -1,35 +1,70 @@
-import { useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { api, money, sayaFmt } from "../api";
-import { Spinner, useToast, Refreshing } from "../ui";
+import { Spinner, useToast, Refreshing, Chevron } from "../ui";
 import { useDownload } from "../lib/docs";
 import { useLive } from "../lib/live";
+import { cycleLabel } from "../lib/cycle";
+import { RangeMode, rangeError, reportQuery } from "../lib/report";
+import { panelId, disclosureProps } from "../lib/disclosure";
+import { rowClickProps } from "../lib/rowClick";
+
+/* Задаргааны самбарын гарчиг — P&L мөрийн нэрээ дагана. */
+const DETAIL_TITLES: Record<string, string> = {
+  rent: "Түрээсийн орлого", sale: "Худалдааны орлого",
+  "mach-in": "Механизмын орлого", penalty: "Алдангийн орлого",
+  salary: "Цалин", interest: "Зээлийн хүү",
+  "mach-out": "Механизмын зарлага", barter: "Бартерын хэрэгжсэн үр дүн",
+};
 
 export default function Reports() {
   const [months, setMonths] = useState(6);
+  const [mode, setMode] = useState<RangeMode>("months");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [openRow, setOpenRow] = useState<string | null>(null);
   const [d, setD] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const dl = useDownload();
 
-  /* Сар солиход `setD(null)` хийж БҮТЭН хуудсыг нурааж байв: Отгоо 6 сарын
+  /* Задаргаа НАРИЙХАН картын дотор биш, доорх БҮТЭН ӨРГӨН самбарт гардаг —
+     мөр дарахад самбар нь дэлгэцээс гадуур байж болох тул гүйлгэж очно. */
+  const detailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (openRow) detailRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [openRow]);
+
+  // Хоосон query = огнооны горимд муж бүрэн болоогүй: юу ч татахгүй,
+  // өмнөх тоонууд дэлгэцэн дээрээ хэвээр зогсоно.
+  const q = reportQuery(mode, months, from, to);
+  const rangeErr = mode === "range" ? rangeError(from, to) : "";
+
+  /* Хугацаа солиход `setD(null)` хийж БҮТЭН хуудсыг нурааж байв: Отгоо 6 сарын
      тайлангаа хараад 12 руу дарахад дэлгэц хоосорч, юутай харьцуулж байснаа
      алддаг. Одоо өмнөх тоо байрандаа үлдэж, зөвхөн бүдгэрнэ. */
-  const load = (m: number) => {
+  const load = (query: string) => {
     setBusy(true);
-    return api(`/api/reports?months=${m}`).then(setD)
+    return api(`/api/reports?${query}`).then(setD)
       .catch((e) => toast(e.message, "err"))
       .finally(() => setBusy(false));
   };
   /** Фонд шинэчлэх — бүдгэрүүлэг ч гаргахгүй, алдааг чимээгүй залгина. */
-  const refresh = (m: number) => api(`/api/reports?months=${m}`).then(setD).catch(() => {});
-  useLive((bg) => (bg ? refresh(months) : load(months)), [months]);
+  const refresh = (query: string) => api(`/api/reports?${query}`).then(setD).catch(() => {});
+  useLive((bg) => { if (q) (bg ? refresh(q) : load(q)); }, [q]);
   if (!d) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
   const p = d.pnl;
+  const dt = p.detail;          // задаргаа — хуучин серверийн payload-д байхгүй байж болно
 
   /* Тайлан бүрдүүлэхэд сервер хэдэн секунд бодно — товч дуугүй зогсох ёсгүй.
      Алдаа гарвал өмнө нь алдааны JSON нь «jiguur-tailan.xlsx» болж диск рүү
      бууж, юу болсныг хаанаас ч мэдэхгүй байв. */
-  const exportPath = `/api/reports/export.xlsx?months=${months}`;
+  const exportPath = `/api/reports/export.xlsx?${q || `months=${months}`}`;
+
+  const toggle = (id: string) => setOpenRow(openRow === id ? null : id);
+  const rowProps = (id: string, label: string, val: number, colored = false) => ({
+    id, label, val, colored, open: openRow === id,
+    onToggle: toggle, expandable: !!dt,
+  });
 
   return (
     <Refreshing busy={busy}>
@@ -42,16 +77,31 @@ export default function Reports() {
         <div className="flex gap-2.5 items-center flex-wrap command-action">
           <div className="segment">
             {[3, 6, 12].map((m) => (
-              <button key={m} onClick={() => setMonths(m)} className={months === m ? "on" : ""}>{m} сар</button>
+              <button key={m} onClick={() => { setMode("months"); setMonths(m); }}
+                      className={mode === "months" && months === m ? "on" : ""}>{m} сар</button>
             ))}
+            <button onClick={() => setMode("range")}
+                    className={mode === "range" ? "on" : ""}>Огноогоор</button>
           </div>
-          <button className="btn-secondary" disabled={dl.busy}
+          {mode === "range" && (
+            <div className="flex items-center gap-1.5">
+              <input type="date" className="inp !w-auto" aria-label="Эхлэх огноо"
+                     value={from} max={to || undefined}
+                     onChange={(e) => setFrom(e.target.value)} />
+              <span className="text-t3">—</span>
+              <input type="date" className="inp !w-auto" aria-label="Дуусах огноо"
+                     value={to} min={from || undefined}
+                     onChange={(e) => setTo(e.target.value)} />
+            </div>
+          )}
+          <button className="btn-secondary" disabled={dl.busy || (mode === "range" && !q)}
                   aria-busy={dl.busyPath === exportPath || undefined}
                   onClick={() => dl.download(exportPath, "jiguur-tailan.xlsx")}>
             {dl.busyPath === exportPath ? "Бэлтгэж байна…" : "⇩ Excel татах"}
           </button>
         </div>
       </div>
+      {rangeErr && <p className="text-[12.5px] text-danger -mt-2 mb-3">{rangeErr}</p>}
 
       {/* Bento stat cards */}
       <div className="grid grid-cols-12 gap-4 mb-4">
@@ -88,7 +138,7 @@ export default function Reports() {
             {p.net >= 0 ? "+" : ""}{sayaFmt(p.net)}<span className="text-[15px] text-white/75 font-medium ml-1">₮</span>
           </div>
           <div className="mt-1.5">
-            <span className={`pill ${p.net >= 0 ? "" : ""}`}
+            <span className="pill"
                   style={{ background: "rgba(255,255,255,.12)", color: p.net >= 0 ? "#7de8b8" : "#ffb3b6" }}>
               {p.net >= 0 ? "ашигтай ажиллав" : "алдагдалтай"}
             </span>
@@ -97,22 +147,24 @@ export default function Reports() {
       </div>
 
       <div className="grid grid-cols-12 gap-4 items-start">
-        {/* P&L statement */}
+        {/* P&L statement — мөр нь СОНГОГДОЖ, задаргаа нь доорх бүтэн өргөн самбарт
+            гарна: нарийхан картын дотор хүснэгт шахаж уншуулдаг байсныг болиулав. */}
         <div className="card p-6 col-span-5 max-lg:col-span-12">
-          <h2 className="font-bold text-ink text-[14px] mb-4 flex items-center gap-2"><span className="cdot" />Ашиг, алдагдлын тайлан</h2>
+          <h2 className="font-bold text-ink text-[14px] mb-1 flex items-center gap-2"><span className="cdot" />Ашиг, алдагдлын тайлан</h2>
+          {dt && <p className="text-[12px] text-t3 mb-3">Мөр дээр дарахад задаргаа нь доор дэлгэгдэнэ.</p>}
           <Sect label="Орлого" />
-          <Row label="Түрээсийн орлого" val={p.rent_income} />
-          <Row label="Худалдааны орлого" val={p.sale_income} />
-          <Row label="Механизмын орлого" val={p.machine_income} />
-          <Row label="Алдангийн орлого" val={p.penalty_income} />
+          <XRow {...rowProps("rent", "Түрээсийн орлого", p.rent_income)} />
+          <XRow {...rowProps("sale", "Худалдааны орлого", p.sale_income)} />
+          <XRow {...rowProps("mach-in", "Механизмын орлого", p.machine_income)} />
+          <XRow {...rowProps("penalty", "Алдангийн орлого", p.penalty_income)} />
           <Total label="Нийт орлого" val={p.total_income} tone="money" />
           <Sect label="Зардал" cls="mt-5" />
-          <Row label="Цалин" val={-p.salary_expense} />
-          <Row label="Зээлийн хүү" val={-p.interest_expense} />
-          <Row label="Механизмын зарлага" val={-p.machine_expense} />
+          <XRow {...rowProps("salary", "Цалин", -p.salary_expense)} />
+          <XRow {...rowProps("interest", "Зээлийн хүү", -p.interest_expense)} />
+          <XRow {...rowProps("mach-out", "Механизмын зарлага", -p.machine_expense)} />
           <Total label="Нийт зардал" val={-p.total_expense} tone="danger" />
           <div className="mt-5" />
-          <Row label="Бартерын хэрэгжсэн үр дүн" val={p.barter_result} colored />
+          <XRow {...rowProps("barter", "Бартерын хэрэгжсэн үр дүн", p.barter_result, true)} />
           <div className="mt-4 rounded-2xl px-4 py-3.5 flex justify-between items-center"
                style={{ background: "linear-gradient(135deg,#0b2545,#1e3a6e)" }}>
             <b className="text-[13px] text-white/80 uppercase tracking-wide">Цэвэр үр дүн</b>
@@ -144,6 +196,22 @@ export default function Reports() {
           <CashBars s={d.series} />
         </div>
       </div>
+
+      {/* Задаргааны самбар — БҮТЭН ӨРГӨН, сонгосон мөрөө дагана */}
+      {dt && openRow && (
+        <div ref={detailRef} id={panelId("pnl", openRow)}
+             className="card p-6 mt-4">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-bold text-ink text-[14px] flex items-center gap-2">
+              <span className="cdot" />Задаргаа — {DETAIL_TITLES[openRow]}
+              <span className="text-[12px] text-t3 font-medium">{p.from} — {p.to}</span>
+            </h2>
+            <button className="btn-ghost !min-h-9 text-[13px]" onClick={() => setOpenRow(null)}
+                    aria-label="Задаргааг хаах">✕ Хаах</button>
+          </div>
+          <DetailPanel id={openRow} dt={dt} />
+        </div>
+      )}
     </Refreshing>
   );
 }
@@ -151,15 +219,141 @@ export default function Reports() {
 function Sect({ label, cls = "" }: any) {
   return <div className={`text-[12px] font-bold uppercase tracking-wider text-t3 pb-1.5 border-b border-line ${cls}`}>{label}</div>;
 }
-function Row({ label, val, colored }: any) {
+
+/** P&L-ийн СОНГОГДДОГ мөр — задаргаа нь доорх бүтэн өргөн самбарт гарна.
+ *  `expandable` биш бол (хуучин сервер) энгийн мөр: задрахгүй зүйлд тэмдэг тавихгүй. */
+function XRow({ id, label, val, colored, open, onToggle, expandable }: {
+  id: string; label: string; val: number; colored?: boolean;
+  open: boolean; onToggle: (id: string) => void; expandable: boolean;
+}) {
   const cls = colored ? (val >= 0 ? "text-money" : "text-danger") : "text-ink";
+  const amount = <b className={`tabular-nums text-[13px] ${cls}`}>{val > 0 && colored ? "+" : ""}{money(val)}</b>;
+  if (!expandable) {
+    return (
+      <div className="flex justify-between items-center py-2 border-b border-line/60">
+        <span className="text-[13px] text-t2">{label}</span>{amount}
+      </div>
+    );
+  }
   return (
-    <div className="flex justify-between items-center py-2 border-b border-line/60">
-      <span className="text-[13px] text-t2">{label}</span>
-      <b className={`tabular-nums text-[13px] ${cls}`}>{val > 0 && colored ? "+" : ""}{money(val)}</b>
+    <div className={`flex justify-between items-center py-2 border-b border-line/60 cursor-pointer transition ${open ? "bg-brand-50" : "hover:bg-canvas"}`}
+         {...disclosureProps(open, panelId("pnl", id))}
+         {...rowClickProps(() => onToggle(id), `${label} — задаргааг ${open ? "хаах" : "нээх"}`)}>
+      <span className="text-[13px] text-t2 flex items-center gap-1.5"><Chevron open={open} />{label}</span>
+      {amount}
     </div>
   );
 }
+
+/** Сонгогдсон мөрийн задаргаа — өргөн самбарт хүснэгтүүд амьсгалтай багтана. */
+function DetailPanel({ id, dt }: { id: string; dt: any }) {
+  const machines = (
+    <Mini head={["Машин", "Орлого", "Зарлага", "Цэвэр"]} numCols={[1, 2, 3]}
+          rows={dt.machines.map((r: any) => [r.machine, money(r.income),
+                                             money(r.expense), money(r.net)])} />
+  );
+  switch (id) {
+    case "rent":
+      return (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-1 mb-4">
+            <Split label="Цэвэр түрээс" v={dt.rent_net} />
+            <Split label="Засварын нэхэлт" v={dt.charge.repair} />
+            <Split label="Акталсан бүтээгдэхүүн" v={dt.charge.writeoff} />
+            <Split label="Чөлөөт акт (±)" v={dt.charge.akt} />
+            {dt.charge.other !== 0 && <Split label="Задаргаагүй" v={dt.charge.other} />}
+          </div>
+          <Mini head={["Цикл", "Харилцагч", "Гэрээ", "Түрээс", "Засвар/акт", "Дүн"]}
+                numCols={[3, 4, 5]}
+                rows={dt.rent_invoices.map((r: any) => [
+                  cycleLabel(r.cycle_start, r.cycle_end), r.client, r.contract_no,
+                  money(r.rent), money(r.charge), money(r.total)])} />
+          {dt.charge.rows.length > 0 && (
+            <>
+              <p className="text-[11.5px] font-bold uppercase tracking-wide text-t3 mt-4 mb-1.5">Засвар / актын мөрүүд</p>
+              <Mini head={["Огноо", "Харилцагч", "Гэрээ", "Төрөл", "Дүн"]} numCols={[4]}
+                    rows={dt.charge.rows.map((r: any) => [r.date, r.client, r.contract_no, r.desc, money(r.amount)])} />
+            </>
+          )}
+        </>
+      );
+    case "sale":
+      return <Mini head={["Огноо", "Харилцагч", "Гэрээ", "Нэхэмжлэл", "Дүн"]} numCols={[4]}
+                   rows={dt.sale_invoices.map((r: any) => [r.date, r.client, r.contract_no, r.no, money(r.amount)])} />;
+    case "mach-in":
+    case "mach-out":
+      return machines;
+    case "penalty":
+      return (
+        <>
+          <Mini head={["Огноо", "Харилцагч", "Нэхэмжлэл", "Дүн"]} numCols={[3]}
+                rows={dt.penalty_paid.map((r: any) => [r.date, r.client, r.invoice_no, money(r.amount)])} />
+          {/* Нэхэгдсэн ≠ орлого (R25/H2): төлөгдсөн нь л орлого, нэхэлт нь мэдээлэл */}
+          {dt.penalty_booked.total > 0 && (
+            <>
+              <p className="text-[11.5px] font-bold uppercase tracking-wide text-t3 mt-4 mb-1.5">
+                Энэ хугацаанд нэхэгдсэн — {money(dt.penalty_booked.total)} (орлогод зөвхөн төлөгдсөн нь орно)
+              </p>
+              <Mini head={["Огноо", "Харилцагч", "Гэрээ", "Дүн", "Хэн нэхсэн"]} numCols={[3]}
+                    rows={dt.penalty_booked.rows.map((r: any) => [r.date, r.client, r.contract_no, money(r.amount), r.user])} />
+            </>
+          )}
+        </>
+      );
+    case "salary":
+      return <Mini head={["Огноо", "Бодолт", "Ажилтан", "Дүн"]} numCols={[3]}
+                   rows={dt.salary.map((r: any) => [r.date, r.label, r.employees, money(r.amount)])} />;
+    case "interest":
+      return <Mini head={["Огноо", "Зээлдүүлэгч", "Дүн"]} numCols={[2]}
+                   rows={dt.interest.map((r: any) => [r.date, r.loan, money(r.amount)])} />;
+    case "barter":
+      return <Mini head={["Хөрөнгө", "Хэнээс", "Орж ирсэн огноо", "Орж ирсэн үнэ",
+                          "Зарсан огноо", "Хэнд", "Зарсан үнэ", "Зөрүү"]} numCols={[3, 6, 7]}
+                   rows={dt.barter.map((r: any) => [
+                     r.name, r.client, r.date_in, money(r.value_in),
+                     r.sold_date, r.sold_to,  money(r.sold_amount),
+                     <b className={r.diff < 0 ? "text-danger" : "text-money"}>
+                       {r.diff > 0 ? "+" : ""}{money(r.diff)}</b>])} />;
+    default:
+      return null;
+  }
+}
+
+/** Түрээсийн орлогын дотоод хуваарилалт — нэг мөр нэг зүйл. */
+function Split({ label, v }: { label: string; v: number }) {
+  return (
+    <div className="flex justify-between text-[13px] border-b border-line/60 pb-1">
+      <span className="text-t3">{label}</span>
+      <b className="tabular-nums text-t1">{money(v)}</b>
+    </div>
+  );
+}
+
+/** Задаргааны хүснэгт. `numCols` — баруун зэрэгцүүлэх баганын индексүүд. */
+function Mini({ head, rows, numCols = [] }: {
+  head: string[]; rows: ReactNode[][]; numCols?: number[];
+}) {
+  if (!rows.length) return <p className="text-[13px] text-t3">Энэ хугацаанд мөр алга.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr>{head.map((h, j) => (
+            <th key={h} className={`text-[11.5px] font-bold uppercase tracking-wide text-t3 px-3 py-2 whitespace-nowrap border-b border-line ${numCols.includes(j) ? "text-right" : "text-left"}`}>{h}</th>
+          ))}</tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="hover:bg-canvas/60">{r.map((c, j) => (
+              <td key={j} className={`text-[13px] px-3 py-2 border-b border-line/60 ${numCols.includes(j) ? "text-right tabular-nums whitespace-nowrap" : ""}`}>{c}</td>
+            ))}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Total({ label, val, tone }: any) {
   return (
     <div className="flex justify-between items-center py-2.5 mt-0.5 rounded-xl px-2 -mx-2"

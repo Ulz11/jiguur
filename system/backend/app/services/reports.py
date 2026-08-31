@@ -9,6 +9,7 @@
 - Бартерын үр дүн = тухайн үед зарагдсан хөрөнгийн (зарсан − орж ирсэн)
 """
 import calendar
+import json
 from datetime import date
 from sqlalchemy.orm import Session
 from .. import models
@@ -19,50 +20,190 @@ def is_opening(inv: models.Invoice) -> bool:
     return (inv.no or "").startswith("OB-") or (inv.contract.no or "").startswith("OB-")
 
 
+def charge_kind(desc: str) -> str:
+    """Нэхэмжлэлийн төлбөрийн мөрийн АНГИЛАЛ — billing бичсэн шошгоор нь.
+
+    «Засвар» / «Акт» нь хөдөлгөөнөөс (movement_charges_in), «Акт: …» нь чөлөөт
+    актын бичилт (akt_charges_in). Танигдаагүй нь «other» — буруу ангилалд
+    чимээгүй орохын оронд ил халаасанд гарна.
+    """
+    if desc == "Засвар":
+        return "repair"
+    if desc == "Акт":
+        return "writeoff"
+    if desc.startswith("Акт:"):
+        return "akt"
+    return "other"
+
+
+def invoice_charges(inv: models.Invoice) -> list[dict]:
+    """detail_json доторх төлбөрийн мөрүүд — хуучин/эвдэрсэн JSON-д хоосон."""
+    try:
+        data = json.loads(inv.detail_json or "{}")
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    rows = data.get("charges", [])
+    return rows if isinstance(rows, list) else []
+
+
 def pnl(db: Session, d_from: date, d_to: date):
+    """P&L + тоо бүрийн ЗАДАРГАА («detail»).
+
+    Дүн бүр өөрийн мөрүүдээсээ НИЙЛЖ гарна — задаргааны нийлбэр толгойн
+    тоотойгоо зөрөх боломжгүй: нэг л эх сурвалж, хоёр түвшний уншилт.
+    """
     rent_income = sale_income = 0.0
+    rent_rows: list[dict] = []
+    sale_rows: list[dict] = []
+    charge_split = {"repair": 0.0, "writeoff": 0.0, "akt": 0.0, "other": 0.0}
+    charge_rows: list[dict] = []
     for inv in db.query(models.Invoice).join(models.Contract).all():
         if is_opening(inv):
             continue
         base = inv.rent_amount + inv.charge_amount
-        if inv.contract.type == "rent":
+        c = inv.contract
+        if c.type == "rent":
             # цикл [start, end) — end нь дуусах агшин тул түүгээр нь тайланд оруулна
-            if d_from <= inv.cycle_end <= d_to:
-                rent_income += base
+            if not (d_from <= inv.cycle_end <= d_to):
+                continue
+            rent_income += base
+            rent_rows.append({"date": str(inv.cycle_end), "client": c.client.name,
+                              "contract_no": c.no, "no": inv.no,
+                              "cycle_start": str(inv.cycle_start),
+                              "cycle_end": str(inv.cycle_end),
+                              "rent": round(inv.rent_amount),
+                              "charge": round(inv.charge_amount),
+                              "total": round(base)})
+            # Засвар/акт/чөлөөт актын задаргаа — нэхэмжлэл бичигдэхдээ хадгалсан
+            # мөрүүдээс. Задрахгүй үлдсэн нь «other»: нийлбэр ЯМАГТ таарна.
+            parsed = 0.0
+            for ch in invoice_charges(inv):
+                amt = float(ch.get("amount") or 0)
+                parsed += amt
+                charge_split[charge_kind(str(ch.get("desc") or ""))] += amt
+                charge_rows.append({"date": str(ch.get("date") or inv.cycle_end),
+                                    "client": c.client.name, "contract_no": c.no,
+                                    "desc": str(ch.get("desc") or ""),
+                                    "amount": round(amt)})
+            leftover = inv.charge_amount - parsed
+            if abs(leftover) > 0.5:
+                charge_split["other"] += leftover
+                charge_rows.append({"date": str(inv.cycle_end), "client": c.client.name,
+                                    "contract_no": c.no, "desc": "Задаргаагүй",
+                                    "amount": round(leftover)})
         else:
-            if d_from <= inv.cycle_start <= d_to:
-                sale_income += base
+            if not (d_from <= inv.cycle_start <= d_to):
+                continue
+            sale_income += base
+            sale_rows.append({"date": str(inv.cycle_start), "client": c.client.name,
+                              "contract_no": c.no, "no": inv.no,
+                              "amount": round(base)})
+    rent_net = rent_income - sum(charge_split.values())
 
     # Алдангийн орлого — КАССЫН зарчмаар (бодит төлөгдсөн, төлбөрийн огноогоор).
     # Түрээс/худалдаа аккруэл боловч алданги бол цуглуулсан цагтаа л орлого.
     # Хүчингүй болсон төлбөрийн хуваарилалт устдаг тул энд аяндаа ороогүй байх
     # ёстой — гэхдээ шүүлтүүрийг ИЛЭРХИЙ бичнэ: орлогын нийлбэр хэзээ ч
     # цуцлагдсан мөнгөнөөс хамаарч болохгүй.
-    penalty_income = sum(
-        a.amount for a in db.query(models.PaymentAllocation)
-        .join(models.Payment, models.PaymentAllocation.payment_id == models.Payment.id)
-        .filter(models.PaymentAllocation.part == "penalty",
-                models.Payment.voided_at.is_(None),
-                models.Payment.date >= d_from, models.Payment.date <= d_to).all())
+    penalty_income = 0.0
+    penalty_paid_rows: list[dict] = []
+    for a in (db.query(models.PaymentAllocation)
+              .join(models.Payment, models.PaymentAllocation.payment_id == models.Payment.id)
+              .filter(models.PaymentAllocation.part == "penalty",
+                      models.Payment.voided_at.is_(None),
+                      models.Payment.date >= d_from, models.Payment.date <= d_to)
+              .order_by(models.Payment.date).all()):
+        penalty_income += a.amount
+        penalty_paid_rows.append({"date": str(a.payment.date),
+                                  "client": a.payment.client.name,
+                                  "invoice_no": a.invoice.no,
+                                  "amount": round(a.amount)})
+
+    # Нэхэгдсэн алданги — МЭДЭЭЛЭЛ: орлогод зөвхөн ТӨЛӨГДСӨН нь орно (R25/H2),
+    # харин «энэ хугацаанд хэдийг нэхэв» гэдэг нь тайлангийн асуулт мөн.
+    booked_rows = [{"date": str(pc.as_of), "client": pc.contract.client.name,
+                    "contract_no": pc.contract.no, "amount": round(pc.amount),
+                    "user": pc.user_name}
+                   for pc in db.query(models.PenaltyCharge)
+                   .filter(models.PenaltyCharge.as_of >= d_from,
+                           models.PenaltyCharge.as_of <= d_to)
+                   .order_by(models.PenaltyCharge.as_of).all()]
 
     logs = db.query(models.MachineLog).filter(
         models.MachineLog.date >= d_from, models.MachineLog.date <= d_to).all()
     machine_income = sum(l.amount for l in logs if l.entry == "job")
     machine_expense = sum(l.amount for l in logs if l.entry == "expense")
+    mach_agg: dict[int, dict] = {}
+    for l in logs:
+        row = mach_agg.setdefault(l.machine_id, {"machine": l.machine.name,
+                                                 "income": 0.0, "expense": 0.0})
+        row["income" if l.entry == "job" else "expense"] += l.amount
+    machine_rows = [{"machine": r["machine"], "income": round(r["income"]),
+                     "expense": round(r["expense"]),
+                     "net": round(r["income"] - r["expense"])}
+                    for r in mach_agg.values()]
+    machine_rows.sort(key=lambda r: -r["net"])
 
     salary_expense = 0.0
+    salary_rows: list[dict] = []
     for run in db.query(models.SalaryRun).filter(models.SalaryRun.paid == 1).all():
         if run.paid_date and d_from <= run.paid_date <= d_to:
-            salary_expense += sum(i.base for i in run.items)
+            amt = sum(i.base for i in run.items)
+            salary_expense += amt
+            salary_rows.append({"date": str(run.paid_date),
+                                "label": f"{run.period} · {run.half}-р хагас",
+                                "employees": len(run.items), "amount": round(amt)})
+    salary_rows.sort(key=lambda r: r["date"])
 
-    interest_expense = sum(p.amount for p in db.query(models.LoanPayment).filter(
-        models.LoanPayment.part == "interest",
-        models.LoanPayment.date >= d_from, models.LoanPayment.date <= d_to).all())
+    interest_expense = 0.0
+    interest_rows: list[dict] = []
+    for p in (db.query(models.LoanPayment)
+              .filter(models.LoanPayment.part == "interest",
+                      models.LoanPayment.date >= d_from,
+                      models.LoanPayment.date <= d_to)
+              .order_by(models.LoanPayment.date).all()):
+        interest_expense += p.amount
+        interest_rows.append({"date": str(p.date), "loan": p.loan.name,
+                              "amount": round(p.amount)})
 
-    barter_result = sum(a.sold_amount - a.value_in for a in
-                        db.query(models.BarterAsset).filter(
-                            models.BarterAsset.status == "sold").all()
-                        if a.sold_date and d_from <= a.sold_date <= d_to)
+    # Бартер: мөр бүр ЯАЖ орж ирснээ (хэнээс, хэзээ, ямар үнээр) болон ЯАЖ
+    # зарагдснаа (хэзээ, хэнд, хэдээр) хамт авч явна — зөрүү нь хаанаас
+    # гарсан нь мөрөн дээрээ уншигдана.
+    barter_result = 0.0
+    barter_rows: list[dict] = []
+    for a in db.query(models.BarterAsset).filter(
+            models.BarterAsset.status == "sold").all():
+        if not (a.sold_date and d_from <= a.sold_date <= d_to):
+            continue
+        diff = a.sold_amount - a.value_in
+        barter_result += diff
+        barter_rows.append({"name": a.name, "type": a.type,
+                            "client": a.client.name if a.client else "",
+                            "date_in": str(a.date_in), "value_in": round(a.value_in),
+                            "sold_date": str(a.sold_date), "sold_to": a.sold_to,
+                            "sold_amount": round(a.sold_amount),
+                            "diff": round(diff)})
+    barter_rows.sort(key=lambda r: r["sold_date"])
+
+    detail = {
+        "rent_net": round(rent_net),
+        "charge": {"repair": round(charge_split["repair"]),
+                   "writeoff": round(charge_split["writeoff"]),
+                   "akt": round(charge_split["akt"]),
+                   "other": round(charge_split["other"]),
+                   "rows": sorted(charge_rows, key=lambda r: r["date"])},
+        "rent_invoices": sorted(rent_rows, key=lambda r: (r["date"], r["client"])),
+        "sale_invoices": sorted(sale_rows, key=lambda r: (r["date"], r["client"])),
+        "penalty_paid": penalty_paid_rows,
+        "penalty_booked": {"total": round(sum(r["amount"] for r in booked_rows)),
+                           "rows": booked_rows},
+        "machines": machine_rows,
+        "salary": salary_rows,
+        "interest": interest_rows,
+        "barter": barter_rows,
+    }
 
     # Дуусаагүй циклүүдэд хуримтлагдаж буй дүн — мэдээлэл болгож (үр дүнд ОРОХГҮЙ)
     from . import billing
@@ -86,7 +227,8 @@ def pnl(db: Session, d_from: date, d_to: date):
             "barter_result": round(barter_result),
             "total_income": round(total_income),
             "total_expense": round(total_expense),
-            "net": round(total_income - total_expense + barter_result)}
+            "net": round(total_income - total_expense + barter_result),
+            "detail": detail}
 
 
 def month_bounds(y: int, m: int):
