@@ -124,9 +124,13 @@ def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> byt
     _totals_row("Нийт дүн", inv.total, size=12, bold=True)
     _totals_row("Төлсөн", inv.paid)
     _totals_row("Үлдэгдэл", billing.invoice_outstanding(inv), size=12, bold=True)
-    pen = billing.invoice_penalty(inv)
+    # ⚠ ЗӨВХӨН НЭХЭГДСЭН алданги цаасан дээр гарна. Урьд нь энд амьд тооцоолол
+    # (`invoice_penalty`) хэвлэгдэж, Отгоогийн ХЭЗЭЭ Ч нэхээгүй дүн харилцагчид
+    # гардаг баримт дээр «Алданги» гэж зогсдог байв (Чадварын харьцуулалт
+    # R25 / H2). Нэхэгдээгүй тооцоолол нь ХӨШҮҮРЭГ — дэлгэц дээр л амьдарна.
+    pen = billing.invoice_penalty_due(inv)
     if pen > 0:
-        _totals_row(f"Алданги ({c.penalty_percent}%/хоног, {date.today()} байдлаар)",
+        _totals_row(f"Алданги ({c.penalty_percent}%/хоног, нэхэгдсэн)",
                     pen, size=8, color=(200, 30, 30))
     return bytes(p.output())
 
@@ -379,14 +383,16 @@ def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
     # Хүснэгтийн тор — Excel маягийн жигд, тод хүрээ (дөрвөн баримт нэг тонтой).
     p.set_draw_color(*GRID)
     p.set_line_width(GRID_W_MM)
-    for i, h in enumerate(["Үе / Нэхэмжлэл", "Дүн", "Төлсөн", "Үлдэгдэл", "Алданги"]):
+    # «Алданги» багана нь ЗӨВХӨН нэхэгдсэнийг харуулна — гарын үсэгтэй цаасан
+    # дээр нэхээгүй тооцоолол зогсох нь худал нэхэмжлэл болно (R25 / H2).
+    for i, h in enumerate(["Үе / Нэхэмжлэл", "Дүн", "Төлсөн", "Үлдэгдэл", "Нэхэгдсэн алданги"]):
         p.cell(w[i], 8, h, border=1)
     p.ln()
     p.set_font("dejavu", "", 9)
     tot = paid = out = pen_t = 0.0
     for inv in sorted(c.invoices, key=lambda i: i.due_date):
         o = billing.invoice_outstanding(inv)
-        pen = billing.invoice_penalty(inv, today)
+        pen = billing.invoice_penalty_due(inv)
         label = f"{inv.cycle_start} — {inv.cycle_end}" if c.type == "rent" else inv.no
         p.cell(w[0], 7, label, border=1)
         p.cell(w[1], 7, _money(inv.total), border=1, align="R")

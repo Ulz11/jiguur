@@ -33,7 +33,7 @@ def seed_base(db: Session):
 
     db.add_all([
         models.Setting(key="company_name", value="Жигүүр Зам ХХК"),
-        models.Setting(key="penalty_default", value="0.5"),
+        models.Setting(key="penalty_default", value="0"),
         models.Setting(key="cycle_days_default", value="30"),
         models.Setting(key="ndsh_percent", value="11.5"),
     ])
@@ -351,7 +351,7 @@ def _seed_demo(db: Session, mats, g_new, g_a, g_b):
     # ---- Тохиргоо ----
     db.add_all([
         models.Setting(key="company_name", value="Жигүүр Зам ХХК"),
-        models.Setting(key="penalty_default", value="0.5"),
+        models.Setting(key="penalty_default", value="0"),
         models.Setting(key="cycle_days_default", value="30"),
         models.Setting(key="ndsh_percent", value="11.5"),
     ])

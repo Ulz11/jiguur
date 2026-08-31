@@ -44,9 +44,9 @@ def settle_deposit(cid: int, body: DepositSettleIn, db: Session = Depends(get_db
                            note=f"Барьцаанаас суутгав (гэрээ №{c.no})")
         db.add(p)
         db.commit()
-        # Барьцаа нь ч гэсэн төлбөр — суутгахаас ӨМНӨ алдангийг тэр өдрөөр бүртгэж
-        # хөлдөөнө (эс бөгөөс хэсэгчилсэн суутгал өнгөрсний алдангийг устгана).
-        billing.book_penalties(db, c.client_id, body.date)
+        # ⚠ АЛДАНГИ ЭНД Ч НЭХЭГДЭХГҮЙ (H2). Барьцааны тооцоо нь МӨНГӨ хөдөлгөх
+        # үйлдэл — алданги нэхэх ШИЙДВЭР биш. Нэхэх нь гэрээний «Алданги нэхэх»
+        # товчоор, тусдаа, ил явна.
         # Суутгал зөвхөн ҮНДСЭН өрийг хаана: "6 сая суутгав" → авлага яг 6 саяар буурна.
         billing.allocate_payment(db, p, principal_only=True)
 
@@ -59,6 +59,43 @@ def settle_deposit(cid: int, body: DepositSettleIn, db: Session = Depends(get_db
                   f"барьцаа {c.deposit:,.0f}₮ — суутгасан {body.apply_amount:,.0f}₮, "
                   f"буцаасан {body.return_amount:,.0f}₮")
     return {"ok": True, "applied": body.apply_amount, "returned": body.return_amount}
+
+
+# ---------------- Алданги НЭХЭХ (ил үйлдэл) ----------------
+class BookPenaltyIn(BaseModel):
+    as_of: date | None = None
+
+
+@router.post("/contracts/{cid}/book-penalty")
+def book_penalty(cid: int, body: BookPenaltyIn, db: Session = Depends(get_db),
+                 user=Depends(fin)):
+    """Гэрээний алдангийг ИЛ нэхнэ — системд алданги орох ГАНЦ хаалга.
+
+    Отгоо эгч 20 жилийн Excel дээрээ алданги ганц ч удаа тооцоогүй: хуудас
+    бүр дээр «гэрээний 4.2-т зааснаар алданга тооцно» гэж зарладаг ч хэзээ ч
+    нэхдэггүй — тэр бол ХӨШҮҮРЭГ (R25). Систем нь урьд нь төлбөр бүртгэх
+    агшинд өөрөө номжиж, өршөөсөн харилцагчийн үлдэгдлийг ӨСГӨДӨГ байв (H2).
+
+    Одоо: тооцоолол нь ХАРАГДАНА («нэхэгдээгүй» шошготой), нэхэх нь ТҮҮНИЙ
+    үйлдэл. Алдангийн хувь 0 бол нэхэлт ЯВАХГҮЙ — чимээгүй 0 буцаах нь
+    «машин үйлдлийг минь тоосонгүй» гэж уншигдана, тиймээс 400-аар хэлнэ.
+    """
+    c = db.get(models.Contract, cid)
+    if not c:
+        raise HTTPException(404, "Гэрээ олдсонгүй")
+    if c.penalty_percent <= 0:
+        raise HTTPException(400, "Энэ гэрээнд алдангийн хувь 0 — алданги нэхэгдэхгүй. "
+                                 "Нэхэх бол эхлээд гэрээний алдангийн хувийг тохируулна уу.")
+    as_of = body.as_of or date.today()
+    if as_of < c.start_date:
+        raise HTTPException(400, "Огноо гэрээний эхлэлээс өмнө байна")
+    billing.ensure_invoices(db, c, as_of)
+    db.refresh(c)
+    res = billing.charge_contract_penalty(db, c, as_of, user_name=user.name)
+    audit_svc.log(db, user, "book_penalty", "contract", c.id,
+                  f"{c.client.name} · гэрээ №{c.no} · {as_of} өдрөөр "
+                  f"{res['total']:,.0f}₮ алданги нэхэв ({len(res['rows'])} нэхэмжлэл)")
+    return res
 
 
 # ---------------- Авлага цуглуулах ----------------

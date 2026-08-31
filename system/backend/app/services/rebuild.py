@@ -9,16 +9,24 @@
 ХАТУУ ХИЛ:
 - `ensure_invoices` ЗӨВХӨН НЭМДЭГ (append-only) бөгөөс олон GET зам дээр
   ажилладаг. Дахин бодолт нь ЗӨВХӨН эндээс, зөвхөн засварын endpoint-оос.
+- АЛДАНГИ дахин бодолтоос ӨӨРӨӨ ТӨРӨХГҮЙ. Нэхэлт нь Отгоогийн ил шийдвэр
+  (`PenaltyCharge` явдал) тул replay нь ЗӨВХӨН бүртгэгдсэн явдлуудыг, тэдний
+  ОГНООГООР нь дахин нэхнэ — хөлдсөн дүнг нь буцааж тавихгүй (тоо ширхэг
+  засагдвал алданги нь ч засагдана). Явдалгүй гэрээнд алданги 0 хэвээр.
 - "OB-" (үлдэгдэл шилжүүлэлт) нэхэмжлэл нь ГАРААР хийгдсэн, өгөгдлөөс
   гаргаж болохгүй тул ХЭЗЭЭ Ч устгагдахгүй.
 - `payment_allocations`-д FK cascade БАЙХГҮЙ — хуваарилалтыг ГАРААР эхэлж
   устгана, эс бөгөөс өнчин мөр үлдэж авлага гажина.
 """
 import re
-from datetime import date
+from datetime import date, datetime
 from sqlalchemy.orm import Session
 from .. import models
 from . import billing
+
+# `created_at` нь хуучин мөрөнд NULL байж болно (схем нэмэгдэхээс өмнөх дата) —
+# эрэмбэ нурахын оронд ХАМГИЙН ЭХЭНД тавина.
+_EPOCH = datetime.min
 
 
 def _key(contract: models.Contract, cycle_start: date, cycle_end: date, no: str):
@@ -101,18 +109,44 @@ def rebuild_contract_invoices(db: Session, contract: models.Contract,
                   for i in contract.invoices
                   if not i.no.startswith("OB-")}
 
-    # 4) ТӨЛБӨРҮҮДИЙГ REPLAY — харилцагчийн БҮХ ХҮЧИНТЭЙ төлбөр (date, id) дарааллаар.
-    # ХҮЧИНГҮЙ болсон нь энд ОРОХГҮЙ: replay нь хуваарилалтыг тэглээд шинээр
+    # 4) ЦАГИЙН ШУГАМЫГ REPLAY — АЛДАНГИЙН НЭХЭЛТ ба ТӨЛБӨР ХОЛИЛДОНО.
+    #
+    # Алданги одоо ӨӨРӨӨ номжихоо больж, зөвхөн Отгоогийн ИЛ шийдвэрээр
+    # нэхэгдэнэ (H2). Гэтэл дахин бодолт нэхэмжлэлүүдийг УСТГАЖ шинээр
+    # төрүүлдэг — шинэ нэхэмжлэл 0 алдангитай төрнө. Тиймээс өнгөрсөн
+    # нэхэлтүүдийг `PenaltyCharge` явдлаар нь ДАХИН тоглуулна.
+    #
+    # ХӨЛДСӨН ДҮНГ нь буцааж тавихгүй, ОГНООГ нь дахин нэхнэ: тоо ширхэг
+    # засагдвал алданги нь ч засагдах ёстой («мөнгө дагана»). Хоёр төрлийн
+    # явдал НЭГ дараалалд нийлнэ:
+    #   1) бизнесийн ОГНОО (төлбөрийн огноо / нэхэлтийн `as_of`) — гол түлхүүр:
+    #      хойшлуулж бичсэн төлбөр хуучин нэхэмжлэлдээ очих ёстой;
+    #   2) БИЧИГДСЭН агшин (`created_at`) — нэг өдрийн доторх жинхэнэ дараалал:
+    #      өглөө төлбөр бүртгээд, үдээс хойш алданги нэхсэн бол алданги нь
+    #      ҮЛДЭГДЛЭЭР нь бодогдох ёстой (эсрэгээр биш);
+    #   3) төрөл ба id — тэнцвэл ч үр дүн ТОГТМОЛ байх баталгаа.
+    #
+    # Нэхэлт нь ЗӨВХӨН энэ гэрээнд (`contract_id`) хамаарна — өөр гэрээний
+    # алдангийг нэг гэрээ дахин бодох нь хөндөж болохгүй. `record=False`:
+    # replay нь ШИНЭ шийдвэр биш, хуучныг нь давтаж байна.
+    #
+    # ХҮЧИНГҮЙ болсон төлбөр энд ОРОХГҮЙ: replay нь хуваарилалтыг тэглээд шинээр
     # хийдэг тул цуцлагдсан төлбөр орвол сулласан алдаа засвар хийх бүрд ӨӨРӨӨ
     # амилж, «цуцалсан мөнгө буцаад ирлээ» гэсэн итгэл эвдэх алдаа болно.
     warnings: list[str] = []
     payments = (db.query(models.Payment).filter_by(client_id=contract.client_id)
                 .filter(billing.LIVE_PAYMENT)
                 .order_by(models.Payment.date, models.Payment.id).all())
-    for p in payments:
-        # Алданги тухайн төлбөрийн ӨДРӨӨР дахин хөлдөнө (өөр гэрээнийхэд
-        # монотон тул давхар нэмэгдэхгүй).
-        billing.book_penalties(db, contract.client_id, p.date)
+    charges = billing.contract_penalty_charges(db, contract.id)
+    timeline = ([(p.date, p.created_at or _EPOCH, 1, p.id, "pay", p) for p in payments]
+                + [(ch.as_of, ch.created_at or _EPOCH, 0, ch.id, "book", ch) for ch in charges])
+    timeline.sort(key=lambda t: t[:4])
+    for *_, kind, obj in timeline:
+        if kind == "book":
+            billing.book_penalties(db, contract.client_id, obj.as_of,
+                                   contract_id=contract.id, record=False)
+            continue
+        p = obj
         # ӨӨР гэрээнд үлдсэн хуваарилалтууд хэвээр — зөвхөн СУЛАРСАН үлдэгдлийг
         # дахин хуваарилна.
         remain = billing.payment_unallocated(p)

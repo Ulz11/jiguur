@@ -146,7 +146,10 @@ def test_schema_migrate_renders_scalar_defaults(tmp_path):
         row = c.exec_driver_sql(
             "SELECT penalty_percent, cycle_days, note, end_date, created_at "
             "FROM contracts WHERE id = 1").fetchone()
-    assert row[0] == 0.5          # Float default
+    # Float default. `penalty_percent`-ийн анхны утга 0.5 → 0 болов (алданги нь
+    # ХӨШҮҮРЭГ — R25/H2), тул шалгаж буй зүйл нь утга биш ДҮРЭМ: DEFAULT
+    # рендерлэгдсэн ⇒ хуучин мөр NULL БИШ, тодорхой тоо болж унана.
+    assert row[0] is not None and row[0] == 0.0
     assert row[1] == 30           # Integer default
     assert row[2] == ""           # Text default
     assert row[3] is None         # nullable, default-гүй
@@ -205,3 +208,52 @@ def test_schema_migrate_skips_non_sqlite():
     """Postgres дээр юу ч хийхгүй — тэнд схемийг гараар шинэчилнэ."""
     fake = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
     assert migrate_schema(fake) == []
+
+
+def test_backfill_penalty_charges_rescues_legacy_bookings(tmp_path):
+    """Үе M2: ХУУЧИН автомат нэхэлтүүд явдал болж, дахин бодолтод амьд үлдэнэ.
+
+    Алданги урьд нь төлбөр бүртгэх агшинд ӨӨРӨӨ номжиж байсан тул хуучин
+    DB-д `penalty_booked_until` тавигдсан нэхэмжлэлүүд байгаа ч ямар ч
+    `PenaltyCharge` явдал байхгүй. Rebuild одоо ЯВДЛААР replay хийдэг тул
+    нөхөхгүй бол эхний засварын үед тэдгээр нэхэлт ЧИМЭЭГҮЙ УСТАНА.
+
+    Гэрээ × огноо бүрд НЭГ явдал; дахин ажиллуулахад давхардахгүй.
+    """
+    engine = create_engine("sqlite:///" + str(tmp_path / "old.db"))
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as s:
+        s.add_all([models.Client(id=1, name="Идэр Зам"),
+                   models.Contract(id=1, no="26/07", client_id=1, type="rent",
+                                   start_date=date(2026, 3, 20), penalty_percent=0.5)])
+        s.flush()
+        # хоёр нэхэмжлэл нэг өдрөөр номжсон + нэг нь өөр өдрөөр
+        for iid, no, booked, until in ((1, "R-26/07-1", 100.0, date(2026, 5, 21)),
+                                       (2, "R-26/07-2", 216_750.0, date(2026, 5, 21)),
+                                       (3, "R-26/07-3", 352_837.5, date(2026, 6, 25))):
+            s.add(models.Invoice(id=iid, contract_id=1, no=no,
+                                 cycle_start=date(2026, 3, 20), cycle_end=date(2026, 4, 19),
+                                 due_date=date(2026, 4, 19), total=1000, paid=0,
+                                 penalty_booked=booked, penalty_booked_until=until))
+        # нэхэгдээгүй нэхэмжлэл явдал ҮҮСГЭХГҮЙ
+        s.add(models.Invoice(id=4, contract_id=1, no="R-26/07-4",
+                             cycle_start=date(2026, 6, 20), cycle_end=date(2026, 7, 20),
+                             due_date=date(2026, 7, 20), total=1000, paid=0))
+        s.commit()
+
+    migrate_schema(engine)
+
+    def charges():
+        with engine.connect() as c:
+            return [tuple(r) for r in c.exec_driver_sql(
+                "SELECT contract_id, client_id, as_of, amount, user_name "
+                "FROM penalty_charges ORDER BY as_of")]
+
+    assert charges() == [
+        (1, 1, "2026-05-21", 216_850.0, "(хуучин системээс)"),   # хоёр мөр НИЙЛЖ нэг явдал
+        (1, 1, "2026-06-25", 352_837.5, "(хуучин системээс)"),
+    ]
+    # idempotent — дахин ажиллуулахад давхардахгүй
+    migrate_schema(engine)
+    assert len(charges()) == 2
+    engine.dispose()

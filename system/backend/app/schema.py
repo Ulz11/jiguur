@@ -42,9 +42,48 @@ def backfill_movement_line_rates(engine):
         """)
 
 
+def backfill_penalty_charges(engine):
+    """Үе M2 (алданги = хөшүүрэг): ХУУЧИН автомат нэхэлтүүдийг явдал болгоно.
+
+    Алданги урьд нь төлбөр бүртгэх агшинд ӨӨРӨӨ номжиж байсан тул хуучин
+    DB-үүдэд `penalty_booked_until` тавигдсан нэхэмжлэлүүд байна — гэвч
+    ямар ч `PenaltyCharge` явдалгүй. Дахин бодолт (rebuild) одоо ЯВДЛААР
+    replay хийдэг тул тэдгээрийг нөхөхгүй бол ЭХНИЙ засварын үед хуучин
+    нэхэлтүүд ЧИМЭЭГҮЙ УСТАЖ, тэдгээрт төлөгдсөн мөнгө өөр тийш явна —
+    «машин түүхийг дахин бичлээ» гэсэн итгэл эвдэх алдаа (H6).
+
+    Гэрээ × огноо бүрд НЭГ явдал (тэр огноогоор нэхэгдсэн нэхэмжлэлүүдийн
+    нийлбэр дүнтэй). Replay нь огноог нь дахин нэхдэг тул дүн нь баримт
+    төдий — тухайн үед нэг ажиллагаагаар номжсоныг ойролцоолж сэргээнэ.
+    Дахин ажиллуулахад аюулгүй: аль хэдийн явдалтай (гэрээ, огноо) хосыг
+    алгасна.
+    """
+    with engine.begin() as conn:
+        if not _has_tables(conn, "penalty_charges", "invoices", "contracts"):
+            return
+        # `created_at` нь тэр өдрийн 00:00 — replay-ийн эрэмбэд нэхэлт нь ТЭР
+        # ӨДРИЙН төлбөрөөс ӨМНӨ орно. Хуучин автомат зан яг ийм байсан:
+        # төлбөрийн POST дотор эхлээд номжиж, дараа нь хуваарилдаг байв.
+        conn.exec_driver_sql("""
+            INSERT INTO penalty_charges (contract_id, client_id, as_of, amount,
+                                         user_name, created_at)
+            SELECT i.contract_id, c.client_id, i.penalty_booked_until,
+                   ROUND(SUM(i.penalty_booked), 2), '(хуучин системээс)',
+                   i.penalty_booked_until || ' 00:00:00'
+              FROM invoices i
+              JOIN contracts c ON c.id = i.contract_id
+             WHERE i.penalty_booked_until IS NOT NULL
+             GROUP BY i.contract_id, c.client_id, i.penalty_booked_until
+            HAVING NOT EXISTS (
+                     SELECT 1 FROM penalty_charges pc
+                      WHERE pc.contract_id = i.contract_id
+                        AND pc.as_of = i.penalty_booked_until)
+        """)
+
+
 # Үе шат бүрийн дата нөхөлт энд бүртгэгдэнэ: fn(engine).
 # ALTER-үүд дууссаны ДАРАА дарааллаараа ажиллана. Функц бүр өөрөө idempotent байх ёстой.
-BACKFILLS: list = [backfill_movement_line_rates]
+BACKFILLS: list = [backfill_movement_line_rates, backfill_penalty_charges]
 
 
 def _default_sql(col) -> str:

@@ -274,3 +274,168 @@ def test_preview_leaves_no_trace(db):
     assert c.start_date == date(2026, 3, 20)          # засвар ХАДГАЛАГДААГҮЙ
     assert db.query(models.Invoice).count() == n_inv
     assert _snapshot(db, c) == before
+
+
+# ---------- АЛДАНГИЙН ИЛ НЭХЭЛТ replay-д амьд үлдэнэ ----------
+#
+# Алданги одоо ӨӨРӨӨ номжихоо больж, зөвхөн Отгоогийн ил шийдвэрээр нэхэгдэнэ
+# (Чадварын харьцуулалт H2 / R25). Гэтэл дахин бодолт нэхэмжлэлүүдийг УСТГАЖ
+# шинээр төрүүлдэг — шинэ нэхэмжлэл 0 алдангитай төрнө. Тиймээс нэхэлт бүр
+# `PenaltyCharge` явдал болж үлдэж, replay нь ХӨЛДСӨН ДҮНГ нь биш ОГНООГ нь
+# дахин нэхнэ: тоо ширхэг засагдвал алданги нь ч засагдана («мөнгө дагана»).
+
+def _charge(db, c, as_of):
+    """«Алданги нэхэх» товчны сервер тал — явдал үлдээж нэхнэ."""
+    db.refresh(c)
+    return billing.charge_contract_penalty(db, c, as_of, user_name="Отгоо")
+
+
+def test_explicit_charge_survives_rebuild(db):
+    """5.29-нд нэхсэн алданги дахин бодолтын дараа ЯГ ХЭВЭЭР эргэж ирнэ.
+
+    Явдал байхгүй бол шинэ нэхэмжлэл 0 алдангитай төрж, Отгоогийн нэхсэн
+    198,000₮ + 49,500₮ ЧИМЭЭГҮЙ УСТАХ байсан.
+    """
+    from app.services import rebuild
+
+    c, m, ga, gb = _two_cycles(db)
+    res = _charge(db, c, date(2026, 5, 29))
+    assert res["total"] == pytest.approx(247_500)
+    assert [(r["days"], r["amount"]) for r in res["rows"]] == [(40, 198_000), (10, 49_500)]
+
+    before = _snapshot(db, c)
+    assert before["penalty_booked"] == [198_000, 49_500]
+
+    rebuild.rebuild_contract_invoices(db, c, date(2026, 6, 1))
+
+    assert _snapshot(db, c) == before, "нэхэлт replay-д алдагдав"
+
+
+def test_charge_and_payment_interleave_in_date_order(db):
+    """ХӨДӨЛГӨӨН ЗАСАГДАХАД алданги нь ч дагаж засагдана — гэхдээ ДАРААЛАЛ хэвээр.
+
+    Чадварын харьцуулалтын сценар: нэхэмжлэл хэтэрсэн → 10 дахь хоногт алданги
+    НЭХЭВ → 15 дахь хоногт төлбөр ирж түүнийг хэсэгчлэн хаав → дараа нь тоо
+    ширхэг засагдав → дахин бодолт.
+
+    Хугацааны шугам (гэрээ 3.20, нэхэмжлэл 1 нь 4.19-нд хэтэрсэн):
+      4.29 — АЛДАНГИ НЭХЭВ: 990,000 × 0.5% × 10 = 49,500₮
+      5.04 — 1,000,000₮ ирэв: 990,000₮ үндсэн + 10,000₮ НЭХЭГДСЭН алданги
+      → тоо 100 → 80 болж засагдав → дахин бодолт.
+
+    Дахин бодолтын дараа: нэхэмжлэл 792,000₮ (80×330×30), алданги 4.29-нд
+    ДАХИН нэхэгдэж 792,000 × 0.5% × 10 = 39,600₮ болно (198,000₮ гэсэн хуучин
+    тоо биш — тоо ширхэг буурсан бол алданги нь ч буурах ёстой).
+    """
+    from app.services import rebuild
+
+    c, m, ga, gb = _two_cycles(db)
+    inv1 = sorted(c.invoices, key=lambda i: i.due_date)[0]
+    assert inv1.due_date == date(2026, 4, 19) and inv1.total == pytest.approx(990_000)
+
+    _charge(db, c, date(2026, 4, 29))
+    db.refresh(inv1)
+    assert inv1.penalty_booked == pytest.approx(49_500)
+
+    p = models.Payment(client_id=c.client_id, contract_id=c.id, date=date(2026, 5, 4),
+                       amount=1_000_000, method="BANK")
+    db.add(p)
+    db.commit()
+    billing.allocate_payment(db, p)
+    db.refresh(inv1)
+    assert inv1.paid == pytest.approx(990_000)
+    assert inv1.penalty_paid == pytest.approx(10_000), "нэхэгдсэн алданги хэсэгчлэн төлөгдөв"
+
+    # ---- тоо ширхэг засагдав → дахин бодолт
+    c.movements[0].lines[0].qty = 80
+    db.commit()
+    rebuild.rebuild_contract_invoices(db, c, date(2026, 5, 25))
+
+    db.expire_all()
+    invs = sorted(c.invoices, key=lambda i: i.cycle_start)
+    assert invs[0].total == pytest.approx(792_000)
+    # 4.29-ний нэхэлт ДАХИН бодогдов — засагдсан үндсэн дүнгээр
+    assert invs[0].penalty_booked == pytest.approx(792_000 * 0.005 * 10)
+    assert invs[0].penalty_booked == pytest.approx(39_600)
+    assert invs[0].penalty_booked_until == date(2026, 4, 29)
+    # 5.04-ний төлбөр НЭХЭЛТИЙН ДАРАА орсон хэвээр: үндсэн 792,000 бүрэн хаагдаж,
+    # үлдсэн 208,000₮-ийн 39,600₮ нь алданги руу, 168,400₮ нь дараагийн цикл рүү
+    assert invs[0].paid == pytest.approx(792_000)
+    assert invs[0].penalty_paid == pytest.approx(39_600)
+    assert invs[1].paid == pytest.approx(1_000_000 - 792_000 - 39_600)
+    assert sum(a.amount for a in db.query(models.PaymentAllocation).all()) \
+        == pytest.approx(1_000_000), "мөнгө алдагдсангүй"
+
+
+def test_rebuild_is_deterministic_across_repeats(db):
+    """Дахин бодолтыг ХОЁР УДАА гүйлгэхэд ЯГ ижил төлөв гарна.
+
+    Нэхэлт + төлбөр холилдсон хугацааны шугам дээр давталт бүр өөр хариу өгвөл
+    Отгоо хоёр өөр тоо хараад аль нь ч итгэл хүлээхээ болино.
+    """
+    from app.services import rebuild
+
+    c, m, ga, gb = _two_cycles(db)
+    _charge(db, c, date(2026, 4, 29))
+    p = models.Payment(client_id=c.client_id, contract_id=c.id, date=date(2026, 5, 4),
+                       amount=1_000_000, method="BANK")
+    db.add(p)
+    db.commit()
+    billing.allocate_payment(db, p)
+    _charge(db, c, date(2026, 5, 20))
+
+    rebuild.rebuild_contract_invoices(db, c, date(2026, 5, 25))
+    once = _snapshot(db, c)
+    rebuild.rebuild_contract_invoices(db, c, date(2026, 5, 25))
+    assert _snapshot(db, c) == once
+
+
+def test_rebuild_without_charges_leaves_penalty_at_zero(db):
+    """НЭХЭЭГҮЙ бол дахин бодолт өөрөө алданги ЗОХИОХГҮЙ.
+
+    Хуучин replay төлбөрийн огноо бүрээр номжиж байсан — засвар хийхэд
+    Отгоогийн хэзээ ч нэхээгүй алданги гэнэт төрдөг байв.
+    """
+    from app.services import rebuild
+
+    c, m, ga, gb = _two_cycles(db)
+    p = models.Payment(client_id=c.client_id, contract_id=c.id, date=date(2026, 5, 20),
+                       amount=500_000, method="BANK")
+    db.add(p)
+    db.commit()
+    billing.allocate_payment(db, p)
+
+    rebuild.rebuild_contract_invoices(db, c, date(2026, 5, 25))
+
+    db.expire_all()
+    assert [i.penalty_booked or 0 for i in c.invoices] == [0, 0]
+    assert db.query(models.PenaltyCharge).count() == 0
+
+
+def test_charge_replay_only_touches_own_contract(db):
+    """Нэг гэрээ дахин бодоход ӨӨР гэрээний алданги ХӨДЛӨХГҮЙ.
+
+    Хуучин replay нь харилцагчийн БҮХ нэхэмжлэлийг төлбөрийн огноо бүрээр
+    номжиж, хажуугийн гэрээний `penalty_booked_until`-ыг чимээгүй урагшлуулдаг
+    байв — тэр гэрээг хэзээ ч нэхээгүй байсан ч.
+    """
+    from app.services import rebuild
+
+    c, m, ga, gb = _two_cycles(db)
+    other = models.Contract(no="24/09", client_id=c.client_id, type="rent",
+                            start_date=date(2026, 3, 20), cycle_days=30, penalty_percent=0.5)
+    db.add(other)
+    db.flush()
+    db.add(models.ContractItem(contract_id=other.id, material_id=m.id, grade_id=ga.id,
+                               daily_rate=330))
+    db.commit()
+    mv(db, other, "ISSUE", date(2026, 3, 20), [dict(material_id=m.id, grade_id=ga.id, qty=10)])
+    billing.ensure_invoices(db, other, date(2026, 5, 25))
+    db.commit()
+
+    _charge(db, c, date(2026, 4, 29))
+    rebuild.rebuild_contract_invoices(db, c, date(2026, 5, 25))
+
+    db.expire_all()
+    assert all((i.penalty_booked or 0) == 0 and i.penalty_booked_until is None
+               for i in other.invoices), "хөрш гэрээний алданги хөндөгдөв"

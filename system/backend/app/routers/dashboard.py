@@ -37,7 +37,7 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
         return scope == "all" or (c is not None and c.type == scope)
 
     # ---- KPI ----
-    receivable = penalty = overdue_amt = 0.0
+    receivable = penalty = penalty_booked = overdue_amt = 0.0
     overdue_cnt = 0
     active_cnt = ending_cnt = 0
     # «N нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг хэлж
@@ -50,6 +50,7 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
         b = billing.contract_balance(c, today)
         receivable += b["outstanding"] + b["accruing"]
         penalty += b["penalty"]
+        penalty_booked += b["penalty_booked"]
         if c.status == "active" and not c.no.startswith("OB-"):
             active_cnt += 1
             if c.end_date and 0 <= (c.end_date - today).days <= 7:
@@ -192,6 +193,10 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
                 month_sale += inv.total
 
     return {"kpi": {"receivable": round(receivable), "penalty": round(penalty),
+                    # Самбарын алдангийн тэмдэг НЭХЭГДСЭНийг хэлнэ — нэхэгдээгүй
+                    # тооцоолол нь тусдаа, «≈ … нэхэгдээгүй» гэж (H2 / R25).
+                    "penalty_booked": round(penalty_booked),
+                    "penalty_unbooked": round(max(penalty - penalty_booked, 0.0)),
                     "overdue": round(overdue_amt), "overdue_count": overdue_cnt,
                     "active_contracts": active_cnt, "ending_soon": ending_cnt,
                     "utilization": utilization, "month_sale": round(month_sale)},

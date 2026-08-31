@@ -63,12 +63,16 @@ def export_report(months: int = 6, db: Session = Depends(get_db), user=Depends(g
     ws.column_dimensions["B"].width = 18
 
     ws2 = wb.create_sheet("Авлага")
-    ws2.append(["Харилцагч", "Идэвхтэй гэрээ", "Авлагын үлдэгдэл", "Алданги", "Барьцаа"])
+    # Алдангийн ХОЁР багана — нэхэгдсэн нь өр, нэхэгдээгүй нь зөвхөн тооцоолол.
+    # Нэг багана болгож нийлүүлбэл Excel рүү буусан тоо нь «нэхсэн» гэж
+    # уншигдаж, хэзээ ч гаргаагүй шийдвэр баримт болно (R25 / H2).
+    ws2.append(["Харилцагч", "Идэвхтэй гэрээ", "Авлагын үлдэгдэл",
+                "Нэхэгдсэн алданги", "Алдангийн тооцоолол (нэхэгдээгүй)", "Барьцаа"])
     today_ = date.today()
     for c in db.query(models.Client).order_by(models.Client.name).all():
         row = serializers.client_row(c, today_)
         ws2.append([row["name"], row["active_contracts"], row["receivable"],
-                    row["penalty"], row["deposit"]])
+                    row["penalty_booked"], row["penalty_unbooked"], row["deposit"]])
     ws2.column_dimensions["A"].width = 32
 
     ws3 = wb.create_sheet("Зээл")
@@ -93,12 +97,13 @@ def export_receivables(db: Session = Depends(get_db), user=Depends(guard)):
     ws = wb.active
     ws.title = "Авлага"
     ws.append(["Харилцагч", "Регистр", "Утас", "Идэвхтэй гэрээ",
-               "Авлагын үлдэгдэл", "Алданги", "Барьцаа", "Хэтэрсэн эсэх"])
+               "Авлагын үлдэгдэл", "Нэхэгдсэн алданги",
+               "Алдангийн тооцоолол (нэхэгдээгүй)", "Барьцаа", "Хэтэрсэн эсэх"])
     for c in db.query(models.Client).order_by(models.Client.name).all():
         row = serializers.client_row(c, today)
         ws.append([row["name"], row["reg"], row["phone"], row["active_contracts"],
-                   row["receivable"], row["penalty"], row["deposit"],
-                   "Тийм" if row["overdue"] else ""])
+                   row["receivable"], row["penalty_booked"], row["penalty_unbooked"],
+                   row["deposit"], "Тийм" if row["overdue"] else ""])
     ws.column_dimensions["A"].width = 32
     return Response(_xlsx(wb), media_type=XLSX_MIME,
                     headers={"Content-Disposition": 'attachment; filename="avlaga.xlsx"'})

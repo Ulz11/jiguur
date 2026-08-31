@@ -198,12 +198,13 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
 
 
 def client_row(c: models.Client, today: date):
-    outstanding = penalty = deposit = 0.0
+    outstanding = penalty = booked = deposit = 0.0
     active = 0
     for ct in c.contracts:
         b = billing.contract_balance(ct, today)
         outstanding += b["outstanding"] + b["accruing"]
         penalty += b["penalty"]
+        booked += b["penalty_booked"]
         deposit += ct.deposit
         if ct.status == "active":
             active += 1
@@ -212,6 +213,10 @@ def client_row(c: models.Client, today: date):
     return {"id": c.id, "name": c.name, "reg": c.reg, "person": c.person,
             "phone": c.phone, "note": c.note, "active_contracts": active,
             "receivable": round(outstanding), "penalty": round(penalty),
+            # НЭХЭГДСЭН нь мөнгө, НЭХЭГДЭЭГҮЙ нь хөшүүрэг — хоёрыг нэг тоо
+            # болгож нийлүүлбэл «машин өр зохиов» гэж уншигдана (H2).
+            "penalty_booked": round(booked),
+            "penalty_unbooked": round(max(penalty - booked, 0.0)),
             "deposit": deposit, "overdue": overdue}
 
 
@@ -239,6 +244,8 @@ def contract_row(c: models.Contract, today: date):
             "state": state, "status": c.status,
             "balance": round(b["outstanding"] + b["accruing"]),
             "penalty": round(b["penalty"]),
+            "penalty_booked": round(b["penalty_booked"]),
+            "penalty_unbooked": round(b["penalty_unbooked"]),
             "day_amount": round(cur["day_amount"]) if cur else 0,
             "cycle": cur, "note": c.note}
 
@@ -377,8 +384,13 @@ def invoice(inv: models.Invoice, today: date):
             "vat_amount": round(inv.vat_amount), "total": round(inv.total),
             "paid": round(inv.paid),
             "outstanding": round(billing.invoice_outstanding(inv)),
-            "penalty": round(billing.invoice_penalty(inv, today)),      # бүртгэгдсэн + амьд
-            "penalty_due": round(billing.invoice_penalty_due(inv)),     # бүртгэгдсэн — төлж болно
+            "penalty": round(billing.invoice_penalty(inv, today)),      # нэхэгдсэн + тооцоолол
+            "penalty_due": round(billing.invoice_penalty_due(inv)),     # НЭХЭГДСЭН — төлж болно
+            # НЭХЭГДЭЭГҮЙ тооцоолол: зөвхөн мэдээлэл, төлбөр үүнийг хааж чадахгүй
+            "penalty_unbooked": round(billing.invoice_penalty_unbooked(inv, today)),
+            # Нэхэлтийн баримт («Y хоног») FRONTEND дээр дурын `as_of`-оор
+            # дахин бодогдоно — тэр бодолтын эхлэл цэг нь энэ огноо.
+            "penalty_since": str(billing._penalty_since(inv)),
             "status": billing.invoice_status(inv, today),
             "detail": json.loads(inv.detail_json or "[]")}
 
@@ -420,7 +432,8 @@ def attachment(a: models.Attachment):
 #
 # Талбарыг 0 болгохгүй, БҮРМӨСӨН хасна: «0₮-ийн гэрээ» гэж уншигдах эрсдэлгүй,
 # мөн нэмэгдэх шинэ талбар өөрөө нэвтрэхгүй (жагсаалтад орох хүртэл).
-_F_TOP = ("balance", "penalty", "penalty_percent", "day_amount", "deposit",
+_F_TOP = ("balance", "penalty", "penalty_booked", "penalty_unbooked",
+          "penalty_percent", "day_amount", "deposit",
           "deposit_status", "deposit_applied", "deposit_returned",
           "deposit_settled_date", "vat_percent")
 _F_BLOCKS = ("invoices", "payments")

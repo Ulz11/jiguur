@@ -6,7 +6,10 @@
 - Цикл = гэрээний өдрөөс эхэлсэн cycle_days (30) хоногийн үе. [эхлэл, төгсгөл) хагас нээлттэй.
 - Буцаалт циклийн дундуур ирвэл өдрөөр нь пропорц бодогдоно (өөрөө гарна).
 - Засвар, актын төлбөр тухайн циклийн нэхэмжлэлд нэмэгдэнэ.
-- Алданги = үлдэгдэл × %/хоног × хэтэрсэн хоног (амьд тооцоолол).
+- Алданги = үлдэгдэл × %/хоног × хэтэрсэн хоног. ⚠ ЭНЭ НЬ ТООЦООЛОЛ, НЭХЭМЖЛЭЛ
+  БИШ: алданги нь Отгоогийн ХӨШҮҮРЭГ (Excel-дээ 20 жил зарлаад ганц ч удаа
+  тооцоогүй — R25) тул системд ОРОХ ганц хаалга нь «Алданги нэхэх» товч.
+  Нэхэгдсэн (`penalty_booked`) нь мөнгө; нэхэгдээгүй нь зөвхөн харагдац.
 """
 import json
 from datetime import date, datetime, timedelta
@@ -479,10 +482,10 @@ def invoice_outstanding(inv: models.Invoice) -> float:
 
 
 def invoice_penalty_due(inv: models.Invoice) -> float:
-    """БҮРТГЭГДСЭН алдангийн үлдэгдэл — хуваарилалт ЗӨВХӨН үүнийг хааж чадна.
+    """НЭХЭГДСЭН алдангийн үлдэгдэл — хуваарилалт ЗӨВХӨН үүнийг хааж чадна.
 
-    Амьд (бүртгэгдээгүй) алданги хараахан төлөгдөх боломжгүй: тэр төлбөр
-    бүртгэх агшинд `book_penalties`-аар хөлдөж байж мөнгө хүлээж авна.
+    Нэхэгдээгүй (амьд тооцоолол) алданги төлөгдөх боломжгүй: тэр «Алданги
+    нэхэх» товч дарагдаж, `book_penalties`-аар хөлдөж байж мөнгө хүлээж авна.
     """
     return max((inv.penalty_booked or 0.0) - (inv.penalty_paid or 0.0), 0.0)
 
@@ -495,10 +498,10 @@ def _penalty_since(inv: models.Invoice) -> date:
 
 
 def invoice_penalty(inv: models.Invoice, today: date | None = None) -> float:
-    """Харагдах алданги = БҮРТГЭГДСЭН үлдэгдэл + бүртгэсэн өдрөөс хойшхи АМЬД дүн.
+    """Харагдах алданги = НЭХЭГДСЭН үлдэгдэл + нэхсэн өдрөөс хойшхи ТООЦООЛОЛ.
 
-    Хэзээ ч бүртгэгдээгүй нэхэмжлэлд энэ нь хуучин томьёотой ЯГ ижил
-    (booked = 0, since = due_date).
+    Хэзээ ч нэхэгдээгүй нэхэмжлэлд энэ нь хуучин томьёотой ЯГ ижил
+    (booked = 0, since = due_date) — гэхдээ бүхэлдээ НЭХЭГДЭЭГҮЙ дүн.
     """
     today = today or date.today()
     pen = invoice_penalty_due(inv)
@@ -509,6 +512,23 @@ def invoice_penalty(inv: models.Invoice, today: date | None = None) -> float:
     if days <= 0:
         return pen
     return pen + out * inv.contract.penalty_percent / 100 * days
+
+
+def invoice_penalty_unbooked(inv: models.Invoice, today: date | None = None) -> float:
+    """НЭХЭГДЭЭГҮЙ алдангийн тооцоолол — зөвхөн МЭДЭЭЛЭЛ, төлөгдөхгүй.
+
+    Отгоо энэ тоог 20 жилийн турш харж байгаагүй: хуудсандаа алдангийг
+    зарлаад хэзээ ч нэхээгүй. Одоо хэдийг өршөөж байгаагаа ХАРНА — хөшүүрэг
+    нь хүчтэй болно. Хаана ч гэсэн «нэхэгдээгүй» шошготой явна.
+    """
+    return max(invoice_penalty(inv, today) - invoice_penalty_due(inv), 0.0)
+
+
+def penalty_days(inv: models.Invoice, as_of: date) -> int:
+    """`as_of` өдрөөр нэхэгдэх ХОНОГИЙН тоо (нэхэх баримтын «Y хоног»)."""
+    if invoice_outstanding(inv) <= 0.005 or inv.contract.penalty_percent <= 0:
+        return 0
+    return max((as_of - _penalty_since(inv)).days, 0)
 
 
 def invoice_status(inv: models.Invoice, today: date | None = None) -> str:
@@ -524,22 +544,14 @@ def invoice_status(inv: models.Invoice, today: date | None = None) -> str:
     return "partial" if inv.paid > 0 else "open"
 
 
-def book_penalties(db: Session, client_id: int, as_of: date) -> float:
-    """Харилцагчийн хэтэрсэн нэхэмжлэлүүдийн алдангийг `as_of` өдрөөр БҮРТГЭНЭ.
+def _book_invoices(invoices, as_of: date) -> list[dict]:
+    """Хэтэрсэн нэхэмжлэлүүдийг `as_of` өдрөөр хөлдөөнө — алдангийн ЦӨМ.
 
-    ⚠ АНХААР — ЭНЭ ФУНКЦ БИЧДЭГ. `ensure_invoices`-оос болон ямар ч GET
-    (унших) замаас ДУУДАЖ БОЛОХГҮЙ: тэдгээр нь өдөрт олон удаа ажилладаг тул
-    алданги хуудас сэргээх бүрд хөлдөж эхэлнэ. Зөвхөн:
-      · POST /api/payments (төлбөр бүртгэх агшин, as_of = төлбөрийн огноо)
-      · барьцааны тооцоо (settle_deposit)
-      · (хожим) нэхэмжлэл дахин үүсгэх replay
     Монотон: `penalty_booked_until` зөвхөн УРАГШ явна (нэмэгдэл 0 байсан ч
-    тэмдэглэнэ); `as_of` нь бүртгэсэн өдрөөс хойш байвал юу ч хийхгүй.
-    Буцна: нийт нэмэгдсэн алданги.
+    тэмдэглэнэ); `as_of` нь нэхсэн өдрөөс хойш байвал юу ч хийхгүй.
+    Буцна: нэхэгдсэн мөр бүрийн задаргаа (баримтад ЯГ энэ мөрүүд хэвлэгдэнэ).
     """
-    invoices = (db.query(models.Invoice).join(models.Contract)
-                .filter(models.Contract.client_id == client_id).all())
-    added = 0.0
+    rows: list[dict] = []
     for inv in invoices:
         if inv.contract.penalty_percent <= 0:      # OB болон алдангигүй гэрээ
             continue
@@ -550,21 +562,97 @@ def book_penalties(db: Session, client_id: int, as_of: date) -> float:
         since = _penalty_since(inv)
         if as_of < since:                          # ХОЙШОО явахгүй
             continue
-        inc = (invoice_outstanding(inv) * inv.contract.penalty_percent / 100
-               * (as_of - since).days)
+        days = (as_of - since).days
+        inc = invoice_outstanding(inv) * inv.contract.penalty_percent / 100 * days
         inv.penalty_booked = (inv.penalty_booked or 0.0) + inc
         inv.penalty_booked_until = as_of
-        added += inc
+        rows.append({"invoice_id": inv.id, "no": inv.no,
+                     "cycle_start": str(inv.cycle_start), "cycle_end": str(inv.cycle_end),
+                     "days": days, "amount": round(inc, 2)})
+    return rows
+
+
+def book_penalties(db: Session, client_id: int, as_of: date,
+                   contract_id: int | None = None, record: bool = True,
+                   user_name: str = "") -> float:
+    """Алдангийг `as_of` өдрөөр НЭХНЭ — ИЛ ҮЙЛДЭЛ, хажуугийн үр дагавар БИШ.
+
+    ⚠ АНХААР — ЭНЭ ФУНКЦ БИЧДЭГ, БАС МӨНГӨ НЭХДЭГ. `ensure_invoices`-оос,
+    ямар ч GET (унших) замаас, төлбөр бүртгэхээс, барьцааны тооцооноос
+    ДУУДАЖ БОЛОХГҮЙ. Зөвхөн хоёр зам үлдсэн:
+      · POST /api/contracts/{id}/book-penalty — «Алданги нэхэх» товч
+      · rebuild-ийн replay (`record=False` — хуучин явдлыг ДАХИН тоглуулна)
+
+    `record=True` бол нэхэлт бүр `PenaltyCharge` явдал болж үлдэнэ: дахин
+    бодолт (rebuild) нэхэмжлэлүүдийг устгаад шинээр төрүүлэхэд эдгээр
+    огноогоор ДАХИН нэхэж, өнгөрсөн шийдвэрүүд алдагдахгүй.
+    Буцна: нийт нэхэгдсэн алданги.
+    """
+    q = (db.query(models.Invoice).join(models.Contract)
+         .filter(models.Contract.client_id == client_id))
+    if contract_id is not None:
+        q = q.filter(models.Invoice.contract_id == contract_id)
+    invoices = q.all()
+    rows = _book_invoices(invoices, as_of)
+    if record:
+        _record_charges(db, client_id, invoices, rows, as_of, user_name)
     db.commit()
-    return added
+    return sum(r["amount"] for r in rows)
+
+
+def _record_charges(db: Session, client_id: int, invoices, rows: list[dict],
+                    as_of: date, user_name: str) -> None:
+    """Нэхэлтийг ГЭРЭЭ БҮРЭЭР явдал болгож бичнэ.
+
+    Дүн 0 байсан ч бичигдэнэ: нэхэлт нь `penalty_booked_until`-ыг урагшлуулдаг
+    тул тэр агшин өөрөө ТӨЛӨВ — replay түүнийг алдвал дараагийн нэхэлт хэт
+    олон хоног тоолно.
+    """
+    by_contract: dict[int, float] = {}
+    for inv in invoices:
+        if inv.contract.penalty_percent > 0:
+            by_contract.setdefault(inv.contract_id, 0.0)
+    inv_contract = {i.id: i.contract_id for i in invoices}
+    for r in rows:
+        cid = inv_contract[r["invoice_id"]]
+        by_contract[cid] = by_contract.get(cid, 0.0) + r["amount"]
+    for cid, amount in by_contract.items():
+        db.add(models.PenaltyCharge(contract_id=cid, client_id=client_id, as_of=as_of,
+                                    amount=round(amount, 2), user_name=user_name))
+
+
+def charge_contract_penalty(db: Session, contract: models.Contract, as_of: date,
+                            user_name: str = "") -> dict:
+    """«Алданги нэхэх» — гэрээний нэхэмжлэлүүд дээр нэг ИЛ нэхэлт.
+
+    Буцна: {as_of, total, rows} — мөр бүр нь баримтын «№R-… : X₮ (Y хоног)».
+    """
+    rows = _book_invoices(list(contract.invoices), as_of)
+    db.add(models.PenaltyCharge(contract_id=contract.id, client_id=contract.client_id,
+                                as_of=as_of, amount=round(sum(r["amount"] for r in rows), 2),
+                                user_name=user_name))
+    db.commit()
+    return {"as_of": str(as_of), "total": round(sum(r["amount"] for r in rows), 2),
+            "rows": rows}
+
+
+def contract_penalty_charges(db: Session, contract_id: int) -> list[models.PenaltyCharge]:
+    """Гэрээний нэхэлтийн явдлууд — replay-ийн эх сурвалж, огноогоор эрэмбэлэгдсэн."""
+    return (db.query(models.PenaltyCharge).filter_by(contract_id=contract_id)
+            .order_by(models.PenaltyCharge.as_of, models.PenaltyCharge.created_at,
+                      models.PenaltyCharge.id).all())
 
 
 def contract_balance(contract: models.Contract, today: date | None = None):
     today = today or date.today()
     outstanding = sum(invoice_outstanding(i) for i in contract.invoices)
     penalty = sum(invoice_penalty(i, today) for i in contract.invoices)
+    # Хоёр нүүрийг ТУСАД нь: нэхэгдсэн нь МӨНГӨ (төлөгдөнө), нэхэгдээгүй нь
+    # зөвхөн ХӨШҮҮРЭГ. Нийлүүлж харуулсан тоо нь «машин өр зохиов» гэж уншигдана.
+    booked = sum(invoice_penalty_due(i) for i in contract.invoices)
     cur = current_cycle_accrual(contract, today)
     return {"outstanding": outstanding, "penalty": penalty,
+            "penalty_booked": booked, "penalty_unbooked": max(penalty - booked, 0.0),
             "accruing": cur["accrued"] if cur else 0.0}
 
 
@@ -727,12 +815,12 @@ def void_payment(db: Session, payment: models.Payment, reason: str,
       3) харилцагчийн ҮЛДСЭН (цуцлагдаагүй) кредитийг дахин хуваарилна —
          сулласан нэхэмжлэл рүү урьдчилсан төлбөр өөрөө очно.
 
-    ⚠ БҮРТГЭГДСЭН АЛДАНГИ ҮЛДЭНЭ. Алданги нь төлбөр бүртгэх агшинд хөлдөж
-    (`book_penalties` монотон) бодит болсон — тэр агшин болсон нь үнэн. Цуцлалт
-    нь зөвхөн ТӨЛӨГДСӨН гэсэн тэмдгийг (`penalty_paid`) сулруулна, ХӨЛДӨӨЛТИЙГ
-    (`penalty_booked`, `penalty_booked_until`) буцаахгүй. Шинжилгээ (H1) энэ
-    хялбаршуулалтыг зөвшөөрсөн: буцаах гэвэл монотон загвар нурж, дараагийн
-    хөлдөөлт бүр өмнөхөө дахин тоолж эхэлнэ.
+    ⚠ НЭХЭГДСЭН АЛДАНГИ ҮЛДЭНЭ. Алданги нь Отгоогийн ИЛ шийдвэрээр нэхэгдсэн
+    (`PenaltyCharge` явдал) — төлбөрийн хажуугийн үр дагавар БИШ, тиймээс
+    төлбөр цуцлагдахад тэр шийдвэр хүчингүй болох ямар ч шалтгаан алга.
+    Цуцлалт нь зөвхөн ТӨЛӨГДСӨН гэсэн тэмдгийг (`penalty_paid`) сулруулна,
+    НЭХЭЛТИЙГ (`penalty_booked`, `penalty_booked_until`) буцаахгүй. Нэхэлтээ
+    буцаах гэвэл тэр нь тусдаа ИЛ үйлдэл байх ёстой.
 
     Буцна: сулларсан мөрүүд (нэхэмжлэл, хэсэг, дүн) — audit ба баримтад.
     """
@@ -938,11 +1026,19 @@ def build_notifications(db: Session, today: date | None = None, scope: str = "al
         for inv in c.invoices:
             st = invoice_status(inv, today)
             if st == "overdue":
-                pen = invoice_penalty(inv, today)
+                # Мэдэгдэл дээр «алданги X₮» гэж бичих нь НЭХСЭН мэт уншигдана.
+                # Нэхэгдсэн нь өр; нэхэгдээгүй нь тооцоолол — ≈ ба шошготой (H2).
+                due = invoice_penalty_due(inv)
+                unbooked = invoice_penalty_unbooked(inv, today)
                 days = (today - inv.due_date).days
+                sub = f"Үлдэгдэл {invoice_outstanding(inv):,.0f}₮"
+                if due > 0.5:
+                    sub += f" · нэхэгдсэн алданги {due:,.0f}₮"
+                if unbooked > 0.5:
+                    sub += f" · алдангийн тооцоолол ≈{unbooked:,.0f}₮ (нэхэгдээгүй)"
                 notes.append({"kind": "overdue", "level": "danger",
                               "title": f"{c.client.name} — нэхэмжлэл {inv.no} {days} хоног хэтэрлээ",
-                              "sub": f"Үлдэгдэл {invoice_outstanding(inv):,.0f}₮ · алданги {pen:,.0f}₮",
+                              "sub": sub,
                               "contract_id": c.id, "invoice_id": inv.id})
     pending = pending_shipments(db, scope)
     for mv in pending:

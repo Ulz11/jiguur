@@ -122,13 +122,18 @@ def test_factory_cannot_void_403(client, as_role):
 # ---------- 2. Алданги: төлөгдсөн нь суларна, БҮРТГЭГДСЭН нь үлдэнэ ----------
 
 def test_void_releases_penalty_paid_but_booking_stays(client, as_role):
-    """Монотон загвар: цуцлалт нь БҮРТГЭГДСЭН алдангийг устгахгүй.
+    """Монотон загвар: цуцлалт нь НЭХЭГДСЭН алдангийг устгахгүй.
 
-    Алданги төлбөр бүртгэх агшинд хөлдсөн — тэр агшин бодит болсон.
-    Цуцлалт нь зөвхөн ТӨЛӨГДСӨН гэсэн тэмдгийг сулруулна.
+    Алданги нь Отгоогийн ИЛ шийдвэрээр нэхэгдсэн (`book-penalty`) —
+    төлбөрийн хажуугийн үр дагавар БИШ, тиймээс төлбөр цуцлагдахад тэр
+    шийдвэр хүчингүй болох шалтгаан алга. Цуцлалт нь зөвхөн ТӨЛӨГДСӨН гэсэн
+    тэмдгийг сулруулна.
     """
     h = as_role("sanhuu")
     cl_id, cid, m, st = _setup(client, as_role, days_ago=40, penalty=True)
+    # Алданги ӨӨРӨӨ нэхэгдэхээ больсон — эхлээд ИЛ нэхнэ (H2 / R25)
+    ch = client.post(f"/api/contracts/{cid}/book-penalty", headers=h, json={"as_of": iso(0)})
+    assert ch.status_code == 200 and ch.json()["total"] == 49_500, ch.text
     p = _pay(client, h, cl_id, cid, 1_039_500)     # 990,000 + 49,500 алданги
     after_pay = _invoices(client, h, cid)[0]
     assert after_pay["penalty_due"] == 0           # алданги бүрэн төлөгдсөн
@@ -234,6 +239,9 @@ def test_voided_penalty_allocation_leaves_pnl(client, as_role):
     h = as_role("sanhuu")
     cl_id, cid, m, st = _setup(client, as_role, days_ago=40, penalty=True)
     base = client.get("/api/reports", headers=h).json()["pnl"]["penalty_income"]
+    # Алданги ИЛ нэхэгдэж байж л төлөгдөнө — төлбөр өөрөө нэхэхээ больсон (H2)
+    assert client.post(f"/api/contracts/{cid}/book-penalty", headers=h,
+                       json={"as_of": iso(0)}).json()["total"] == 49_500
     p = _pay(client, h, cl_id, cid, 1_039_500)
     assert client.get("/api/reports", headers=h).json()["pnl"]["penalty_income"] == base + 49_500
 

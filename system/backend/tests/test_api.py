@@ -461,27 +461,45 @@ def db_session():
         gen.close()
 
 
-def test_payment_endpoint_books_before_allocating(client, as_role):
-    """Төлбөр бүртгэх агшинд алданги ЭХЛЭЭД бүртгэгдэнэ: 10 хоног хэтэрсэн
-    990,000₮-ийн нэхэмжлэлийг бүтэн төлөхөд 49,500₮ алданги ҮЛДЭНЭ
-    (хуучин амьд томьёогоор бол төлөнгүүт 0 болж УСТАХ байсан)."""
+def test_payment_endpoint_allocates_only_charged_penalty(client, as_role):
+    """Төлбөр бүртгэх нь алданги НЭХЭХГҮЙ — өмнө нэхэгдсэнийг л хаана.
+
+    Урьд нь энэ endpoint хуваарилахынхаа өмнө `book_penalties` дуудаж,
+    990,000₮-ийг бүтэн төлөхөд 49,500₮ алданги ГЭНЭТ ҮҮСГЭДЭГ байв: Отгоо
+    өршөөсөн харилцагчийнхаа мөнгийг бүртгээд үлдэгдэл нь ӨСӨХИЙГ хардаг.
+    Одоо нэхэлт нь тусдаа ил үйлдэл (`POST /contracts/{id}/book-penalty`);
+    төлбөр нь ЗӨВХӨН нэхэгдсэн алдангийг үндсэн дүнгийн араас хаана.
+    """
     h = as_role("sanhuu")
-    _, cid, m, st = make_contract(client, as_role, days_ago=40, qty=100)
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=40, qty=100)
     _confirm_pending(client, as_role, cid)
     inv = _invoices(client, h, cid)[0]
     assert inv["total"] == 990_000 and inv["outstanding"] == 990_000
 
+    # 1) НЭХЭЭГҮЙ байхад: хэсэгчилсэн төлбөр алданги ҮҮСГЭХГҮЙ
     r = client.post("/api/payments", headers=h, json={
-        "client_id": client.get(f"/api/contracts/{cid}", headers=h).json()["client_id"],
-        "contract_id": cid, "date": iso(0), "amount": 990_000, "method": "BANK"})
+        "client_id": cl_id, "contract_id": cid, "date": iso(0),
+        "amount": 500_000, "method": "BANK"})
     assert r.status_code == 200, r.text
-    assert r.json()["allocated"] == 990_000
-
+    assert r.json()["allocated"] == 500_000
     after = _invoices(client, h, cid)[0]
-    assert after["outstanding"] == 0
-    assert after["penalty"] == 49_500          # 990,000 × 0.005 × 10 хоног
-    assert after["penalty_due"] == 49_500      # бүртгэгдсэн — хуваарилж болно
-    assert after["status"] == "penalty"
+    assert after["outstanding"] == 490_000
+    assert after["penalty_due"] == 0, "төлбөр алданги НЭХЭЖ БОЛОХГҮЙ"
+    assert after["penalty_unbooked"] == 24_500, "тооцоолол нь ХАРАГДСААР — нэхэгдээгүй"
+
+    # 2) НЭХСЭНИЙ дараа: тэр алданги нь хуваарилалтаар хэвийн хаагдана
+    charged = client.post(f"/api/contracts/{cid}/book-penalty", headers=h,
+                          json={"as_of": iso(0)})
+    assert charged.status_code == 200, charged.text
+    assert charged.json()["total"] == 24_500        # 490,000 × 0.005 × 10 хоног
+
+    r2 = client.post("/api/payments", headers=h, json={
+        "client_id": cl_id, "contract_id": cid, "date": iso(0),
+        "amount": 514_500, "method": "BANK"})
+    assert r2.json()["allocated"] == 514_500
+    done = _invoices(client, h, cid)[0]
+    assert done["outstanding"] == 0 and done["penalty_due"] == 0
+    assert done["status"] == "paid"
 
 
 def test_manual_allocation_directed(client, as_role):

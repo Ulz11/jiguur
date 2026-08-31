@@ -239,7 +239,7 @@ def collections(db: Session, today: date | None = None):
 
     rows = []
     for cl in db.query(models.Client).all():
-        overdue = penalty = balance = 0.0
+        overdue = penalty = booked = balance = 0.0
         oldest_days = 0
         for ct in cl.contracts:
             for inv in ct.invoices:
@@ -250,6 +250,7 @@ def collections(db: Session, today: date | None = None):
                 if inv.due_date < today:
                     overdue += out
                     penalty += billing.invoice_penalty(inv, today)
+                    booked += billing.invoice_penalty_due(inv)
                     oldest_days = max(oldest_days, (today - inv.due_date).days)
         if overdue <= 0.5:
             continue
@@ -261,6 +262,9 @@ def collections(db: Session, today: date | None = None):
         rows.append({
             "client_id": cl.id, "client": cl.name, "person": cl.person, "phone": cl.phone,
             "overdue": round(overdue), "penalty": round(penalty), "balance": round(balance),
+            # Утсаар ярихад «нэхсэн» ба «нэхэж болох» хоёр өөр зэвсэг (H2 / R25)
+            "penalty_booked": round(booked),
+            "penalty_unbooked": round(max(penalty - booked, 0.0)),
             "oldest_days": oldest_days,
             "last_contact": str(last.date) if last else None,
             "last_note": last.note if last else "",

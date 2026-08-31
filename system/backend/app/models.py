@@ -98,7 +98,9 @@ class Contract(Base):
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     cycle_days: Mapped[int] = mapped_column(Integer, default=30)
-    penalty_percent: Mapped[float] = mapped_column(Float, default=0.5)  # %/хоног
+    # %/хоног. Анхны утга 0 — алданги нь Отгоогийн ХӨШҮҮРЭГ, машины автомат
+    # төлбөр биш (R25 / H2). Зэвсэглэх нь гэрээ бүрд ГАРААР хийгдэх шийдвэр.
+    penalty_percent: Mapped[float] = mapped_column(Float, default=0)
     deposit: Mapped[float] = mapped_column(Float, default=0)
     # Барьцааны мөчлөг: held → returned / applied / settled (хэсэгчлэн хоёулаа)
     deposit_status: Mapped[str] = mapped_column(String(12), default="held")
@@ -240,6 +242,35 @@ class PaymentAllocation(Base):
 
     payment: Mapped["Payment"] = relationship(back_populates="allocations")
     invoice: Mapped["Invoice"] = relationship()
+
+
+class PenaltyCharge(Base):
+    """Алданги НЭХСЭН явдал — Отгоо эгчийн ИЛ ШИЙДВЭР, машины дүгнэлт БИШ.
+
+    20 жилийн Excel-д алданги ГАНЦ УДАА ч тооцоогдоогүй: хуудас бүр дээр
+    «гэрээний 4.2-т зааснаар алданга тооцно» гэж ЗАРЛАГДСАН боловч хэзээ ч
+    нэхэгдээгүй — тэр бол төлбөр биш, ХЭЛЭЛЦЭЭРИЙН ХӨШҮҮРЭГ (Чадварын
+    харьцуулалт R25 / H2). Систем нь төлбөр бүртгэх агшинд чимээгүйхэн
+    номжиж, өршөөсөн харилцагчийн мөнгийг бүртгэхэд өр нь ӨСГӨДӨГ байв.
+
+    Одоо алданги нэхэгдэх ГАНЦ зам нь энэ мөр: «Алданги нэхэх» товч дарагдсан
+    агшин, сонгосон огноогоор.
+
+    Мөр нь ТҮЛХЭЦийг (`as_of` огноо) хадгална — ҮР ДҮНГ (`amount`) зөвхөн
+    баримт болгож. Дахин бодолт (rebuild) нэхэмжлэлүүдийг устгаад шинээр
+    төрүүлдэг тул хөлдсөн дүнг буцааж тавих нь БУРУУ: тоо ширхэг засагдвал
+    алданги нь ч засагдах ёстой. Replay эдгээр огноогоор ДАХИН нэхнэ.
+    """
+    __tablename__ = "penalty_charges"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contracts.id"))
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
+    as_of: Mapped[date] = mapped_column(Date)
+    amount: Mapped[float] = mapped_column(Float, default=0)
+    user_name: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    contract: Mapped["Contract"] = relationship()
 
 
 # ---------- Бартер ----------
