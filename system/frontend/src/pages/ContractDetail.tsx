@@ -16,6 +16,8 @@ import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED } from "
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { todayIso } from "../lib/schedule";
 import { isVoided, movementStockRows, voidRowClass, voidTitle } from "../lib/void";
+import { AKT_KINDS, AktKind, aktAmountText, aktCycleLabel, aktKind, aktLandingText,
+         aktSigned } from "../lib/akt";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -42,6 +44,11 @@ export default function ContractDetail() {
   /* Цуцлах гэж буй төлбөр — баталгаажуулах цонх нь мөрөө өөртөө авч явна. */
   const [voidPay, setVoidPay] = useState<any>(null);
   const [voidMv, setVoidMv] = useState<any>(null);
+  /* Актын цонх: "new" = шинэ бичилт, мөр = тэр мөрийг засах, null = хаалттай.
+     Нэг цонх хоёр горимд — шинээр бичих, засах хоёр ижил маягттай тул хоёр
+     өөр цонх байвал хоёр өөр газарт өөр асуулт болно. */
+  const [akt, setAkt] = useState<any | "new" | null>(null);
+  const [voidAkt, setVoidAkt] = useState<any>(null);
   const toast = useToast();
   const pdf = usePdf();
   const u = user();
@@ -103,7 +110,8 @@ export default function ContractDetail() {
   const cyc = d.cycle;
   const canManage = u?.role === "manager" || u?.role === "factory";
   /* Цуцлалт бол МӨНГӨНИЙ засвар — менежер, санхүүчийнх (сервер ч тэгж
-     хардаг). Үйлдвэрийн даргад төлбөрийн хэсэг огт харагддаггүй. */
+     хардаг). Үйлдвэрийн даргад төлбөрийн хэсэг огт харагддаггүй.
+     ЧӨЛӨӨТ АКТ (бичих/засах/цуцлах) нь МӨН мөнгө тул ЯГ энэ хүрээгээр явна. */
   const canVoid = u?.role === "manager" || u?.role === "finance";
   /* Алданги НЭХЭХ нь мөнгөний шийдвэр — цуцлалттай ижил хүрээ. Товч нь
      нэхэх зүйл БАЙВАЛ л гарна: нэхэх юмгүй үед товч байх нь «дараад юу ч
@@ -378,6 +386,85 @@ export default function ContractDetail() {
               </tbody>
             </table>
           </div>
+
+          {/* ЧӨЛӨӨТ АКТ (R12 / түр R15 / H4) — материал ба нэхэмжлэлийн ДУНД.
+              Отгоогийн хуудасны блок нь ЯГ энэ дараалалтай: материалын мөрүүд ×
+              хоног → АКТ → НӨАТ → Нийт төлөх дүн. Тиймээс акт нь материалын
+              доор, нэхэмжлэлийн дээр зогсоно — түүний 20 жилийн нүдний хөдөлгөөн
+              хэвээрээ үлдэнэ. Худалдааны гэрээнд цикл байхгүй тул хэсэг ч алга. */}
+          {seesMoney && d.type === "rent" && (
+          <div className="card overflow-x-auto">
+            <div className="flex items-center justify-between px-4 pt-4 pb-1 gap-3 flex-wrap">
+              <h2 className="font-bold text-ink text-[15.5px]">Акт бичилтүүд</h2>
+              {canVoid && (
+                <button className="btn-secondary btn-row"
+                        onClick={() => setAkt("new")}>+ Акт бичих</button>
+              )}
+            </div>
+            {(d.akt_entries || []).length === 0 ? (
+              <p className="text-t3 text-sm px-4 pb-4">
+                Акт бичигдээгүй. Тээвэр, цэвэрлэгээ, кран дуудлага, эсвэл тохирсон
+                хөнгөлөлтийг «+ Акт бичих»-ээр тухайн циклд нэмнэ.
+              </p>
+            ) : (
+              <table className="w-full min-w-[600px]">
+                <thead><tr>
+                  <th className="th">Огноо</th>
+                  <th className="th text-right">Дүн</th>
+                  <th className="th">Тэмдэглэл</th>
+                  <th className="th">Цикл</th>
+                  <th className="th"></th>
+                </tr></thead>
+                <tbody>
+                  {d.akt_entries.map((a: any) => (
+                    <tr key={a.id}>
+                      <td className="td whitespace-nowrap">
+                        <span className={voidRowClass(a)} title={voidTitle(a)}>{a.date}</span>
+                      </td>
+                      {/* Тэмдэг нь дүнгийнхээ ӨМНӨ зогсоно; хөнгөлөлт нь дээрээс
+                          нь ҮГЭЭР ч нэрлэгдэнэ — өнгө дангаараа утга зөөхгүй. */}
+                      <td className="td text-right tabular-nums whitespace-nowrap">
+                        <b className={`${voidRowClass(a)} ${a.amount < 0 ? "text-money" : "text-ink"}`}>
+                          {aktAmountText(a.amount)}
+                        </b>
+                        {a.amount < 0 && (
+                          <span className="block text-[12px] text-t3">хөнгөлөлт</span>
+                        )}
+                      </td>
+                      <td className="td">
+                        <span className={voidRowClass(a)}>{a.note}</span>
+                        {isVoided(a) && (
+                          <span className="block text-[12px] text-danger">
+                            Шалтгаан: {a.void_reason}
+                            {a.voided_by && <span className="text-t3"> · {a.voided_by}</span>}
+                          </span>
+                        )}
+                      </td>
+                      <td className="td text-[12.5px] text-t2 whitespace-nowrap">
+                        {aktCycleLabel(a.cycle_start && a.cycle_end
+                          ? { start: a.cycle_start, end: a.cycle_end } : null)}
+                      </td>
+                      <td className="td">
+                        {isVoided(a) ? (
+                          <span className="pill-red" title={voidTitle(a)}>ХҮЧИНГҮЙ</span>
+                        ) : canVoid && (
+                          <div className="flex gap-1.5 flex-wrap">
+                            <button className="btn-row" onClick={() => setAkt(a)}
+                                    title="Актын бичилт засах">
+                              Засах<span className="sr-only"> — {a.date} · {a.note}</span>
+                            </button>
+                            <VoidButton label={`${a.date} · ${a.note}`}
+                                        onClick={() => setVoidAkt(a)} />
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          )}
 
           {/* Нэхэмжлэл */}
           {seesMoney && (
@@ -751,6 +838,13 @@ export default function ContractDetail() {
       {voidMv && <VoidMovementModal mv={voidMv} onClose={() => setVoidMv(null)}
                                     onDone={() => { setVoidMv(null); load(); }}
                                     onRebuild={(p) => { setVoidMv(null); setPending(p); }} />}
+      {akt && <AktModal d={d} row={akt === "new" ? null : akt}
+                        onClose={() => setAkt(null)}
+                        onDone={() => { setAkt(null); load(); }}
+                        onRebuild={(p) => { setAkt(null); setPending(p); }} />}
+      {voidAkt && <VoidAktModal d={d} a={voidAkt} onClose={() => setVoidAkt(null)}
+                                onDone={() => { setVoidAkt(null); load(); }}
+                                onRebuild={(p) => { setVoidAkt(null); setPending(p); }} />}
     </div>
   );
 }
@@ -802,6 +896,176 @@ function RebuildModal({ p, onClose, onDone }: {
         }}>{busy ? "…" : "Баталгаажуулж дахин бодох"}</button>
       </div>
     </Modal>
+  );
+}
+
+/* ---------- ЧӨЛӨӨТ АКТ бичих / засах (R12 / түр R15 / H4) ----------
+   Отгоогийн «акт» бол эвдрэлийн хөлс биш, хоёр талын гарын үсэгтэй ХЭЛЭЛЦЭЭР:
+   тээвэр, цэвэрлэгээ, кран дуудлага нэг циклд эвхэгддэг, БАС хөнгөлөлт байдаг
+   («нийт актнаас 15% хасч тооцлоо»).
+
+   ТЭМДГИЙГ БИЧҮҮЛЭХГҮЙ, СОНГУУЛНА: тэр Excel дээрээ хасах тэмдэг бичдэггүй,
+   «хасч тооцлоо» гэж ҮГЭЭР бичдэг. Хоёр товч + эерэг дүн нь хасах тэмдгээ
+   мартаад хөнгөлөлтөө нэмэгдэл болгох боломжийг бүрмөсөн хаана.
+
+   Нэг цонх ХОЁР горимд (шинэ / засвар) — маягт нь ижил, зам нь ижил хаалга. */
+function AktModal({ d, row, onClose, onDone, onRebuild }: {
+  d: any;
+  /** null = шинэ бичилт; мөр = түүнийг засах */
+  row: any | null;
+  onClose: () => void;
+  onDone: () => void;
+  onRebuild: (p: Pending) => void;
+}) {
+  const toast = useToast();
+  const uid = useId();
+  const init = {
+    date: row ? row.date : today(),
+    kind: (row ? aktKind(row.amount) : "charge") as AktKind,
+    amount: row ? String(Math.abs(row.amount)) : "",
+    note: row ? row.note : "",
+  };
+  const [date, setDate] = useState(init.date);
+  const [kind, setKind] = useState<AktKind>(init.kind);
+  const [amount, setAmount] = useState(init.amount);
+  const [note, setNote] = useState(init.note);
+
+  const signed = aktSigned(kind, amount);
+  const ok = Math.abs(signed) > 0 && note.trim().length > 0 && !!date;
+  const okMsg = row ? "Актын бичилт шинэчлэгдлээ" : "Акт бичигдлээ";
+  const path = row ? `/api/akt/${row.id}` : `/api/contracts/${d.id}/akt`;
+  const method = row ? "PATCH" : "POST";
+
+  async function submit() {
+    const body = { date, amount: signed, note: note.trim() };
+    try {
+      const r = await api(path, { method, body: JSON.stringify(body) });
+      if (r?.rebuild_required) {
+        onRebuild({ path, body, method, okMsg,
+                    diffs: r.diffs || [], warnings: r.warnings || [] });
+        return;
+      }
+      toast(okMsg);
+      onDone();
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
+  return (
+    <FormModal title={row ? "Актын бичилт засах" : "Акт бичих"} onClose={onClose}
+               dirty={formDirty(init, { date, kind, amount, note })}>
+      <div className="grid grid-cols-2 gap-3.5">
+        <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+          <input id={`${uid}-date`} type="date" className="inp" value={date}
+                 onChange={(e) => setDate(e.target.value)} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-amount`}>Дүн ₮</label>
+          <input id={`${uid}-amount`} className="inp" inputMode="numeric" placeholder="0"
+                 value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+      </div>
+
+      {/* Тэмдгийн БҮЛЭГ — нэг талбар биш тул нэрлэсэн бүлэг (төлбөрийн
+          «Хэлбэр»-тэй ижил хэв). Сонгосон нь дүнгээ өөрөө нэрлэнэ. */}
+      <div className="lbl mt-4" id={`${uid}-kind`}>Төрөл</div>
+      <div className="flex gap-2 mb-1.5" role="group" aria-labelledby={`${uid}-kind`}>
+        {AKT_KINDS.map(([v, l]) => (
+          <button key={v} type="button" onClick={() => setKind(v)} aria-pressed={kind === v}
+            className={`flex-1 rounded-[10px] border py-2.5 font-semibold text-sm transition min-h-11 ${
+              kind === v ? "border-brand bg-brand-50 text-brand-ink"
+                         : "border-line-strong text-t2"}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+      {/* Хадгалагдах ЯГ тэр дүн — тэмдэгтэйгээ, нүдний өмнө */}
+      <p className="text-[12.5px] text-t2 mb-4 tabular-nums">
+        Циклд орох дүн: <b className={Math.abs(signed) > 0
+          ? (signed < 0 ? "text-money" : "text-ink") : "text-t3"}>{aktAmountText(signed)}</b>
+      </p>
+
+      <label className="lbl" htmlFor={`${uid}-note`}>
+        Тэмдэглэл <span className="text-danger">*</span>
+      </label>
+      <input id={`${uid}-note`} className="inp" value={note}
+             placeholder="ж: кран дуудлага, тээвэр, нийт актнаас 15% хасав"
+             aria-describedby={`${uid}-help`}
+             onChange={(e) => setNote(e.target.value)} />
+      <p id={`${uid}-help`} className="text-[12px] text-t3 mt-1.5">
+        Энэ бичиг нэхэмжлэл, хавсралт, актын цаас гуравт хэвлэгдэнэ — «юуны төлөө»
+        гэдэг нь гарын үсэгтэй мөрөндөө байх ёстой.
+        {/* Бартерын +15% нь тусдаа хөдөлгүүр (P1) — түүнийг ХҮЛЭЭЛГЭХГҮЙ,
+            эндээс гараар бичих зам нь өнөөдөр бий гэдгийг хэлнэ (түр R15). */}
+        {" "}Бартерын 15% нэмэгдлийг түр энд бичиж болно.
+      </p>
+
+      {/* АМЬД мөр: бичиж буй огноо ХААШАА буухыг хадгалахаас ӨМНӨ хэлнэ.
+          Циклийн нэр нь нэхэмжлэлийн мөртэй ижил хэлбэртэй тул Отгоо нүдээрээ
+          тулгана. */}
+      <p className="text-[12.5px] text-t2 mt-4 rounded-xl bg-sunken px-3.5 py-2.5">
+        {aktLandingText(d, date) || "Огноо сонгоно уу"}
+      </p>
+
+      <div className="flex justify-end gap-2.5 mt-5">
+        <button className="btn-secondary" onClick={onClose}>Болих</button>
+        <SubmitButton onSubmit={submit} disabled={!ok}
+                      title={ok ? undefined : "Дүн ба тэмдэглэл заавал бөглөгдөнө"}>
+          {row ? "Хадгалах" : "Акт бичих"}
+        </SubmitButton>
+      </div>
+    </FormModal>
+  );
+}
+
+/* ---------- Актын бичилт хүчингүй болгох ---------- */
+function VoidAktModal({ d, a, onClose, onDone, onRebuild }: {
+  d: any; a: any;
+  onClose: () => void;
+  onDone: () => void;
+  onRebuild: (p: Pending) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const toast = useToast();
+  const rid = useId();
+  const path = `/api/akt/${a.id}/void`;
+
+  return (
+    <ConfirmModal
+      title="Актын бичилт хүчингүй болгох"
+      intro={<>
+        <b className="text-ink">{a.date} · {a.note}</b> — энэ бичилт УСТАХГҮЙ:
+        жагсаалтад «ХҮЧИНГҮЙ» тэмдэгтэй, шалтгаантайгаа хамт үлдэнэ. Нэхэмжлэл,
+        хавсралт, актын цаасны аль нь ч түүнийг дахин хэвлэхгүй. Энэ үйлдлийг
+        буцаах боломжгүй.
+      </>}
+      rows={[{ label: aktCycleLabel(a.cycle_start && a.cycle_end
+                        ? { start: a.cycle_start, end: a.cycle_end } : null),
+               sub: "энэ циклээс гарна",
+               value: aktAmountText(-a.amount), accent: "danger" as const }]}
+      total={{ label: `Гэрээ №${d.no} · циклийн дүн өөрчлөгдөнө`,
+               value: aktAmountText(-a.amount), accent: "danger" }}
+      note="Нэхэмжлэгдсэн циклд хамаарвал дараагийн алхамд зөрүүг харуулна."
+      confirmLabel="Хүчингүй болгох"
+      confirmDisabled={!reason.trim()}
+      danger
+      onClose={onClose}
+      onConfirm={async () => {
+        const body = { reason: reason.trim() };
+        try {
+          const r = await api(path, { method: "POST", body: JSON.stringify(body) });
+          if (r?.rebuild_required) {
+            onRebuild({ path, body, method: "POST", okMsg: "Актын бичилт хүчингүй болов",
+                        diffs: r.diffs || [], warnings: r.warnings || [] });
+            return;
+          }
+          toast("Актын бичилт хүчингүй болов");
+          onDone();
+        } catch (e: any) { toast(e.message, "err"); }
+      }}>
+      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+        Цуцлах шалтгаан <span className="text-danger">*</span>
+      </label>
+      <input id={rid} className="inp w-full" value={reason} autoFocus
+             placeholder="ж: давхар бичсэн"
+             onChange={(e) => setReason(e.target.value)} />
+    </ConfirmModal>
   );
 }
 
