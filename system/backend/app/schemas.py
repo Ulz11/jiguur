@@ -89,6 +89,9 @@ class MovementLineIn(BaseModel):
     return_grade_id: int | None = None
     repair_qty: float = 0
     writeoff_qty: float = 0
+    # Гар хоног (H5) — хоосон бол машины тоо. Бүртгэх агшинд бичигдэж болно:
+    # хавсралт дээр хоёр тал гарын үсэг зурсан тоо нь ХОЙШ засагдах зүйл биш.
+    billed_days_override: int | None = None
 
 
 class MovementIn(BaseModel):

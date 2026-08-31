@@ -1,3 +1,5 @@
+import { daysBetween } from "./schedule";
+
 /* Материалын мөрийн доор задардаг ХӨДӨЛГӨӨНИЙ ДЭВТЭР — цэвэр бүлэглэлт.
  *
  * Отгоо Numbers дээрээ материал бүрийн доор нь тэр материалын түүхийг бичдэг
@@ -21,6 +23,12 @@ export type LotSource = {
   rate: number;
   qty: number;
   pinned: boolean;
+  /** Машины тоолсон хоног (падан циклдээ орсноос буцаалт хүртэл) */
+  days?: number;
+  /** Үнэхээр нэхэгдэх хоног — гар хоног байвал ТҮҮНИЙХ */
+  billed_days?: number;
+  /** Хоног нь ГАРААР тохирсон эсэх (H5) */
+  override?: boolean;
 };
 
 export type LedgerLine = {
@@ -40,6 +48,8 @@ export type LedgerLine = {
   void_reason?: string;
   voided_by?: string;
   voided_at?: string | null;
+  /** Гар хоног (H5) — `null` бол машины тоо. Зөвхөн буцаалтын мөр. */
+  billed_days_override?: number | null;
   /* Доорхи нь зөвхөн ХАРУУЛАХ талбарууд — үлдэгдлийн тооцоонд оролцохгүй */
   note?: string;
   return_grade?: string | null;
@@ -168,4 +178,45 @@ export function lotOptions(group: { lines?: LedgerLine[] } | undefined | null,
               `#${ln.id} · ${ln.date} · ${rate} · ${Math.round(left).toLocaleString("en-US")}ш үлдсэн`]);
   }
   return out;
+}
+
+/* ---------- Гар хоног (H5) ----------
+   «Хоёр тал 12 хоног гэж гарын үсэг зурсан бол 12 нь хэлцлийн баримт.» Гэвч
+   Отгоо машины тоог ХАРААГҮЙ байж дарж болохгүй: дарах болгонд нь зөрүү
+   төрвөл тэр «машин тоолж чаддаггүй» гэсэн дүгнэлтээ баталгаажуулна. Тиймээс
+   маягт дээр машины тоо ЭХЛЭЭД сануулга болж зогсоно. */
+
+/** Машин энэ буцаалтыг хэдэн хоног гэж тоолох вэ — маягтын сануулга.
+ *
+ *  Дүрэм нь серверийнхтэй ижил: падан ЦИКЛДЭЭ орсон өдрөөс (падангийн огноо
+ *  ба циклийн эхлэл — аль хожуу нь) буцаалт хүртэл. Падан нь заасан нь,
+ *  эс бөгөөс FIFO-гоор хамгийн хуучин нээлттэй нь.
+ *
+ *  Буцаалт хоёр падан дамнавал сервер тэдгээр бүрд ТҮҮНИЙ хоногийг тавина;
+ *  сануулга нь ЭХЭЛЖ хаагдах падангийнхыг харуулна — тэр л түгээмэл тохиолдол. */
+export function lotDaysHint(group: { lines?: LedgerLine[] } | undefined | null,
+                            onDate: string, cycleStart: string | null | undefined,
+                            pinLineId?: number): number | null {
+  if (!cycleStart) return null;
+  const opts = lotOptions(group, onDate);
+  const ids = opts.slice(1).map((o) => Number(o[0]));
+  const id = pinLineId && ids.includes(pinLineId) ? pinLineId : ids[0];
+  if (!id) return null;
+  const lot = (group?.lines || []).find((ln) => ln.id === id);
+  if (!lot) return null;
+  const from = lot.date > cycleStart ? lot.date : cycleStart;
+  const days = daysBetween(from, onDate);
+  return days >= 0 ? days : null;
+}
+
+/** Дэвтрийн мөрөн дээрх хоногийн бичиг — зөрүүг ХЭЗЭЭ Ч нууцлахгүй.
+ *
+ *  «12 хоног (гараар — системээр 11)». Гараар тохирсон ч машинтай таарсан бол
+ *  зөрүү гэж байхгүй — «(гараар)» гэсэн тэмдэг л үлдэнэ, эс бөгөөс тоо
+ *  давхардаж уншигдана. */
+export function daysVarianceText(s: LotSource): string {
+  const billed = s.billed_days ?? s.days ?? 0;
+  if (!s.override) return `${billed} хоног`;
+  if (s.days === undefined || s.days === billed) return `${billed} хоног (гараар)`;
+  return `${billed} хоног (гараар — системээр ${s.days})`;
 }

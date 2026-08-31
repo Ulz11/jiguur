@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { materialSections, lotOptions } from "./lots";
+import { materialSections, lotOptions, lotDaysHint, daysVarianceText } from "./lots";
 
 /* Отгоо материалын мөр дээр дарахад доор нь ТЭР материалын түүх задарна:
    юу гарсан, юу буцсан, аль паданнаас, тэгээд ХЭД үлдсэн. Үлдэгдлийн багана
@@ -164,5 +164,54 @@ describe("lotOptions", () => {
 
   it("бүлэггүй дуудлагад унахгүй", () => {
     expect(lotOptions(undefined, "2026-04-10")).toEqual([["0", "Авто — эхлээд хуучнаас"]]);
+  });
+});
+
+/* ---------- Гар хоног (H5): машины тоог ХАРУУЛЖ байж л дарж болно ---------- */
+
+describe("lotDaysHint", () => {
+  const lots = grp([
+    issue(11, "2026-03-20", 100, 330),
+    issue(12, "2026-04-05", 50, 350),
+  ]);
+
+  it("падан ЦИКЛЭЭ ЭХЛЭХЭЭС өмнө гарсан бол циклийн эхлэлээс тоолно", () => {
+    // цикл [2026-04-19, 2026-05-19); #11 нь 3.20-нд гарсан → 4.19-өөс тоолно
+    expect(lotDaysHint(lots, "2026-05-01", "2026-04-19")).toBe(12);
+  });
+
+  it("падан ЦИКЛ ДОТОР гарсан бол падангийн өдрөөс тоолно", () => {
+    // цикл [2026-03-20, 2026-04-19); #12 нь 4.05-нд гарсан, заасан
+    expect(lotDaysHint(lots, "2026-04-15", "2026-03-20", 12)).toBe(10);
+  });
+
+  it("заагаагүй бол ХУУЧИН падангаас (FIFO) тоолно", () => {
+    expect(lotDaysHint(lots, "2026-04-15", "2026-03-20")).toBe(26);
+  });
+
+  it("падан олдохгүй бол сануулга ч гарахгүй (null)", () => {
+    expect(lotDaysHint(grp([]), "2026-04-15", "2026-03-20")).toBeNull();
+    expect(lotDaysHint(lots, "2026-03-01", "2026-02-20")).toBeNull();
+  });
+
+  it("цикл олдоогүй үед (гэрээний эхлэлээс өмнөх огноо) null", () => {
+    expect(lotDaysHint(lots, "2026-04-15", null)).toBeNull();
+  });
+});
+
+describe("daysVarianceText", () => {
+  it("гараар тохирсон хоногийг зөрүүтэй нь хамт нэрлэнэ", () => {
+    expect(daysVarianceText({ days: 11, billed_days: 12, override: true } as any))
+      .toBe("12 хоног (гараар — системээр 11)");
+  });
+
+  it("гараар тохирсон ч машинтай ТААРСАН бол зөрүү дурдахгүй", () => {
+    expect(daysVarianceText({ days: 12, billed_days: 12, override: true } as any))
+      .toBe("12 хоног (гараар)");
+  });
+
+  it("авто хоногт хаалт хэрэггүй", () => {
+    expect(daysVarianceText({ days: 12, billed_days: 12, override: false } as any))
+      .toBe("12 хоног");
   });
 });

@@ -345,6 +345,10 @@ def material_lines(c: models.Contract, gmap: dict, mmap: dict, today: date):
                 "rate": billing.line_rate(c, ln, defaults) if mv.type == "ISSUE" else None,
                 "sources": attribution.get(ln.id, []) if mv.type != "ISSUE" else None,
                 "return_grade": gmap.get(ln.return_grade_id) if ln.return_grade_id else None,
+                # ГАР ХОНОГ (H5) — `None` бол машины тоо. Дэвтэрт зөрүүний
+                # тэмдэг («13 хоног · гараар — системээр 12») эндээс гарна;
+                # хоногийн тоонууд өөрсдөө `sources`-д мөр мөрөөр нь ирнэ.
+                "billed_days_override": ln.billed_days_override,
                 "repair_qty": ln.repair_qty, "repair_fee": ln.repair_fee,
                 "writeoff_qty": ln.writeoff_qty, "writeoff_fee": ln.writeoff_fee,
                 "_key": (mv.date, mv.id, ln.id or 0)})

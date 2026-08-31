@@ -11,13 +11,14 @@ import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
-import { lotOptions, materialSections, MaterialSection } from "../lib/lots";
+import { daysVarianceText, lotDaysHint, lotOptions, materialSections,
+         MaterialSection } from "../lib/lots";
 import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED } from "../lib/penalty";
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
-import { todayIso } from "../lib/schedule";
+import { daysBetween, todayIso } from "../lib/schedule";
 import { isVoided, movementStockRows, voidRowClass, voidTitle } from "../lib/void";
-import { AKT_KINDS, AktKind, aktAmountText, aktCycleLabel, aktKind, aktLandingText,
-         aktSigned } from "../lib/akt";
+import { AKT_KINDS, AktKind, aktAmountText, aktCycle, aktCycleLabel, aktKind,
+         aktLandingText, aktSigned } from "../lib/akt";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -1115,6 +1116,19 @@ function ReturnDetailEdits({ mv, l, grades, sec, onEdit }: {
           onSave={(v) => onEdit(path, { writeoff_qty: parseMoney(v) },
                                 "Актын тоо шинэчлэгдэж, дүн дахин бодогдлоо")} />
       </span>
+      {/* ГАР ХОНОГ (H5): хоёр тал хавсралт дээр гарын үсэг зурсан тоо. Хоосон
+          үлдээвэл машины тоо. Тэр 12 гэж тоолсныг систем 11 гэж хэвлэвэл
+          гарын үсэгтэй цаас зөрчигдөнө — тиймээс энэ нүд ЗААВАЛ байх ёстой. */}
+      <span className={wrap}>
+        <span aria-hidden="true">Хоног:</span>
+        <InlineEdit width="w-20" label={`${name} — гараар тохирсон хоног (хоосон = авто)`}
+          value={l.billed_days_override ?? ""}
+          display={l.billed_days_override != null ? `${l.billed_days_override} (гараар)` : "авто"}
+          confirmText="Хоног солих уу?"
+          onSave={(v) => onEdit(path,
+            { billed_days_override: v.trim() === "" ? null : Math.round(parseMoney(v)) },
+            "Хоног шинэчлэгдэж, дүн дахин бодогдлоо")} />
+      </span>
       <span className={wrap}>
         <span aria-hidden="true">Падан:</span>
         <InlineEdit width="w-56" label={`${name} — аль падангаас хасагдах`}
@@ -1315,6 +1329,15 @@ function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit, onVoid }: {
                     <span key={i} className="block whitespace-nowrap">
                       #{s.issue_line_id}{seesMoney && ` · ${fmt(s.rate)}₮`} → <b className="tabular-nums">{fmt(s.qty)}</b>ш
                       {s.pinned && <span className="text-t3"> (заасан)</span>}
+                      {/* ХОНОГ нь мөнгө биш, БАРИМТ: гарын үсэгтэй цаасан дээр
+                          зогсох тоо энэ. Гараар тохирсон бол машины тоог
+                          хажууд нь үлдээнэ — зөрүү нуугдвал Отгоо хоёр тоо
+                          хоёр өөр газраас гарч ирлээ гэж уншина (H5). */}
+                      {s.days !== undefined && (
+                        <span className={`block ${s.override ? "text-warn" : "text-t3"}`}>
+                          {daysVarianceText(s)}
+                        </span>
+                      )}
                     </span>
                   )) : <span className="text-t3">—</span>}
                 </td>
@@ -1376,6 +1399,9 @@ function ReturnModal({ d, grades, seesMoney, onClose, onDone }: any) {
   const [rows, setRows] = useState<any[]>(
     d.items.filter((i: any) => i.qty > 0).map((i: any) => ({
       ...i, ret: 0, return_grade_id: i.grade_id, repair: 0, writeoff: 0,
+      /* Аль падангаас хасах вэ («0» = авто, FIFO) ба ТҮҮНИЙ тоолсон хоног
+         (хоосон = машины тоо) — хоёулаа бүртгэх агшинд шийдэгдэнэ (H5/R8). */
+      pin: "0", days: "",
     })));
   const [open, setOpen] = useState<number | null>(null);   // задарсан «Гэмтэл/акт» мөр
   const [busy, setBusy] = useState(false);
@@ -1383,15 +1409,32 @@ function ReturnModal({ d, grades, seesMoney, onClose, onDone }: any) {
   const setRow = (i: number, patch: any) =>
     setRows(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)));
 
+  /* Буцаалт АЛЬ циклд бууж байна вэ — хоногийн сануулга ба дээд хязгаар
+     хоёулаа тэр цонхноос гарна (серверийн `billing.cycle_of`-ийн толь). */
+  const win = aktCycle(d, date);
+  const cycleLen = win ? daysBetween(win.start, win.end) : 0;
+  const groupOf = (r: any) => (d.material_lines || []).find(
+    (g: any) => g.material_id === r.material_id && g.grade_id === r.grade_id);
+
   async function submit() {
     const lines = rows.filter((r) => r.ret > 0).map((r) => ({
       material_id: r.material_id, grade_id: r.grade_id, qty: r.ret,
       return_grade_id: r.return_grade_id, repair_qty: r.repair, writeoff_qty: r.writeoff,
+      issue_line_id: Number(r.pin) || undefined,
+      billed_days_override: r.days.trim() === "" ? undefined : Math.round(parseMoney(r.days)),
     }));
     if (!lines.length) { toast("Буцаах тоо оруулна уу", "err"); return; }
     for (const r of rows.filter((r) => r.ret > 0)) {
       if (r.ret > r.qty) { toast(`${r.material}: түрээсэнд байгаагаас их байна`, "err"); return; }
       if (r.repair + r.writeoff > r.ret) { toast(`${r.material}: засвар + акт нь буцаалтаас их байна`, "err"); return; }
+      if (r.days.trim() !== "") {
+        const n = Math.round(parseMoney(r.days));
+        if (n < 0) { toast(`${r.material}: хоног сөрөг байж болохгүй`, "err"); return; }
+        if (cycleLen && n > cycleLen) {
+          toast(`${r.material}: гар хоног циклийн уртаас (${cycleLen} хоног) их байна`, "err");
+          return;
+        }
+      }
     }
     setBusy(true);
     try {
@@ -1403,7 +1446,8 @@ function ReturnModal({ d, grades, seesMoney, onClose, onDone }: any) {
   }
 
   // Ямар нэг тоо бөглөсөн бол санамсаргүй хаагдаж бүх мөр алдагдахаас хамгаална
-  const dirty = date !== today() || rows.some((r) => r.ret > 0 || r.repair > 0 || r.writeoff > 0);
+  const dirty = date !== today() || rows.some(
+    (r) => r.ret > 0 || r.repair > 0 || r.writeoff > 0 || r.days !== "" || r.pin !== "0");
 
   return (
     <FormModal title="Буцаалт бүртгэх" onClose={onClose} wide dirty={dirty}>
@@ -1421,6 +1465,12 @@ function ReturnModal({ d, grades, seesMoney, onClose, onDone }: any) {
           const expanded = open === i;
           const flagged = r.repair + r.writeoff;
           const dmgPid = panelId(`${uid}-dmg`, i);
+          const grp = groupOf(r);
+          /* Падан-сонгогч нь ХОЁР задгай падантай материал дээр л гарна:
+             ганц падантай мөрөнд «аль падангаас» гэсэн асуулт нь хариултгүй
+             чимээ (сонголт бүр нь шийдвэр гуйдаг). */
+          const pins = lotOptions(grp, date);
+          const hint = lotDaysHint(grp, date, win?.start, Number(r.pin) || undefined);
           return (
             <div key={i} className="py-3">
               <div className="flex items-center gap-3">
@@ -1455,6 +1505,36 @@ function ReturnModal({ d, grades, seesMoney, onClose, onDone }: any) {
                     {over ? `түрээсэнд байгаагаас ${fmt(ret - r.qty)}ш их`
                           : `${fmt(r.qty - ret)}ш түрээсэнд үлдэнэ`}
                   </span>
+                </div>
+              )}
+
+              {/* ХОНОГ ба ПАДАН — хоёулаа МӨНГӨНИЙ шийдвэр, тиймээс хоёулаа
+                  бүртгэх агшинд гарна. Хоног нь хоосон бол машины тоо: тэр
+                  тоог сануулга болгож ХАРУУЛЖ байж л дарж болно (H5). */}
+              {ret > 0 && (
+                <div className="mt-2.5 flex items-center gap-2.5 flex-wrap">
+                  <label className="text-[12.5px] text-t2" htmlFor={`${uid}-days-${i}`}>
+                    Хоног (гараар)
+                  </label>
+                  <input id={`${uid}-days-${i}`} type="number" inputMode="numeric" min={0}
+                         max={cycleLen || undefined}
+                         placeholder={hint != null ? String(hint) : "авто"}
+                         className="inp !w-20 !min-h-11 !py-2 text-center font-bold"
+                         value={r.days} onChange={(e) => setRow(i, { days: e.target.value })} />
+                  <span className="text-[12.5px] text-t3">
+                    {hint != null ? `системээр ${hint} хоног` : "хоосон = авто"}
+                  </span>
+                  {pins.length > 2 && (
+                    <>
+                      <label className="text-[12.5px] text-t2 ml-1" htmlFor={`${uid}-pin-${i}`}>
+                        Аль падангаас
+                      </label>
+                      <select id={`${uid}-pin-${i}`} className="inp !w-64 !min-h-11 !py-2"
+                              value={r.pin} onChange={(e) => setRow(i, { pin: e.target.value })}>
+                        {pins.map(([v, lb]) => <option key={v} value={v}>{lb}</option>)}
+                      </select>
+                    </>
+                  )}
                 </div>
               )}
 

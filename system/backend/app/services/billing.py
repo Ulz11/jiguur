@@ -86,6 +86,20 @@ def line_rate(contract: models.Contract, ln: models.MovementLine,
     return defaults.get((ln.material_id, ln.grade_id), 0.0)
 
 
+def _override_of(contract: models.Contract, ln: models.MovementLine, day: date):
+    """Буцаалтын мөрийн ГАР ХОНОГ → `(хоног, циклийн эхлэл)` эсвэл `None`.
+
+    Циклийн эхлэлийг ЭНД (нэг л удаа) шийднэ: гар хоног нь буцаалт БУУСАН
+    циклийн дотор л үйлчилдэг тул тэр цонхны эхлэл нь хожим `_lot_segments`
+    доторх «энэ цонхонд хамаарах уу» шалгуурын ГАНЦ түлхүүр болно.
+    """
+    days = getattr(ln, "billed_days_override", None)
+    if days is None:
+        return None
+    win = cycle_of(contract, day)
+    return None if win is None else (int(days), win[0])
+
+
 def _lots(contract: models.Contract) -> list[dict]:
     """Гэрээний бүх падан — баталгаажсан (done) ОЛГОЛТЫН мөр бүр нэг падан.
 
@@ -96,8 +110,9 @@ def _lots(contract: models.Contract) -> list[dict]:
     өөрөө хуваагдана. Хүлээгдэж буй (pending) олголт ХЭЗЭЭ Ч тооцоонд орохгүй.
 
     Падан бүр хоёр бүртгэл авч явна:
-      · `consumed` — (огноо, тоо). ЗӨВХӨН тооцоонд: `_lot_qty_days` ба
-        `_lot_segments` үүгээр алхдаг тул хэлбэр нь ХЭВЭЭР үлдэнэ.
+      · `consumed` — (огноо, тоо, ГАР ХОНОГ). ЗӨВХӨН тооцоонд: `_lot_segments`
+        үүгээр алхдаг тул хэлбэр нь ХЭВЭЭР үлдэнэ. Гурав дахь гишүүн нь
+        `None` (машины тоо) эсвэл `(хоног, циклийн эхлэл)` — H5-ийн ГАР ХОНОГ.
       · `takes`    — (аль МӨР хассан, огноо, тоо, заасан эсэх). Тооцоонд
         оролцохгүй, зөвхөн ХАРУУЛАХ (`return_attribution`) зориулалттай.
     """
@@ -120,9 +135,11 @@ def _lots(contract: models.Contract) -> list[dict]:
     lots.sort(key=lambda l: l["_key"])
 
     def _eat(lot: dict, day: date, take: float, ln, pinned: bool):
+        ov = _override_of(contract, ln, day)
         lot["left"] -= take
-        lot["consumed"].append((day, take))
-        lot["takes"].append({"line_id": ln.id, "date": day, "qty": take, "pinned": pinned})
+        lot["consumed"].append((day, take, ov))
+        lot["takes"].append({"line_id": ln.id, "date": day, "qty": take,
+                             "pinned": pinned, "ov": ov})
 
     for key, ln in sorted(eats, key=lambda e: e[0]):
         day = key[0]
@@ -156,10 +173,14 @@ def _lots(contract: models.Contract) -> list[dict]:
 def return_attribution(contract: models.Contract) -> dict[int, list[dict]]:
     """Буцаалт/актын МӨР бүр АЛЬ падангаас хассаныг буцаана (зөвхөн УНШИНА).
 
-    `{мөрийн id: [{issue_line_id, issue_movement_id, date, rate, qty, pinned}]}`.
-    Хамаарлыг ХАДГАЛАХГҮЙ — `_lots`-ийн ЯГ тэр хуваарилалтаас (заасан падан →
-    FIFO) уншиж авна, тул дэлгэц дээр харагдах хамаарал нэхэмжлэлийн тоог
-    гаргасан хамаарал ХОЁР ӨӨР байх боломжгүй.
+    `{мөрийн id: [{issue_line_id, issue_movement_id, date, rate, qty, pinned,
+    days, billed_days, override}]}`. Хамаарлыг ХАДГАЛАХГҮЙ — `_lots`-ийн ЯГ тэр
+    хуваарилалтаас (заасан падан → FIFO) уншиж авна, тул дэлгэц дээр харагдах
+    хамаарал нэхэмжлэлийн тоог гаргасан хамаарал ХОЁР ӨӨР байх боломжгүй.
+
+    `days` = МАШИНЫ тоо (падан циклдээ орсноос буцаалт хүртэл), `billed_days` =
+    үнэхээр нэхэгдэх тоо. Хоёулаа ирдэг тул дэлгэц зөрүүг НУУХГҮЙ: «13 хоног
+    (гараар — системээр 12)».
 
     Падангийн дарааллаар (хуучнаас шинэ) — Отгоо «эхлээд хуучнаас хасагдав»
     гэдгийг дээрээс нь доош уншина.
@@ -167,69 +188,87 @@ def return_attribution(contract: models.Contract) -> dict[int, list[dict]]:
     out: dict[int, list[dict]] = {}
     for lot in _lots(contract):
         for t in lot["takes"]:
+            win = cycle_of(contract, t["date"])
+            start = max(lot["date"], win[0]) if win else lot["date"]
+            days = max((t["date"] - start).days, 0)
+            billed = days
+            if t["ov"] is not None and win is not None:
+                billed = min(t["ov"][0], (win[1] - start).days)
             out.setdefault(t["line_id"], []).append(
                 {"issue_line_id": lot["line_id"], "issue_movement_id": lot["movement_id"],
                  "date": str(lot["date"]), "rate": lot["rate"],
-                 "qty": t["qty"], "pinned": t["pinned"]})
+                 "qty": t["qty"], "pinned": t["pinned"],
+                 "days": days, "billed_days": billed,
+                 "override": t["ov"] is not None})
     return out
 
 
-def _lot_qty_days(lot: dict, d_from: date, d_to: date) -> float:
-    """[d_from, d_to) дотор тухайн паданд хэдэн ш×хоног гадаа байсан бэ."""
-    start = max(lot["date"], d_from)
-    if start >= d_to:
-        return 0.0
-    q = lot["qty"]
-    cur = start
-    total = 0.0
-    for ed, eq in lot["consumed"]:
-        if ed <= start:
-            q -= eq
-            continue
-        seg_end = min(ed, d_to)
-        if seg_end > cur:
-            total += max(q, 0.0) * (seg_end - cur).days
-            cur = seg_end
-        q -= eq
-        if cur >= d_to:
-            break
-    if cur < d_to:
-        total += max(q, 0.0) * (d_to - cur).days
-    return total
-
-
-def _lot_segments(lot: dict, d_from: date, d_to: date) -> list[tuple[date, date, float]]:
+def _lot_segments(lot: dict, d_from: date, d_to: date) -> list[dict]:
     """[d_from, d_to) дотор тухайн паданг ТОГТМОЛ ТООТОЙ зурвасуудад задална.
 
-    `_lot_qty_days`-ийн ЯГ ИЖИЛ алхалт — ялгаа нь зөвхөн нийлүүлэхийн оронд
-    зурвас бүрийг (эхлэл, төгсгөл, тоо) гэж ГАРГАДАГ. Тоо нь 0 буюу сөрөг
-    зурвасыг алгасна: `max(q, 0.0)` дор тэдгээр яг 0 нэмдэг тул нийлбэр
-    өөрчлөгдөхгүй.
+    ЭНЭ БОЛ МӨНГӨНИЙ ГАНЦ АЛХАЛТ. `_lot_qty_days` нь үүнийг нийлүүлдэг тул
+    хавсралтын мөрүүд ба нэхэмжлэлийн дүн ХОЁР ӨӨР кодоос гарах боломжгүй —
+    тэнцэл нь шалгалт биш, БҮТЭЦ.
 
-    ТЭНЦЭЛ: sum(q * (b - a).days for a, b, q in _lot_segments(lot, f, t))
-            == _lot_qty_days(lot, f, t)
+    Мөр бүр: {seg_from, seg_to, qty, days, override}. Ердийн зурваст
+    `days == (seg_to - seg_from).days`; тоо нь 0 буюу сөрөг зурвасыг алгасна.
+
+    ГАР ХОНОГ (H5). Буцаалтын мөр өөрийн хоног авч явбал ТЭР ХЭСЭГ нь алхалтаас
+    САЛЖ, өөрийн мөр болж гарна — Отгоогийн дэвтрийн хэлбэр яг энэ: үндсэн мөр
+    (гадаа үлдсэн тоо × бүтэн цикл) + буцаалтын ДЭД МӨР (буцсан тоо × ТҮҮНИЙ
+    тоолсон хоног). Салсан хэсэг нь `start` дээр буцсан мэт үлдсэн алхалтаас
+    хасагдана, тул давхар тоологдох боломжгүй.
+
+    Гурван ХАТУУ нөхцөл (бүгд нэг мөрөнд):
+      · зөвхөн буцаалт БУУСАН цикл — цонхны эхлэл нь тэр циклийн эхлэлтэй
+        таарсан үед л (өмнөх/дараагийн цикл ердийнхөөрөө нэхэгдэнэ);
+      · зөвхөн цонх дотор буусан буцаалт (`start < ed < d_to`);
+      · хоног нь цонхонд багтана (`min(хоног, цонхны үлдсэн урт)`) — нэг мөр
+        өөрийн циклийн уртаас ИЛҮҮГ хэзээ ч нэхэхгүй.
     """
     start = max(lot["date"], d_from)
     if start >= d_to:
         return []
     q = lot["qty"]
-    cur = start
-    out: list[tuple[date, date, float]] = []
-    for ed, eq in lot["consumed"]:
+    out: list[dict] = []
+    walk: list[tuple[date, float]] = []
+    for ed, eq, ov in lot["consumed"]:
         if ed <= start:
             q -= eq
             continue
+        if ov is None or ov[1] != d_from or ed >= d_to:
+            walk.append((ed, eq))
+            continue
+        q -= eq                                  # алхалтаас САЛНА
+        days = min(ov[0], (d_to - start).days)
+        if eq > 0 and days > 0:
+            out.append({"seg_from": start, "seg_to": ed, "qty": eq,
+                        "days": days, "override": True})
+
+    cur = start
+    for ed, eq in walk:
         seg_end = min(ed, d_to)
         if seg_end > cur:
             if q > 0:
-                out.append((cur, seg_end, max(q, 0.0)))
+                out.append({"seg_from": cur, "seg_to": seg_end, "qty": q,
+                            "days": (seg_end - cur).days, "override": False})
             cur = seg_end
         q -= eq
         if cur >= d_to:
             break
     if cur < d_to and q > 0:
-        out.append((cur, d_to, max(q, 0.0)))
+        out.append({"seg_from": cur, "seg_to": d_to, "qty": q,
+                    "days": (d_to - cur).days, "override": False})
     return out
+
+
+def _lot_qty_days(lot: dict, d_from: date, d_to: date) -> float:
+    """[d_from, d_to) дотор тухайн паданд хэдэн ш×хоног ТООЦОГДОХ вэ.
+
+    ЗУРВАСУУДЫН НИЙЛБЭР — тусдаа алхалт БИШ. Ингэснээр «Σ сегмент ==
+    accrue_rent» тэнцэл нь хоёр функцийг зэрэгцүүлж арчлахаас чөлөөлөгдөнө.
+    """
+    return sum(s["qty"] * s["days"] for s in _lot_segments(lot, d_from, d_to))
 
 
 def lot_qty_on(contract: models.Contract, day: date) -> list[dict]:
@@ -238,7 +277,7 @@ def lot_qty_on(contract: models.Contract, day: date) -> list[dict]:
     for lot in _lots(contract):
         if lot["date"] > day:
             continue
-        q = lot["qty"] - sum(eq for ed, eq in lot["consumed"] if ed <= day)
+        q = lot["qty"] - sum(eq for ed, eq, _ in lot["consumed"] if ed <= day)
         out.append({**lot, "qty_left": max(q, 0.0)})
     return out
 
@@ -277,10 +316,12 @@ def accrue_rent_segments(contract: models.Contract, d_from: date, d_to: date) ->
     зурвасуудад задалж мөр бүрд нь нэг мөр гаргана. Иймд циклийн дундуур ирсэн
     буцаалт хавсралтад НҮДЭЭР ХАРАГДАНА: 240ш×12 хоног, дараа нь 210ш×18 хоног.
 
-    Мөр бүр: {material_id, grade_id, rate, qty, days, amount, seg_from, seg_to};
-    `days = (seg_to - seg_from).days`, `amount = qty × days × rate`, огноонууд нь
-    `date` объект (мөр биш). Эрэмбэ: (material_id, grade_id, rate, seg_from) —
-    нэг материалын зурвасууд зэрэгцэж, цаг хугацааны дарааллаар харагдана.
+    Мөр бүр: {material_id, grade_id, rate, qty, days, amount, seg_from, seg_to,
+    override}; `amount = qty × days × rate`, огноонууд нь `date` объект (мөр биш).
+    `override=True` бол хоног нь ГАРААР тохирсон (H5) — тэр мөр цаасан дээр
+    тэмдэгтэй хэвлэгдэнэ, `days` нь огнооны зөрүүтэй санаатайгаар зөрж болно.
+    Эрэмбэ: (material_id, grade_id, rate, seg_from) — нэг материалын зурвасууд
+    зэрэгцэж, цаг хугацааны дарааллаар харагдана.
 
     ТЭНЦЭЛ: sum(мөрийн amount) == accrue_rent(contract, d_from, d_to)[0]
 
@@ -293,12 +334,12 @@ def accrue_rent_segments(contract: models.Contract, d_from: date, d_to: date) ->
         rate = lot["rate"]
         if rate <= 0:
             continue
-        for seg_from, seg_to, qty in _lot_segments(lot, d_from, d_to):
-            days = (seg_to - seg_from).days
+        for s in _lot_segments(lot, d_from, d_to):
             out.append({"material_id": lot["material_id"], "grade_id": lot["grade_id"],
-                        "rate": rate, "qty": qty, "days": days,
-                        "amount": qty * days * rate,
-                        "seg_from": seg_from, "seg_to": seg_to})
+                        "rate": rate, "qty": s["qty"], "days": s["days"],
+                        "amount": s["qty"] * s["days"] * rate,
+                        "seg_from": s["seg_from"], "seg_to": s["seg_to"],
+                        "override": s["override"]})
     out.sort(key=lambda s: (s["material_id"], s["grade_id"], s["rate"], s["seg_from"]))
     return out
 

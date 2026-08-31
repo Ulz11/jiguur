@@ -73,6 +73,9 @@ class AppendixRow:
     seg_from: date | None = None
     seg_to: date | None = None
     note: str | None = None
+    # ГАР ХОНОГ (H5): хоногийг ХОЁР ТАЛ гарын үсгээрээ тохирсон. Цаас нь
+    # ТҮҮНИЙ тоог авч явна — машиных нь биш — тул зөрүү нь тэмдгээр л илэрнэ.
+    override: bool = False
 
 
 @dataclass
@@ -113,7 +116,7 @@ def build_appendix(c, gmap: dict, mmap: dict, d_from: date, d_to: date, *,
             material=str(mmap.get(s["material_id"], "?")),
             grade=str(gmap.get(s["grade_id"], "")),
             qty=s["qty"], rate=s["rate"], days=s["days"], amount=s["amount"],
-            seg_from=s["seg_from"], seg_to=s["seg_to"]))
+            seg_from=s["seg_from"], seg_to=s["seg_to"], override=s["override"]))
 
     # Засвар + актын төлбөр нэхэмжлэлийн нийт дүнд ОРДОГ (`charge_amount`) тул
     # хавсралтад ч заавал гарна — эс бөгөөс Дэд дүн нэхэмжлэлтэйгээ нийлэхгүй.
@@ -128,6 +131,26 @@ def build_appendix(c, gmap: dict, mmap: dict, d_from: date, d_to: date, *,
     return Appendix(client_name=c.client.name, contract_no=c.no,
                     period_start=d_from, period_end=d_to, due_date=due_date, label=label,
                     rows=rows, subtotal=subtotal, vat=vat, total=subtotal + vat)
+
+
+OVERRIDE_MARK = "*"
+OVERRIDE_LEGEND = "* гараар тохирсон хоног"
+
+
+def days_text(row: AppendixRow) -> str:
+    """Хоногийн нүдний бичиг — гараар тохирсон бол одтой («13*»).
+
+    Тэмдэг нь тоог ӨӨРЧЛӨХГҮЙ: хуудсан дээр ТҮҮНИЙ тоо зогсоно, од нь зөвхөн
+    «энэ тоог хоёр тал тохирсон» гэдгийг хэлнэ."""
+    return f"{row.days}{OVERRIDE_MARK}" if row.override else str(row.days)
+
+
+def legend_lines(ap: "Appendix") -> list[str]:
+    """Хуудасны ёроолын тайлбар мөрүүд — ХЭРЭГТЭЙ үедээ л гарна.
+
+    Ганц ч гар хоног байхгүй хуудсанд «* гараар тохирсон хоног» гэсэн мөр
+    зогсох нь тайлбаргүй тэмдэг хайлгана."""
+    return [OVERRIDE_LEGEND] if any(r.override for r in ap.rows) else []
 
 
 # ---------- зурах ----------
@@ -233,7 +256,7 @@ def _render(ap: Appendix, company: dict, logo_path: str | None = None):
         if row.note is None:
             text(doc, f"{row.qty:,.0f}", size=ROW_SIZE, x=COL_QTY, width=38, align="right")
             text(doc, _money(row.rate), size=ROW_SIZE, x=COL_RATE, width=62, align="right")
-            text(doc, str(row.days), size=ROW_SIZE, x=COL_DAYS, width=38, align="right")
+            text(doc, days_text(row), size=ROW_SIZE, x=COL_DAYS, width=38, align="right")
         text(doc, _money(row.amount), size=ROW_SIZE, x=COL_TOTAL, width=RIGHT - COL_TOTAL,
              align="right")
         for continuation in lines[1:]:
@@ -246,6 +269,16 @@ def _render(ap: Appendix, company: dict, logo_path: str | None = None):
     # Толгойг ЦЭВЭРЛЭНЭ: доорх нийт дүнгийн блок хуудас тасалбал түүний дээр
     # хоосон хүснэгтийн толгой гарах учиргүй.
     doc.on_new_page = None
+
+    # Тайлбар мөр нь ХҮСНЭГТИЙН доор, нийт дүнгээс ӨМНӨ — тэмдэг нь тэмдэгтэй
+    # мөрөөсөө хол явбал уншигч хайж эхэлнэ.
+    legend = legend_lines(ap)
+    if legend:
+        ensure_space(doc, 8 + 12 * len(legend))
+        move_down(doc, 8)
+        for line in legend:
+            text(doc, line, size=8, color=MUTED)
+            move_down(doc, 12)
 
     # ЗАСВАР №2: эх сурвалжид энэ блокт огт шалгалт байгаагүй. Нийт дүнгийн
     # мөрүүд бүгд нүдтэй тул тэдгээрийн өндрийг бүтнээр нь нөөцөлнө.

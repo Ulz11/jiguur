@@ -176,6 +176,10 @@ class MovementLine(Base):
     issue_line_id: Mapped[int | None] = mapped_column(
         ForeignKey("movement_lines.id"), nullable=True)
     return_grade_id: Mapped[int | None] = mapped_column(ForeignKey("grades.id"), nullable=True)  # буцаж ирэхдээ ямар зэрэглэл болсон (дарга тогтооно)
+    # ГАР ХОНОГ (H5/R8): хоёр тал хавсралт дээр ГАРЫН ҮСЭГ зурсан хоног. NULL бол
+    # машины тоо (авто). Тоо нь мөнгө биш — тухайн буцаалт хаасан ПАДАНГИЙН
+    # хоногийг тэр буцаалт буусан ЦИКЛ дотор л орлуулна (`billing._lot_segments`).
+    billed_days_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     repair_qty: Mapped[float] = mapped_column(Float, default=0)     # засварт орсон тоо
     repair_fee: Mapped[float] = mapped_column(Float, default=0)     # клиентэд тооцох засварын дүн
     writeoff_qty: Mapped[float] = mapped_column(Float, default=0)   # акталсан тоо

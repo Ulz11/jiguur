@@ -209,6 +209,10 @@ class MovementLinePatch(_BM):
     repair_qty: float | None = None
     writeoff_qty: float | None = None
     issue_line_id: int | None = None
+    # ГАР ХОНОГ (H5): 0 нь ЖИНХЭНЭ утга («тэр өдөр нь тоологдохгүй») тул
+    # бусад талбарын «0 = цэвэрлэх» дүрэм энд ажиллахгүй. Цэвэрлэх нь ИЛЭРХИЙ
+    # `null` — `model_fields_set`-ээр «явуулаагүй»-гээс ялгагдана.
+    billed_days_override: int | None = None
     confirm: bool = False
 
 
@@ -432,14 +436,19 @@ def patch_movement(mid: int, body: MovementPatch, db: Session = Depends(get_db),
     return {**out, "rebuilt": rebuilt} if rebuilt else out
 
 
-def _check_pin(db: Session, c: models.Contract, mv: models.Movement,
-               ln: models.MovementLine, pin: int):
+def _check_pin(db: Session, c: models.Contract, mv_date: date, material_id: int,
+               grade_id: int, line_id: int | None, pin: int):
     """Падан-заалт (`issue_line_id`) нягтлал.
 
     Заалт нь `_lots`-д зөвхөн НЭЭЛТТЭЙ, ижил (материал, зэрэглэл)-тэй, тухайн
     өдрөөс ӨМНӨ гарсан падан дээр л үйлчилдэг — заалт нь чимээгүй үл тоогдвол
     Отгоо «заасан ч хөдөлсөнгүй» гэж дүгнэнэ. Тиймээс тэр нөхцлүүдийг энд
     ИЛЭРХИЙ монголоор татгалзана.
+
+    Мөр өөрөө хараахан ҮҮСЭЭГҮЙ (бүртгэх агшин) бол `line_id=None` — тэр
+    тохиолдолд «өөрийн хасалт» гэж байхгүй. Засвар ба бүртгэлт ХОЁУЛАА энэ
+    ганц хаалгаар орно: UI одооноос заалтаа бүртгэх агшинд илгээдэг тул хоёр
+    зам хоёр өөр дүрэмтэй байвал нэг нь чимээгүй уначихна.
     """
     src = db.get(models.MovementLine, pin)
     if not src:
@@ -451,17 +460,29 @@ def _check_pin(db: Session, c: models.Contract, mv: models.Movement,
         raise HTTPException(400, "Заасан падан энэ гэрээнийх биш")
     if not billing.movement_active(smv):
         raise HTTPException(400, "Заасан падан баталгаажаагүй эсвэл хүчингүй болсон")
-    if src.material_id != ln.material_id or src.grade_id != ln.grade_id:
+    if src.material_id != material_id or src.grade_id != grade_id:
         raise HTTPException(400, "Заасан падан өөр материал/зэрэглэлийнх")
-    if smv.date > mv.date:
+    if smv.date > mv_date:
         raise HTTPException(400, "Заасан падан буцаалтын өдрөөс хойш гарсан")
     # Хоосон падан руу заах нь утгагүй. ЭНЭ мөрийн өөрийнх нь хассан тоог
     # буцааж нэмнэ — эс бөгөөс өөрийнхөө хаасан паданг «хоосон» гэж уншина.
     lot = next((l for l in billing._lots(c) if l["line_id"] == src.id), None)
     if lot is not None:
-        mine = sum(t["qty"] for t in lot["takes"] if t["line_id"] == ln.id)
+        mine = sum(t["qty"] for t in lot["takes"] if t["line_id"] == line_id)
         if lot["left"] + mine <= 0.0001:
             raise HTTPException(400, "Заасан падан хоосон — өөр падан сонгоно уу")
+
+
+# ГАР ХОНОГ (H5/R8): «Хоёр тал 12 хоног гэж гарын үсэг зурсан бол 12 нь
+# хэлцлийн баримт». Хоног нь ЦОНХНЫ дотор л утгатай — цонхонд багтахгүй тоо
+# нь дараагийн циклийн мөнгийг чимээгүй идэх тул ЭНД зогсоно.
+def _check_billed_days(c: models.Contract, mv: models.Movement, days: int):
+    if days < 0:
+        raise HTTPException(400, "Хоног сөрөг байж болохгүй")
+    win = billing.cycle_of(c, mv.date)
+    if win and days > (win[1] - win[0]).days:
+        raise HTTPException(400, f"Гар хоног циклийн уртаас ({(win[1] - win[0]).days} "
+                                 f"хоног) их байж болохгүй")
 
 
 @router.patch("/movement-lines/{lid}")
@@ -491,6 +512,10 @@ def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends
     # ---- буцаалтын дэлгэрэнгүй ----
     detail = {k: getattr(body, k) for k in DETAIL_FIELDS
               if getattr(body, k) is not None}
+    if "billed_days_override" in body.model_fields_set:
+        if body.billed_days_override is not None:
+            _check_billed_days(c, mv, body.billed_days_override)
+        detail["billed_days_override"] = body.billed_days_override
     if detail and mv.type != "RETURN":
         raise HTTPException(400, "Буцаалтын дэлгэрэнгүйг зөвхөн буцаалтын мөрд засна")
     for k in ("repair_qty", "writeoff_qty"):
@@ -499,7 +524,8 @@ def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends
     if detail.get("return_grade_id") and not db.get(models.Grade, detail["return_grade_id"]):
         raise HTTPException(400, "Зэрэглэл олдсонгүй")
     if detail.get("issue_line_id"):
-        _check_pin(db, c, mv, ln, detail["issue_line_id"])
+        _check_pin(db, c, mv.date, ln.material_id, ln.grade_id, ln.id,
+                   detail["issue_line_id"])
     # `0` = ТЭГЛЭХ (авто-FIFO / гарсан зэрэглэлдээ) — NULL болгож хадгална
     for k in ("return_grade_id", "issue_line_id"):
         if detail.get(k) == 0:
@@ -835,6 +861,13 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
             out = billing.qty_on(c, ln.material_id, ln.grade_id, body.date)
             if ln.qty > out + 0.001:
                 raise HTTPException(400, f"Түрээсэнд байгаагаас их буцаалт (гадаа: {out:g})")
+            # Заалт ба гар хоног нь одоо БҮРТГЭХ АГШИНД ирдэг (UI илгээнэ) —
+            # засварын замтай ЯГ ижил хаалгаар нягтлагдана.
+            if ln.issue_line_id:
+                _check_pin(db, c, body.date, ln.material_id, ln.grade_id, None,
+                           ln.issue_line_id)
+            if ln.billed_days_override is not None:
+                _check_billed_days(c, mv, ln.billed_days_override)
             m = db.get(models.Material, ln.material_id)
             repair_fee = ln.repair_qty * (m.repair_fee if m else 0)
             price = db.query(models.MaterialGradePrice).filter_by(
@@ -848,6 +881,8 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
                                    grade_id=ln.grade_id, qty=ln.qty, rate=rate,
                                    issue_line_id=ln.issue_line_id,
                                    return_grade_id=ln.return_grade_id,
+                                   billed_days_override=(ln.billed_days_override
+                                                         if body.type == "RETURN" else None),
                                    repair_qty=ln.repair_qty, repair_fee=repair_fee,
                                    writeoff_qty=ln.writeoff_qty, writeoff_fee=writeoff_fee))
     db.commit()
