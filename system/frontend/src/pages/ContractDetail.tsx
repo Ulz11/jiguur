@@ -11,7 +11,7 @@ import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
-import { materialSections, MaterialSection } from "../lib/lots";
+import { lotOptions, materialSections, MaterialSection } from "../lib/lots";
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { todayIso } from "../lib/schedule";
 import { isVoided, movementStockRows, voidRowClass, voidTitle } from "../lib/void";
@@ -529,6 +529,19 @@ export default function ContractDetail() {
                                                           "Хөдөлгөөний тоо шинэчлэгдлээ")} />
                             ) : fmt(l.qty)}
                           </span>
+                          {/* ---- БУЦААЛТЫН ДЭЛГЭРЭНГҮЙ — хяналттай засвар ----
+                              H1/H5: дарга талбай дээр «энэ 40ш В зэрэглэл»
+                              гэж шийдээд бичдэг, маргааш нь засварт орох нь
+                              5ш байсныг олж мэднэ. Устгах зам байхгүй тул
+                              ЗАСАХ зам байх ёстой. Дүн нь гараар бичигдэхгүй —
+                              каталогоос дахин бодогдоно; нэхэмжлэгдсэн бол
+                              `gatedPatch` эхлээд зөрүүг харуулна. */}
+                          {mv.type === "RETURN" && u?.role === "manager" && (
+                            <ReturnDetailEdits mv={mv} l={l} grades={grades}
+                              sec={sections.find((s) => s.material_id === l.material_id
+                                                        && s.grade_id === l.grade_id)}
+                              onEdit={gatedPatch} />
+                          )}
                           {/* Падангийн тариф нь МӨНГӨ — даргад талбар нь ч,
                               нэр нь ч гарахгүй (сервер утгыг нь илгээхгүй). */}
                           {seesMoney && mv.type === "ISSUE" && (
@@ -733,6 +746,66 @@ function RebuildModal({ p, onClose, onDone }: {
         }}>{busy ? "…" : "Баталгаажуулж дахин бодох"}</button>
       </div>
     </Modal>
+  );
+}
+
+/* ---------- Буцаалтын дэлгэрэнгүйн хяналттай засвар ----------
+   Дөрвөн шийдвэр — БҮГД даргын гараар бичигдсэн, тул бүгд засагдана:
+   буцаж ирсэн зэрэглэл, засварт орсон тоо, актад орсон тоо, аль падангаас
+   хасагдах (падан-pin, H5).
+
+   Дүн (засварын хөлс, актын НБҮнэ) энд ОГТ БАЙХГҮЙ: тэдгээр нь тооноос
+   каталогоор дахин бодогддог (сервер тал `_recompute_fees`). Гараар дүн
+   бичих цонх байвал каталог ба баримт хоёр мөнхөд зөрнө.
+
+   Зам нь хуучин `gatedPatch` — тоо/тарифын засвартай ЯГ ижил: нэхэмжлэгдсэн
+   циклд хүрвэл RebuildModal эхлээд зөрүүг харуулна. */
+function ReturnDetailEdits({ mv, l, grades, sec, onEdit }: {
+  mv: any; l: any; grades: any[]; sec?: MaterialSection;
+  onEdit: (path: string, body: any, okMsg: string) => Promise<void>;
+}) {
+  const path = `/api/movement-lines/${l.id}`;
+  const name = `${l.material} (${l.grade}) · ${mv.date}`;
+  const cur = l.return_grade_id ?? l.grade_id;
+  const wrap = "text-[12px] text-t2 inline-flex items-center gap-1.5";
+  return (
+    <>
+      <span className={wrap}>
+        <span aria-hidden="true">Буцсан зэрэглэл:</span>
+        <InlineEdit width="w-28" label={`${name} — буцаж ирсэн зэрэглэл`}
+          options={grades.map((g: any) => [String(g.id), g.code] as [string, string])}
+          value={String(cur)} display={l.return_grade || l.grade}
+          confirmText="Зэрэглэл солих уу?"
+          onSave={(v) => onEdit(path, { return_grade_id: Number(v) },
+                                "Буцаж ирсэн зэрэглэл шинэчлэгдлээ")} />
+      </span>
+      <span className={wrap}>
+        <span aria-hidden="true">Засвар:</span>
+        <InlineEdit type="number" right width="w-16" label={`${name} — засварт орсон тоо`}
+          value={l.repair_qty ?? 0} display={fmt(l.repair_qty ?? 0)}
+          confirmText="Засварын тоо солих уу?"
+          onSave={(v) => onEdit(path, { repair_qty: parseMoney(v) },
+                                "Засварын тоо шинэчлэгдэж, дүн дахин бодогдлоо")} />
+      </span>
+      <span className={wrap}>
+        <span aria-hidden="true">Акт:</span>
+        <InlineEdit type="number" right width="w-16" label={`${name} — актад орсон тоо`}
+          value={l.writeoff_qty ?? 0} display={fmt(l.writeoff_qty ?? 0)}
+          confirmText="Актын тоо солих уу?"
+          onSave={(v) => onEdit(path, { writeoff_qty: parseMoney(v) },
+                                "Актын тоо шинэчлэгдэж, дүн дахин бодогдлоо")} />
+      </span>
+      <span className={wrap}>
+        <span aria-hidden="true">Падан:</span>
+        <InlineEdit width="w-56" label={`${name} — аль падангаас хасагдах`}
+          options={lotOptions(sec, mv.date, l.id)}
+          value={String(l.issue_line_id ?? 0)}
+          display={l.issue_line_id ? `#${l.issue_line_id}` : "авто"}
+          confirmText="Падан солих уу?"
+          onSave={(v) => onEdit(path, { issue_line_id: Number(v) },
+                                "Буцаалтын падан шинэчлэгдлээ")} />
+      </span>
+    </>
   );
 }
 

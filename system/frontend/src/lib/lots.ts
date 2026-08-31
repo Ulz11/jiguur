@@ -135,3 +135,37 @@ export function materialSections(items: ItemRow[], groups: LedgerGroup[]): Mater
 
   return [...secs.values()];
 }
+
+/* ---------- Падан-сонгогч (буцаалтын мөрөнд) ----------
+   H5: «буцаалтад падан-сонгогч — сервер талд бэлэн, UI илгээдэггүй».
+
+   Отгоо «энэ буцаалт ХОЁРДУГААР падангаас хасагдана» гэж заахын тулд ямар
+   падан нээлттэй байгааг эхлээд харах ёстой. Шошго нь ТҮҮНИЙ таних дөрвөн
+   тэмдгийг авч явна: дугаар (дэвтэр дээрээ «#12 падан» гэж харагддаг), огноо,
+   ТАРИФ (нэг хэв 300₮-өөр ч, 330₮-өөр ч гарсан байж болно) ба хэд үлдсэн.
+
+   Үлдэгдлийг ЭНД бодох нь давхардал биш: сервер `_lots`-оороо ижил тоог
+   гаргадаг ч сонголтын мөр бүрд тусад нь асуух зам байхгүй. Мөр өөрөө нь
+   хассан тоог БУЦААЖ нэмнэ — эс бөгөөс өөрийн хаасан паданг «хоосон» гэж
+   уншиж, тэр мөр сонгогчоосоо алга болно. */
+export function lotOptions(group: { lines?: LedgerLine[] } | undefined | null,
+                           onDate: string, selfLineId?: number): [string, string][] {
+  const out: [string, string][] = [["0", "Авто — эхлээд хуучнаас"]];
+  const lines = group?.lines || [];
+  const taken = new Map<number, number>();
+  for (const ln of lines) {
+    if (ln.id === selfLineId) continue;        // өөрийнхөө хасалт тооцогдохгүй
+    for (const s of ln.sources || []) {
+      taken.set(s.issue_line_id, (taken.get(s.issue_line_id) || 0) + s.qty);
+    }
+  }
+  for (const ln of lines) {
+    if (ln.type !== "ISSUE" || !ln.counted || ln.date > onDate) continue;
+    const left = ln.qty - (taken.get(ln.id) || 0);
+    if (left <= 0) continue;
+    const rate = ln.rate != null ? `${Math.round(ln.rate).toLocaleString("en-US")}₮` : "—";
+    out.push([String(ln.id),
+              `#${ln.id} · ${ln.date} · ${rate} · ${Math.round(left).toLocaleString("en-US")}ш үлдсэн`]);
+  }
+  return out;
+}

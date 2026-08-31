@@ -186,7 +186,19 @@ class MovementPatch(_BM):
 class MovementLinePatch(_BM):
     qty: float | None = None
     rate: float | None = None
+    # ---- БУЦААЛТЫН дэлгэрэнгүй (H1/H5: «зэрэглэл/засвар/актын хуваарь мөнхийн») ----
+    # Дарга талбай дээр «энэ 40ш В зэрэглэл» гэж шийдээд бичдэг; маргааш нь
+    # засварт орох нь 5ш байсныг олж мэднэ. Хөдөлгөөн устгагддаггүй тул
+    # ХЯНАЛТТАЙ ЗАСВАР байх ёстой — эс бөгөөс тэр мөр мөнхийн худал болно.
+    # `0` = ТЭГЛЭХ (зэрэглэл: гарсан зэрэглэлдээ, падан: авто-FIFO руу).
+    return_grade_id: int | None = None
+    repair_qty: float | None = None
+    writeoff_qty: float | None = None
+    issue_line_id: int | None = None
     confirm: bool = False
+
+
+DETAIL_FIELDS = ("return_grade_id", "repair_qty", "writeoff_qty", "issue_line_id")
 
 
 TIMELINE_ERR = "Хөдөлгөөний он цагийн дараалал зөрчигдөнө — үлдэгдэл сөрөг болно"
@@ -254,8 +266,15 @@ def _recompute_fees(db: Session, mv: models.Movement, ln: models.MovementLine):
 
 def _apply_movement_edit(db: Session, mv: models.Movement, new_date=None, note=None,
                          line: models.MovementLine | None = None,
-                         qty: float | None = None, rate: float | None = None):
-    """Хөдөлгөөнийг зас: нөөцөөс БУЦААЖ хас → утга сольж → дахин тусга."""
+                         qty: float | None = None, rate: float | None = None,
+                         detail: dict | None = None):
+    """Хөдөлгөөнийг зас: нөөцөөс БУЦААЖ хас → утга сольж → дахин тусга.
+
+    `detail` — буцаалтын мөрийн зэрэглэл/засвар/акт/падан. Нөөцийн толин
+    тусгал ХУУЧИН утгаараа буцаж, ШИНЭ утгаараа дахин тавигдана: тиймээс
+    буцаж ирсэн зэрэглэл солиход бараа хуучин зэрэглэлээс хасагдаж, шинэ рүү
+    нэмэгдэнэ — гараар нөхөх юм үлдэхгүй.
+    """
     done = mv.status == "done"
     if done:
         billing.unapply_movement_stock(db, mv)
@@ -268,6 +287,8 @@ def _apply_movement_edit(db: Session, mv: models.Movement, new_date=None, note=N
             line.qty = qty
         if rate is not None:
             line.rate = rate
+        for k, v in (detail or {}).items():
+            setattr(line, k, v)
         _recompute_fees(db, mv, line)
     if done:
         billing.apply_movement_stock(db, mv)
@@ -393,10 +414,49 @@ def patch_movement(mid: int, body: MovementPatch, db: Session = Depends(get_db),
     return {**out, "rebuilt": rebuilt} if rebuilt else out
 
 
+def _check_pin(db: Session, c: models.Contract, mv: models.Movement,
+               ln: models.MovementLine, pin: int):
+    """Падан-заалт (`issue_line_id`) нягтлал.
+
+    Заалт нь `_lots`-д зөвхөн НЭЭЛТТЭЙ, ижил (материал, зэрэглэл)-тэй, тухайн
+    өдрөөс ӨМНӨ гарсан падан дээр л үйлчилдэг — заалт нь чимээгүй үл тоогдвол
+    Отгоо «заасан ч хөдөлсөнгүй» гэж дүгнэнэ. Тиймээс тэр нөхцлүүдийг энд
+    ИЛЭРХИЙ монголоор татгалзана.
+    """
+    src = db.get(models.MovementLine, pin)
+    if not src:
+        raise HTTPException(400, "Заасан падан олдсонгүй")
+    smv = src.movement
+    if smv.type != "ISSUE":
+        raise HTTPException(400, "Заасан мөр олголтын мөр биш — падан болохгүй")
+    if smv.contract_id != c.id:
+        raise HTTPException(400, "Заасан падан энэ гэрээнийх биш")
+    if not billing.movement_active(smv):
+        raise HTTPException(400, "Заасан падан баталгаажаагүй эсвэл хүчингүй болсон")
+    if src.material_id != ln.material_id or src.grade_id != ln.grade_id:
+        raise HTTPException(400, "Заасан падан өөр материал/зэрэглэлийнх")
+    if smv.date > mv.date:
+        raise HTTPException(400, "Заасан падан буцаалтын өдрөөс хойш гарсан")
+    # Хоосон падан руу заах нь утгагүй. ЭНЭ мөрийн өөрийнх нь хассан тоог
+    # буцааж нэмнэ — эс бөгөөс өөрийнхөө хаасан паданг «хоосон» гэж уншина.
+    lot = next((l for l in billing._lots(c) if l["line_id"] == src.id), None)
+    if lot is not None:
+        mine = sum(t["qty"] for t in lot["takes"] if t["line_id"] == ln.id)
+        if lot["left"] + mine <= 0.0001:
+            raise HTTPException(400, "Заасан падан хоосон — өөр падан сонгоно уу")
+
+
 @router.patch("/movement-lines/{lid}")
 def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends(get_db),
                         user=Depends(auth.require_roles("manager"))):
-    """Хөдөлгөөний мөрийн тоо / тарифыг засна (падан загварын гол засвар)."""
+    """Хөдөлгөөний мөрийн тоо / тариф / БУЦААЛТЫН ДЭЛГЭРЭНГҮЙГ засна.
+
+    Падан загварын гол засвар. Буцаалтын мөрөнд нэмж: буцаж ирсэн зэрэглэл,
+    засварт/актад орсон тоо, аль падангаас хасагдахыг заах пин. Дүн нь ХЭЗЭЭ Ч
+    гараар бичигдэхгүй — каталогоос үүсгэх үеийнхтэй ижил томьёогоор дахин
+    бодогдоно; нөөц нь толиндоо буцаж, нэхэмжлэгдсэн бол дахин бодолтын
+    хаалгаар дамжина.
+    """
     ln = db.get(models.MovementLine, lid)
     if not ln:
         raise HTTPException(404, "Мөр олдсонгүй")
@@ -409,8 +469,28 @@ def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends
             raise HTTPException(400, "Тариф сөрөг байж болохгүй")
         if mv.type != "ISSUE":
             raise HTTPException(400, "Тариф зөвхөн олголтын мөрд тавигдана")
+
+    # ---- буцаалтын дэлгэрэнгүй ----
+    detail = {k: getattr(body, k) for k in DETAIL_FIELDS
+              if getattr(body, k) is not None}
+    if detail and mv.type != "RETURN":
+        raise HTTPException(400, "Буцаалтын дэлгэрэнгүйг зөвхөн буцаалтын мөрд засна")
+    for k in ("repair_qty", "writeoff_qty"):
+        if detail.get(k) is not None and detail[k] < 0:
+            raise HTTPException(400, "Засвар, актын тоо сөрөг байж болохгүй")
+    if detail.get("return_grade_id") and not db.get(models.Grade, detail["return_grade_id"]):
+        raise HTTPException(400, "Зэрэглэл олдсонгүй")
+    if detail.get("issue_line_id"):
+        _check_pin(db, c, mv, ln, detail["issue_line_id"])
+    # `0` = ТЭГЛЭХ (авто-FIFO / гарсан зэрэглэлдээ) — NULL болгож хадгална
+    for k in ("return_grade_id", "issue_line_id"):
+        if detail.get(k) == 0:
+            detail[k] = None
+
     new_qty = body.qty if body.qty is not None else ln.qty
-    if mv.type == "RETURN" and ln.repair_qty + ln.writeoff_qty > new_qty + 0.001:
+    new_rep = detail.get("repair_qty", ln.repair_qty)
+    new_wo = detail.get("writeoff_qty", ln.writeoff_qty)
+    if mv.type == "RETURN" and new_rep + new_wo > new_qty + 0.001:
         raise HTTPException(400, "Засвар + акт нь буцаалтын тооноос их байна")
     if mv.status == "done" and body.qty is not None:
         if not _timeline_ok(c, {(ln.material_id, ln.grade_id)}, line_qty={ln.id: new_qty}):
@@ -420,13 +500,15 @@ def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends
                                                   grade_id=ln.grade_id).first()
             if not st or st.on_hand < new_qty - ln.qty:
                 raise HTTPException(400, "Агуулахад хүрэлцэхгүй")
-    before = {"qty": ln.qty, "rate": ln.rate}
-    after = {"qty": new_qty, "rate": body.rate if body.rate is not None else ln.rate}
+    before = {"qty": ln.qty, "rate": ln.rate,
+              **{k: getattr(ln, k) for k in detail}}
+    after = {"qty": new_qty, "rate": body.rate if body.rate is not None else ln.rate,
+             **detail}
     gmap, mmap = _maps(db)
     days = [mv.date] if mv.status == "done" else []
 
     def mutate():
-        _apply_movement_edit(db, mv, line=ln, qty=body.qty, rate=body.rate)
+        _apply_movement_edit(db, mv, line=ln, qty=body.qty, rate=body.rate, detail=detail)
 
     rebuilt, preview = _gated(db, user, c, mutate, days, body.confirm,
                               f"хөдөлгөөн #{mv.id} мөр #{lid}")

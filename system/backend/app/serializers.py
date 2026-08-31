@@ -274,6 +274,10 @@ def movement(mv: models.Movement, gmap: dict, mmap: dict):
                        "material_id": l.material_id, "material": mmap.get(l.material_id, "?"),
                        "grade_id": l.grade_id, "grade": gmap.get(l.grade_id, "?"),
                        "qty": l.qty, "rate": l.rate,
+                       # Падан-заалт ба буцаж ирсэн зэрэглэлийн ID — засварын
+                       # сонгогчид хэрэгтэй (мөнгө биш, тул даргад ч үлдэнэ).
+                       "issue_line_id": l.issue_line_id,
+                       "return_grade_id": l.return_grade_id,
                        "return_grade": gmap.get(l.return_grade_id) if l.return_grade_id else None,
                        "repair_qty": l.repair_qty, "repair_fee": l.repair_fee,
                        "writeoff_qty": l.writeoff_qty, "writeoff_fee": l.writeoff_fee}

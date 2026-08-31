@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { materialSections } from "./lots";
+import { materialSections, lotOptions } from "./lots";
 
 /* Отгоо материалын мөр дээр дарахад доор нь ТЭР материалын түүх задарна:
    юу гарсан, юу буцсан, аль паданнаас, тэгээд ХЭД үлдсэн. Үлдэгдлийн багана
@@ -100,5 +100,69 @@ describe("materialSections", () => {
     expect(secs[0].rows).toEqual([]);
     expect(secs[0].qty).toBe(0);
     expect(secs[0].lines.map((l) => l.balance)).toEqual([60, 0]);
+  });
+});
+
+/* ---- Падан-сонгогчийн сонголтууд ----
+   H5: «буцаалтад падан-сонгогч (сервер талд бэлэн — UI илгээдэггүй)».
+   Отгоо «энэ буцаалт ХОЁРДУГААР падангаас» гэж заахын тулд эхлээд ямар падан
+   нээлттэй байгааг харах ёстой: дугаар, огноо, ТАРИФ, хэд үлдсэн. */
+
+const grp = (lines: any[]): any => ({
+  material_id: 1, grade_id: 2, material: "Хэв 6012", grade: "А", held: 0, lines,
+});
+
+describe("lotOptions", () => {
+  const lots = grp([
+    { id: 11, movement_id: 1, type: "ISSUE", date: "2026-03-20", status: "done",
+      counted: true, qty: 100, delta: 100, rate: 330, sources: null },
+    { id: 12, movement_id: 2, type: "ISSUE", date: "2026-04-05", status: "done",
+      counted: true, qty: 50, delta: 50, rate: 350, sources: null },
+    { id: 20, movement_id: 3, type: "RETURN", date: "2026-04-10", status: "done",
+      counted: true, qty: 30, delta: -30, rate: null,
+      sources: [{ issue_line_id: 11, rate: 330, qty: 30, pinned: false }] },
+  ]);
+
+  it("падан бүрийг дугаар · огноо · тариф · үлдэгдлээр нэрлэнэ", () => {
+    expect(lotOptions(lots, "2026-04-10", 20)).toEqual([
+      ["0", "Авто — эхлээд хуучнаас"],
+      ["11", "#11 · 2026-03-20 · 330₮ · 100ш үлдсэн"],
+      ["12", "#12 · 2026-04-05 · 350₮ · 50ш үлдсэн"],
+    ]);
+  });
+
+  it("ӨӨРИЙНХӨӨ хассан тоог падангийн үлдэгдэлд буцааж нэмнэ", () => {
+    // 20-р мөрийг ОРУУЛАХГҮЙ тооцвол #11 нь 30ш хасагдсан харагдана
+    expect(lotOptions(lots, "2026-04-10")).toEqual([
+      ["0", "Авто — эхлээд хуучнаас"],
+      ["11", "#11 · 2026-03-20 · 330₮ · 70ш үлдсэн"],
+      ["12", "#12 · 2026-04-05 · 350₮ · 50ш үлдсэн"],
+    ]);
+  });
+
+  it("буцаалтын өдрөөс ХОЙШ гарсан паданг санал болгохгүй (сервер татгалзана)", () => {
+    expect(lotOptions(lots, "2026-03-25", 20).map((o) => o[0])).toEqual(["0", "11"]);
+  });
+
+  it("баталгаажаагүй / хүчингүй олголт падан биш", () => {
+    const pend = grp([{ id: 9, movement_id: 1, type: "ISSUE", date: "2026-01-01",
+                        status: "pending", counted: false, qty: 80, delta: 80,
+                        rate: 330, sources: null }]);
+    expect(lotOptions(pend, "2026-05-01")).toEqual([["0", "Авто — эхлээд хуучнаас"]]);
+  });
+
+  it("хоосорсон падан жагсаалтад гарахгүй", () => {
+    const eaten = grp([
+      { id: 11, movement_id: 1, type: "ISSUE", date: "2026-03-20", status: "done",
+        counted: true, qty: 40, delta: 40, rate: 330, sources: null },
+      { id: 21, movement_id: 3, type: "RETURN", date: "2026-04-01", status: "done",
+        counted: true, qty: 40, delta: -40, rate: null,
+        sources: [{ issue_line_id: 11, rate: 330, qty: 40, pinned: false }] },
+    ]);
+    expect(lotOptions(eaten, "2026-04-05")).toEqual([["0", "Авто — эхлээд хуучнаас"]]);
+  });
+
+  it("бүлэггүй дуудлагад унахгүй", () => {
+    expect(lotOptions(undefined, "2026-04-10")).toEqual([["0", "Авто — эхлээд хуучнаас"]]);
   });
 });

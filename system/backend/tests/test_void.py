@@ -547,3 +547,244 @@ def test_void_movement_writes_audit(client, as_role):
     trail = client.get("/api/audit?entity=movement", headers=h).json()
     assert any(a["action"] == "void" and a["entity_id"] == mid
                and "давхар бичив" in a["detail"] for a in trail)
+
+
+# ============ БУЦААЛТЫН ДЭЛГЭРЭНГҮЙН ХЯНАЛТТАЙ ЗАСВАР ============
+#
+# H1-ийн гурав дахь хэсэг: «буцаалтын зэрэглэл/засвар/актын хуваарь мөнхийн».
+# Дарга талбай дээр «энэ 40ш В зэрэглэл» гэж шийдээд бичдэг — маргааш нь
+# засварт орох нь 5ш байсныг олж мэднэ. Устгах зам байхгүй тул ЗАСАХ зам
+# байх ёстой: тоо нь хянагдаж, дүн нь каталогоос дахин бодогдож, нөөц нь яг
+# толиндоо буцаж, нэхэмжлэгдсэн бол дахин бодолтын хаалгаар дамжина.
+
+
+def _return_line(client, h, cid):
+    mv = next(x for x in _movements(client, h, cid) if x["type"] == "RETURN")
+    return mv, mv["lines"][0]
+
+
+def _make_return(client, as_role, days_ago=10, qty=100, ret=40, **line):
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=days_ago, qty=qty)
+    _confirm_pending(client, as_role, cid)
+    r = client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": iso(max(days_ago - 5, 0)),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": ret, **line}]})
+    assert r.status_code == 200, r.text
+    return cl_id, cid, m, st
+
+
+def test_return_grade_is_patchable_and_remirrors_stock(client, as_role):
+    """Буцаж ирсэн ЗЭРЭГЛЭЛ засагдана — нөөц хуучин зэрэглэлээс хасагдаж,
+    шинэ рүү нэмэгдэнэ (толин тусгал яг урвуугаараа дахин тавигдана)."""
+    h = as_role("otgoo")
+    grades = client.get("/api/grades", headers=h).json()
+    g_b = next(g for g in grades if g["code"] == "В")
+    cl_id, cid, m, st = _make_return(client, as_role)
+    mv, ln = _return_line(client, h, cid)
+    a_before = _stock_of(client, h, m["id"], st["grade_id"])
+    b_before = _stock_of(client, h, m["id"], g_b["id"])
+
+    r = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                     json={"return_grade_id": g_b["id"]})
+    assert r.status_code == 200, r.text
+
+    a_after = _stock_of(client, h, m["id"], st["grade_id"])
+    b_after = _stock_of(client, h, m["id"], g_b["id"])
+    assert a_after["on_hand"] == a_before["on_hand"] - 40
+    assert b_after["on_hand"] == b_before["on_hand"] + 40
+    assert a_after["on_rent"] == a_before["on_rent"]        # гадаа тоо хэвээр
+    _, ln2 = _return_line(client, h, cid)
+    assert ln2["return_grade"] == "В"
+
+
+def test_repair_and_writeoff_qty_patch_recomputes_fees_and_stock(client, as_role):
+    """Засвар/актын ТОО засагдахад ДҮН нь каталогоос ДАХИН бодогдоно —
+    үүсгэх үеийнхтэй яг ижил томьёогоор (гараар бичсэн дүн гэж байхгүй)."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = _make_return(client, as_role)
+    mv, ln = _return_line(client, h, cid)
+    assert ln["repair_fee"] == 0 and ln["writeoff_fee"] == 0
+    before = _stock_of(client, h, m["id"], st["grade_id"])
+    nb = next(p for p in m["prices"] if p["grade_id"] == st["grade_id"])["nb_price"]
+
+    r = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                     json={"repair_qty": 5, "writeoff_qty": 3})
+    assert r.status_code == 200, r.text
+
+    _, ln2 = _return_line(client, h, cid)
+    assert ln2["repair_qty"] == 5 and ln2["writeoff_qty"] == 3
+    assert ln2["repair_fee"] == 5 * m["repair_fee"]
+    assert ln2["writeoff_fee"] == 3 * nb
+
+    after = _stock_of(client, h, m["id"], st["grade_id"])
+    assert after["on_hand"] == before["on_hand"] - 8       # 5 засварт, 3 актад
+    assert after["in_repair"] == before["in_repair"] + 5
+    assert after["written_off"] == before["written_off"] + 3
+
+
+def test_repair_plus_writeoff_cannot_exceed_qty(client, as_role):
+    h = as_role("otgoo")
+    cl_id, cid, m, st = _make_return(client, as_role, ret=40)
+    mv, ln = _return_line(client, h, cid)
+    bad = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                       json={"repair_qty": 30, "writeoff_qty": 20})
+    assert bad.status_code == 400
+    assert bad.json()["detail"] == "Засвар + акт нь буцаалтын тооноос их байна"
+    # мөр хөндөгдөөгүй
+    _, ln2 = _return_line(client, h, cid)
+    assert ln2["repair_qty"] == 0 and ln2["writeoff_qty"] == 0
+
+
+def test_negative_repair_qty_rejected(client, as_role):
+    h = as_role("otgoo")
+    cl_id, cid, m, st = _make_return(client, as_role)
+    mv, ln = _return_line(client, h, cid)
+    assert client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                        json={"repair_qty": -1}).status_code == 400
+
+
+def test_return_detail_fields_rejected_on_issue_line(client, as_role):
+    """Олголтын мөрөнд буцаалтын дэлгэрэнгүй гэж байхгүй."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
+    _confirm_pending(client, as_role, cid)
+    issue = next(x for x in _movements(client, h, cid) if x["type"] == "ISSUE")
+    r = client.patch(f"/api/movement-lines/{issue['lines'][0]['id']}", headers=h,
+                     json={"repair_qty": 5})
+    assert r.status_code == 400
+    assert "буцаалт" in r.json()["detail"].lower()
+
+
+# ---------- падан-pin ----------
+
+def test_issue_line_pin_is_patchable_and_moves_attribution(client, as_role):
+    """Отгоо «энэ буцаалт ХОЁРДУГААР падангаас» гэж заана — хамаарал шилжинэ.
+
+    Сервер тал уг чадвартай байсан ч UI-гаас илгээгддэггүй байв (H5).
+    """
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=20, qty=100)
+    _confirm_pending(client, as_role, cid)
+    # хоёр дахь падан — ижил материал, ижил зэрэглэл, өөр өдөр
+    assert client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "ISSUE", "date": iso(15),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 50}]
+    }).status_code == 200
+    _confirm_pending(client, as_role, cid)
+    issues = sorted((x for x in _movements(client, h, cid) if x["type"] == "ISSUE"),
+                    key=lambda x: x["date"])
+    lot1, lot2 = issues[0]["lines"][0]["id"], issues[1]["lines"][0]["id"]
+    assert client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": iso(5),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 30}]
+    }).status_code == 200
+    mv, ln = _return_line(client, h, cid)
+
+    d = client.get(f"/api/contracts/{cid}", headers=h).json()
+    sec = next(g for g in d["material_lines"] if g["material_id"] == m["id"])
+    row = next(x for x in sec["lines"] if x["id"] == ln["id"])
+    assert [s["issue_line_id"] for s in row["sources"]] == [lot1]      # FIFO
+
+    r = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                     json={"issue_line_id": lot2})
+    assert r.status_code == 200, r.text
+
+    d2 = client.get(f"/api/contracts/{cid}", headers=h).json()
+    sec2 = next(g for g in d2["material_lines"] if g["material_id"] == m["id"])
+    row2 = next(x for x in sec2["lines"] if x["id"] == ln["id"])
+    assert [s["issue_line_id"] for s in row2["sources"]] == [lot2]
+    assert row2["sources"][0]["pinned"] is True
+
+
+def test_pin_must_reference_open_issue_line_of_same_contract(client, as_role):
+    """Пин нь ӨӨР гэрээ / өөр материал / хожуу огноо руу заавал 400."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = _make_return(client, as_role, days_ago=20)
+    mv, ln = _return_line(client, h, cid)
+
+    # 1) өөр ГЭРЭЭНИЙ падан
+    _, cid2, m2, st2 = make_contract(client, as_role, days_ago=20, qty=50)
+    _confirm_pending(client, as_role, cid2)
+    other = next(x for x in _movements(client, h, cid2)
+                 if x["type"] == "ISSUE")["lines"][0]["id"]
+    bad = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                       json={"issue_line_id": other})
+    assert bad.status_code == 400
+    assert "гэрээ" in bad.json()["detail"].lower()
+
+    # 2) огт байхгүй мөр
+    assert client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                        json={"issue_line_id": 999999}).status_code == 400
+
+    # 3) БУЦААЛТЫН мөр рүү заасан (падан биш)
+    assert client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                        json={"issue_line_id": ln["id"]}).status_code == 400
+
+
+def test_pin_to_later_issue_rejected(client, as_role):
+    """Буцаалтын өдрөөс ХОЙШ гарсан падангаас хасах боломжгүй."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = make_contract(client, as_role, days_ago=20, qty=100)
+    _confirm_pending(client, as_role, cid)
+    assert client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": iso(15),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 30}]
+    }).status_code == 200
+    assert client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "ISSUE", "date": iso(5),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 50}]
+    }).status_code == 200
+    _confirm_pending(client, as_role, cid)
+    late = next(x for x in _movements(client, h, cid)
+                if x["type"] == "ISSUE" and x["date"] == iso(5))["lines"][0]["id"]
+    mv, ln = _return_line(client, h, cid)
+    bad = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                       json={"issue_line_id": late})
+    assert bad.status_code == 400
+    assert "хойш" in bad.json()["detail"].lower()
+
+
+# ---------- нэхэмжлэгдсэн бол дахин бодолтын хаалга ----------
+
+def test_return_detail_patch_gated_when_invoiced(client, as_role):
+    """Актын дүн нэхэмжлэлийн `charge_amount`-д ордог тул нэхэмжлэгдсэн
+    цонхонд засахад ЭХЛЭЭД зөрүү харагдана, `confirm` дээр л бодогдоно."""
+    h = as_role("otgoo")
+    cl_id, cid, m, st = _make_return(client, as_role, days_ago=40, ret=40)
+    inv = _invoices(client, h, cid)[0]
+    base = inv["total"]
+    mv, ln = _return_line(client, h, cid)
+    nb = next(p for p in m["prices"] if p["grade_id"] == st["grade_id"])["nb_price"]
+
+    dry = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                       json={"writeoff_qty": 3})
+    assert dry.status_code == 200, dry.text
+    assert dry.json()["rebuild_required"] is True
+    d = dry.json()["diffs"]
+    assert len(d) == 1 and d[0]["old_total"] == base
+    assert d[0]["new_total"] == base + 3 * nb
+    assert _invoices(client, h, cid)[0]["total"] == base          # ХУУРАЙ
+
+    ok = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                      json={"writeoff_qty": 3, "confirm": True})
+    assert ok.status_code == 200, ok.text
+    assert _invoices(client, h, cid)[0]["total"] == base + 3 * nb
+
+
+def test_return_detail_patch_is_manager_only(client, as_role):
+    hf = as_role("sanhuu")
+    cl_id, cid, m, st = _make_return(client, as_role)
+    mv, ln = _return_line(client, as_role("otgoo"), cid)
+    assert client.patch(f"/api/movement-lines/{ln['id']}", headers=hf,
+                        json={"repair_qty": 2}).status_code == 403
+
+
+def test_return_detail_patch_audits(client, as_role):
+    h = as_role("otgoo")
+    cl_id, cid, m, st = _make_return(client, as_role)
+    mv, ln = _return_line(client, h, cid)
+    client.patch(f"/api/movement-lines/{ln['id']}", headers=h, json={"repair_qty": 4})
+    trail = client.get("/api/audit?entity=movement", headers=h).json()
+    assert any(a["action"] == "update" and a["entity_id"] == mv["id"]
+               and "repair_qty" in a["detail"] for a in trail)
