@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, money, sayaFmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Empty, Refreshing, useToast } from "../ui";
+import { cycleShortLabel } from "../lib/cycle";
 import { rowClickProps } from "../lib/rowClick";
 import { contractFilterFrom, contractHref, type ContractFilter } from "../lib/links";
 import { UNCHARGED } from "../lib/penalty";
@@ -119,7 +120,7 @@ export default function Contracts() {
                             хэвлэсэн цаасан дээр энэ нь чимээгүй алга болно.
                             Утгыг ҮГ авч явна, өнгө нь ард нь дэмжинэ. */}
                         <div className="text-xs text-t2 mb-1.5">
-                          {c.cycle.cycle_start.slice(5)} – {c.cycle.cycle_end.slice(5)} · {c.cycle.days_done}/{c.cycle.days_total}
+                          {cycleShortLabel(c.cycle.cycle_start, c.cycle.cycle_end)} · {c.cycle.days_done}/{c.cycle.days_total}
                           {c.state === "overdue" && <b className="text-danger"> · хэтэрсэн</b>}
                           {c.state === "ending" && <b className="text-warn"> · дуусах дөхсөн</b>}
                         </div>

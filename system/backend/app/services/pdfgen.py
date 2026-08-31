@@ -66,7 +66,10 @@ def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> byt
     p.cell(0, 6, f"Гэрээ №{c.no} · {'Түрээс' if c.type == 'rent' else 'Худалдаа'}",
            new_x="LMARGIN", new_y="NEXT")
     if c.type == "rent":
-        p.cell(0, 6, f"Тооцооны үе: {inv.cycle_start} — {inv.cycle_end}", new_x="LMARGIN", new_y="NEXT")
+        # Үе нь БАГТААМЖТАЙ (`billing.cycle_label`) — дэлгэц, хавсралт, акт
+        # бүгд ижил хугацаа хэлнэ (R4).
+        p.cell(0, 6, f"Тооцооны үе: {billing.cycle_label(inv.cycle_start, inv.cycle_end)}",
+               new_x="LMARGIN", new_y="NEXT")
     p.cell(0, 6, f"Төлөх хугацаа: {inv.due_date}", new_x="LMARGIN", new_y="NEXT")
     p.ln(4)
 
@@ -415,7 +418,8 @@ def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
     for inv in sorted(c.invoices, key=lambda i: i.due_date):
         o = billing.invoice_outstanding(inv)
         pen = billing.invoice_penalty_due(inv)
-        label = f"{inv.cycle_start} — {inv.cycle_end}" if c.type == "rent" else inv.no
+        label = (billing.cycle_label(inv.cycle_start, inv.cycle_end)
+                 if c.type == "rent" else inv.no)
         p.cell(w[0], 7, label, border=1)
         p.cell(w[1], 7, _money(inv.total), border=1, align="R")
         p.cell(w[2], 7, _money(inv.paid), border=1, align="R")

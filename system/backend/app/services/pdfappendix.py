@@ -137,6 +137,14 @@ OVERRIDE_MARK = "*"
 OVERRIDE_LEGEND = "* гараар тохирсон хоног"
 
 
+def period_text(ap: "Appendix") -> str:
+    """Хуудасны тооцооны хугацаа — БАГТААМЖТАЙ (Отгоогийн уншилтаар).
+
+    Цонх нь дотроо хагас нээлттэй [эхлэл, төгсгөл) хэвээр (мөрүүд түүгээр
+    бодогдоно); цаасан дээр гарах төгсгөл нь СҮҮЛЧИЙН ХОНОГ."""
+    return billing.cycle_label(ap.period_start, ap.period_end)
+
+
 def days_text(row: AppendixRow) -> str:
     """Хоногийн нүдний бичиг — гараар тохирсон бол одтой («13*»).
 
@@ -216,7 +224,8 @@ def _row_lines(doc: Doc, row: AppendixRow, multi: set[tuple]) -> list[str]:
     үлдээхгүй хайчилдаг байсан ба хавсралт нь ЯГ ЭНЭ мэдээллийн төлөө байдаг."""
     lines = wrap_to_width(doc, row.note or row.material, ROW_SIZE, NAME_WIDTH)
     if row.seg_from and row.seg_to and (row.material, row.grade, row.rate) in multi:
-        lines += wrap_to_width(doc, f"{row.seg_from} – {row.seg_to}", ROW_SIZE, NAME_WIDTH)
+        lines += wrap_to_width(doc, billing.cycle_label(row.seg_from, row.seg_to),
+                               ROW_SIZE, NAME_WIDTH)
     return lines
 
 
@@ -227,13 +236,12 @@ def _render(ap: Appendix, company: dict, logo_path: str | None = None):
     тул хуудас тасарсныг `pages_count`-оор шалгах цорын ганц арга энэ юм.
     """
     doc = start_doc()
-    draw_header(doc, company, TITLE,
-                ap.label or f"{ap.period_start} - {ap.period_end}", logo_path)
+    draw_header(doc, company, TITLE, ap.label or period_text(ap), logo_path)
 
     text(doc, f"Харилцагч: {ap.client_name}", size=10, bold=True)
     text(doc, f"Гэрээ: {ap.contract_no}", size=9, color=MUTED, align="right")
     move_down(doc, 14)
-    text(doc, f"Тооцооны хугацаа: {ap.period_start} - {ap.period_end}", size=9, color=MUTED)
+    text(doc, f"Тооцооны хугацаа: {period_text(ap)}", size=9, color=MUTED)
     if ap.due_date:
         text(doc, f"Төлөх огноо: {ap.due_date}", size=9, color=MUTED, align="right")
     move_down(doc, 20)
@@ -309,14 +317,15 @@ def render_appendix(db, ap: Appendix, logo_path: str | None = None) -> bytes:
 def invoice_appendix_pdf(db, inv, gmap: dict, mmap: dict) -> bytes:
     """Тухайн НЭХЭМЖЛЭЛИЙН хавсралт — цонх нь [cycle_start, cycle_end).
 
-    Шошгонд `cycle_end`-ийг ЯГ хэвээр (хасах 1 хоноггүй) хэвлэнэ: системийн бусад
-    хэсэг (акт, нэхэмжлэлийн жагсаалт) хагас нээлттэй мужаа ингэж харуулдаг тул
-    хавсралт нь нэхэмжлэлтэйгээ ИЖИЛ хугацааг хамарч байгаа мэт харагдах ёстой.
+    Шошго нь БАГТААМЖТАЙ (`billing.cycle_label`) — нэхэмжлэлийн жагсаалт, акт,
+    дэлгэц бүгд яг тэр ганц томьёогоор нэрлэдэг тул хавсралт нь нэхэмжлэлтэйгээ
+    ИЖИЛ хугацаатай харагдана.
     """
     c = inv.contract
     ap = build_appendix(c, gmap, mmap, inv.cycle_start, inv.cycle_end,
                         due_date=inv.due_date,
-                        label=f"{inv.no} · {inv.cycle_start} – {inv.cycle_end}")
+                        label=f"{inv.no} · "
+                              f"{billing.cycle_label(inv.cycle_start, inv.cycle_end)}")
     return render_appendix(db, ap)
 
 
@@ -335,6 +344,6 @@ def cycle_appendix_pdf(db, c, gmap: dict, mmap: dict, today: date | None = None)
     cs = date.fromisoformat(cur["cycle_start"])
     ce = date.fromisoformat(cur["cycle_end"])
     ap = build_appendix(c, gmap, mmap, cs, min(today + timedelta(days=1), ce),
-                        label=f"{cs} – {ce} · явагдаж буй "
+                        label=f"{billing.cycle_label(cs, ce)} · явагдаж буй "
                               f"({cur['days_done']}/{cur['days_total']} хоног)")
     return render_appendix(db, ap)

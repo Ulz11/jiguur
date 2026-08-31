@@ -13,6 +13,7 @@
  * ЦЭВЭР логик: React-гүй, сүлжээгүй, детерминистик.
  */
 import { isoOf, parseIso } from "./calendar";
+import { cycleLabel } from "./cycle";
 import { fmt, parseMoney } from "./num";
 import { daysBetween } from "./schedule";
 
@@ -109,7 +110,7 @@ export function aktCycle(c: AktContract, dateIso: string): AktWindow | null {
 /** Циклийн нэр — НЭХЭМЖЛЭЛИЙН мөртэй ижил хэлбэр (`invoiceLabel`), тул
  *  Отгоо актын мөрөө нэхэмжлэлийнхээ мөртэй нүдээрээ тулгана. */
 export function aktCycleLabel(w: AktWindow | null | undefined): string {
-  return w ? `${w.start} – ${w.end}` : "—";
+  return w ? cycleLabel(w.start, w.end) : "—";
 }
 
 /** Маягт дээрх АМЬД мөр: бичиж буй огноо хаашаа буухыг ХАДГАЛАХААС ӨМНӨ хэлнэ. */

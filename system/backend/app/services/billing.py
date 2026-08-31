@@ -656,6 +656,30 @@ def _dotted(d: date) -> str:
     return str(d).replace("-", ".")
 
 
+def cycle_last_day(ce: date) -> date:
+    """Хагас нээлттэй цонхны СҮҮЛЧИЙН хоног — [cs, ce) → ce − 1.
+
+    «Хасах нэг» энэ ГАНЦ мөрөнд амьдарна. Хөдөлгүүр бүхэлдээ хагас нээлттэй
+    цонхоор ажилладаг (зайгүй, давхцалгүй) ч Отгоогийн шошго БАГТААМЖТАЙ
+    ('3.15-4.13' = 30 хоног) — хоёр ертөнцийн хил нь энэ функц.
+    """
+    return ce - timedelta(days=1)
+
+
+def cycle_label(cs: date, ce: date, *, dotted: bool = False) -> str:
+    """Цонхны БАГТААМЖТАЙ шошго: [03-15, 04-14) → «2026-03-15 – 2026-04-13».
+
+    Нэхэмжлэл, хавсралт, акт, дашбоард — цикл ХАРАГДАХ БҮХ газар энэ ганц
+    томьёогоор. Цаас ба дэлгэц дээр нэг цонх хоёр өөр төгсгөлтэй харагдвал
+    «аль нь үнэн бэ» гэсэн асуулт гарын үсэг зурахаас өмнө төрнө.
+
+    Хоосон/нэг хоногийн цонхонд урвуу муж хэвлэхгүй — төгсгөл нь эхлэлээсээ
+    хойш зогсоно (худалдаа, OB нэхэмжлэлийн цикл нь нэг өдөр).
+    """
+    fmt = _dotted if dotted else str
+    return f"{fmt(cs)} – {fmt(max(cycle_last_day(ce), cs))}"
+
+
 def upcoming_payment(contract: models.Contract, today: date | None = None):
     """Одоогийн циклийн ТӨСӨӨЛӨЛ — «цикл дуустал өөр хөдөлгөөн гарахгүй» гэвэл
     ХЭЗЭЭ, ХЭДИЙГ нэхэмжлэх вэ.
@@ -687,7 +711,7 @@ def upcoming_payment(contract: models.Contract, today: date | None = None):
     if rent <= 0:
         return None
     return {"cycle_start": cs, "cycle_end": ce,
-            "cycle_label": f"{_dotted(cs)}–{_dotted(ce)}",
+            "cycle_label": cycle_label(cs, ce, dotted=True),
             "expected_date": ce, "projected_amount": rent}
 
 

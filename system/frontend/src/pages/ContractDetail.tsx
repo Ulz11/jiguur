@@ -6,6 +6,7 @@ import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, use
 import { panelId, disclosureProps } from "../lib/disclosure";
 import { allocationPreview } from "../lib/alloc";
 import { CYCLE_MODES, cycleModeHint, cycleModeLabel, endDateLabel } from "../lib/contract";
+import { cycleLabel } from "../lib/cycle";
 import { invoiceLabel } from "../lib/invoice";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
@@ -267,7 +268,7 @@ export default function ContractDetail() {
         {cyc && (
           <div className="flex-1 min-w-[210px]">
             <div className="text-[12px] text-t3 font-semibold uppercase tracking-wider mb-2.5">
-              Цикл {cyc.cycle_start} – {cyc.cycle_end} · {cyc.days_done}/{cyc.days_total} хоног
+              Цикл {cycleLabel(cyc.cycle_start, cyc.cycle_end)} · {cyc.days_done}/{cyc.days_total} хоног
             </div>
             <Prog pct={(cyc.days_done / cyc.days_total) * 100} />
             {/* Календарь горимд «31 хоног» гэсэн тоо гэнэт гарч ирнэ (30 биш) —
@@ -872,7 +873,7 @@ function RebuildModal({ p, onClose, onDone }: {
       </p>
       <Receipt
         rows={p.diffs.map((x) => ({
-          label: `${x.cycle_start} – ${x.cycle_end}`,
+          label: cycleLabel(x.cycle_start, x.cycle_end),
           value: `${money(x.old_total)} → ${money(x.new_total)}`,
           accent: x.new_total < x.old_total ? "danger" as const
                 : x.new_total > x.old_total ? "money" as const : undefined,

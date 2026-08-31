@@ -825,8 +825,10 @@ def test_dashboard_payment_schedule_row_projects_the_full_cycle(client, as_role)
     left = cyc["days_total"] - cyc["days_done"]
     assert r["projected_amount"] == pytest.approx(cyc["accrued"] + cyc["day_amount"] * left, abs=1)
     assert r["expected_date"] == cyc["cycle_end"]
-    assert r["cycle_label"] == (cyc["cycle_start"].replace("-", ".") + "–"
-                                + cyc["cycle_end"].replace("-", "."))
+    # ШОШГЫН ФОРМАТ (M5/R4): БАГТААМЖТАЙ — цонхны СҮҮЛЧИЙН хоног хэвлэгдэнэ.
+    last = date.fromisoformat(cyc["cycle_end"]) - timedelta(days=1)
+    assert r["cycle_label"] == (cyc["cycle_start"].replace("-", ".") + " – "
+                                + str(last).replace("-", "."))
     assert r["client"] == det["client"] and r["client_id"] == det["client_id"]
     assert r["receivable"] > 0     # авлагын үлдэгдэл мөрөндөө хамт явна
 

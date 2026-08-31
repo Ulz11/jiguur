@@ -131,8 +131,12 @@ def test_row_lines_date_the_segments_only_when_a_group_has_several(db):
     multi = pdfappendix._multi_segment_keys(ap.rows)
     lines = [pdfappendix._row_lines(doc, r, multi) for r in ap.rows]
 
-    assert lines[0] == ["Хэв хашмал 6012", "2026-03-20 – 2026-04-01"]
-    assert lines[1] == ["Хэв хашмал 6012", "2026-04-01 – 2026-04-19"]
+    # ШОШГЫН ФОРМАТ (M5/R4): зурвасын дэд мөр ч БАГТААМЖТАЙ — 12 хоногийн
+    # зурвас «3.20 – 3.31» гэж уншигдана (урьд нь «3.20 – 4.01» гэж 13 хоног
+    # мэт харагддаг байв). Зурвасын ӨГӨГДӨЛ (seg_to) ХЭВЭЭР.
+    assert lines[0] == ["Хэв хашмал 6012", "2026-03-20 – 2026-03-31"]
+    assert lines[1] == ["Хэв хашмал 6012", "2026-04-01 – 2026-04-18"]
+    assert (ap.rows[0].seg_to, ap.rows[1].seg_to) == (date(2026, 4, 1), date(2026, 4, 19))
     # ганц зурвас — дэд мөргүй
     solo = pdfappendix.build_appendix(c, gmap, mmap, date(2026, 3, 20), date(2026, 4, 1))
     assert [pdfappendix._row_lines(doc, r, pdfappendix._multi_segment_keys(solo.rows))

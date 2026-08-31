@@ -637,14 +637,20 @@ def test_upcoming_payment_matches_the_invoice_that_will_be_issued(db):
 
 
 def test_upcoming_payment_labels_the_cycle_for_humans(db):
-    """Хүн «2026.08.15–2026.09.14» гэж уншина — огноог мөрөнд нэг л газар хөрвүүлнэ."""
+    """Хүн «2026.08.15 – 2026.09.13» гэж уншина — БАГТААМЖТАЙ (M5/R4).
+
+    ШОШГЫН ФОРМАТЫН ӨӨРЧЛӨЛТ: урьд нь цонхны төгсгөлийг (`cycle_end`) ЯГ
+    хэвлэдэг байсан тул 30 хоногийн цикл 31 хоног мэт уншигдаж, Отгоо
+    «машин нэг хоног нэмчихлээ» гэж дүгнэдэг байв. ӨГӨГДӨЛ ХЭВЭЭР —
+    `cycle_end` нь 2026-09-14 (доорх баталгаа), зөвхөн ШОШГО л өөрчлөгдөв."""
     start = date(2026, 8, 15)
     c, m, ga, gb = setup_contract(db, start=start)
     mv(db, c, "ISSUE", start, [dict(material_id=m.id, grade_id=ga.id, qty=100)])
 
     u = billing.upcoming_payment(c, start + timedelta(days=5))
 
-    assert u["cycle_label"] == "2026.08.15–2026.09.14"
+    assert u["cycle_label"] == "2026.08.15 – 2026.09.13"
+    assert u["cycle_end"] == date(2026, 9, 14)
 
 
 def test_upcoming_payment_none_for_sale_contract(db):

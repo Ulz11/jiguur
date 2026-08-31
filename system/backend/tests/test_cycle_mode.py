@@ -248,7 +248,9 @@ def test_upcoming_payment_projects_the_whole_month_window(db):
     assert up["cycle_end"] == date(2026, 6, 1)
     assert up["expected_date"] == date(2026, 6, 1)
     assert up["projected_amount"] == pytest.approx(100 * 330 * 31)
-    assert up["cycle_label"] == "2026.05.01–2026.06.01"
+    # ШОШГЫН ФОРМАТ (M5/R4): цонх нь [5.01, 6.01) хэвээр, шошго нь БАГТААМЖТАЙ —
+    # 5-р сар 31 хоног гэдэг нь «5.01 – 5.31» гэж уншигдана.
+    assert up["cycle_label"] == "2026.05.01 – 2026.05.31"
 
 
 def test_upcoming_payment_matches_the_month_invoice_that_will_be_issued(db):
