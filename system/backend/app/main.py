@@ -2,7 +2,7 @@
 import os
 import sqlite3
 import time
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 from datetime import datetime
 
 from fastapi import Depends, FastAPI, Request
@@ -15,13 +15,34 @@ from .db import Base, engine, SessionLocal, get_db, DATABASE_URL, IS_SQLITE
 from .schema import migrate_schema
 from .seed import seed
 from . import models
+from .services import cron
 from .routers import (core, contracts, clients, payments, dashboard, files,
                       barter, loans, machines, salary, reports, features)
 
 VERSION = "1.0.0"
 
+
+@asynccontextmanager
+async def lifespan(fastapi_app: FastAPI):
+    """Сервер асахад өдөр тутмын нэхэмжлэлийн давхрага асна (H9).
+
+    Нэхэмжлэл нь урьд нь ЗӨВХӨН хэн нэгэн хуудас нээх агшинд төрдөг байв —
+    Отгоо аппаа нээхгүй бол мөнгө байхгүй. Одоо сервер өөрөө өдөр бүр
+    06:00-д (`services/cron.py`) шалгана. `JIGUUR_NO_CRON=1` бол огт асахгүй.
+
+    Даалгавар нь `app.state.cron_task`-д сууна: тест үүнийг шалгана,
+    унтрахад заавал цуцлагдана (uvicorn --reload-ын хүүхэд процесс ч мөн адил).
+    """
+    fastapi_app.state.cron_task = cron.start()
+    try:
+        yield
+    finally:
+        await cron.stop(fastapi_app.state.cron_task)
+        fastapi_app.state.cron_task = None
+
+
 app = FastAPI(title="Жигүүр Систем", version=VERSION, docs_url="/api/docs",
-              redoc_url=None, openapi_url="/api/openapi.json")
+              redoc_url=None, openapi_url="/api/openapi.json", lifespan=lifespan)
 
 # Дотоод сүлжээнд ажиллана — origin хязгаарлалт хэрэггүй (Bearer token ашиглана).
 app.add_middleware(CORSMiddleware, allow_origins=["*"],

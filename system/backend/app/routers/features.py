@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..db import get_db
 from .. import models, auth, serializers
-from ..services import billing, analytics
+from ..services import billing, analytics, cron
 from ..services import audit as audit_svc
 
 router = APIRouter(prefix="/api")
@@ -120,6 +120,17 @@ def note_ser(n: models.CollectionNote):
 @router.get("/collections")
 def collections(db: Session = Depends(get_db), user=Depends(fin)):
     return analytics.collections(db)
+
+
+@router.post("/invoices/generate")
+def generate_invoices(db: Session = Depends(get_db), user=Depends(fin)):
+    """Өдөр тутмын нэхэмжлэлийг ГАРААР хөдөлгөх (H9).
+
+    Давхрага (`services/cron.py`) өдөр бүр 06:00-д ЯГ ЭНЭ функцийг дууддаг —
+    хоёр өөр «хувилбар» нэхэмжлэл байхгүй. Сервер унтарсан өдөр байсан бол
+    энэ товчлуур нөхөж гүйцээнэ. Append-only тул хэдэн ч удаа дуудаж болно.
+    """
+    return cron.generate_all(db)
 
 
 @router.post("/clients/{cid}/notes")

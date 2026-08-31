@@ -10,6 +10,10 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///" + _IMPORT_DB)
 # Импортын үеийн авто-нөөцлөлт ч бас түр хавтаст явна (14-өөр өөрөө эргэлдэнэ)
 os.environ.setdefault("JIGUUR_BACKUP_DIR",
                       os.path.join(tempfile.gettempdir(), "jiguur_test_backups"))
+# Өдөр тутмын нэхэмжлэлийн давхрага (services/cron.py) тестэд ОГТ асахгүй:
+# `TestClient(app)` нь lifespan-ыг ажиллуулдаг тул үгүй бол тест бүр өөрийн
+# гэсэн фонд даалгавар үлдээж, суут детерминистик байхаа болино.
+os.environ.setdefault("JIGUUR_NO_CRON", "1")
 
 import pytest
 from fastapi.testclient import TestClient
