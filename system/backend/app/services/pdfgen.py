@@ -371,6 +371,17 @@ def _sale_contract_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) 
     return _compose_contract(db, c, gmap, mmap)
 
 
+def akt_doc_rows(c: models.Contract) -> list[dict]:
+    """Гэрээний ХҮЧИНТЭЙ актын бичилтүүд — баримтын мөр болгож (огноогоор).
+
+    Гарын үсэг зурах цаасан дээр «юуны төлөө» гэдэг нь заавал байх ёстой тул
+    тэмдэглэлээ авч явна. ХҮЧИНГҮЙ болсон мөр ХЭЗЭЭ Ч энд орохгүй — цуцалсан
+    хэлцэл дахин хэвлэгдвэл цаас нь худал болно.
+    """
+    return [{"date": str(a.date), "note": a.note or "", "amount": a.amount}
+            for a in billing.akt_entries_of(c)]
+
+
 def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
     """Тооцоо нийлсэн акт — хоёр тал гарын үсэг зурдаг хуудас (бодит форматыг дуурайв)."""
     today = date.today()
@@ -425,7 +436,27 @@ def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
     p.cell(w[2], 8, _money(paid), border=1, align="R")
     p.cell(w[3], 8, _money(out), border=1, align="R")
     p.cell(w[4], 8, _money(pen_t) if pen_t else "-", border=1, align="R")
-    p.ln(12)
+    p.ln(6)
+
+    # ---- АКТЫН БИЧИЛТҮҮД (R12 / H4) ----
+    # Дүн нь дээрх нэхэмжлэлүүдийн ДОТОР аль хэдийн орсон — энэ бол ЗАДАРГАА,
+    # хоёр дахь нийлбэр БИШ (шошго нь үүнийг хэлнэ). Гарын үсэг зурж буй хүн
+    # «юуны төлөө» гэдгийг цаасан дээрээсээ уншина: тээвэр, цэвэрлэгээ, кран
+    # дуудлага, эсвэл хөнгөлөлт («нийт актнаас 15% хасав»).
+    akt = akt_doc_rows(c)
+    if akt:
+        p.set_font("dejavu", "B", 10)
+        p.cell(0, 7, "Актын бичилтүүд (нэхэмжлэлийн дүнд орсон)",
+               new_x="LMARGIN", new_y="NEXT")
+        p.set_font("dejavu", "", 9)
+        aw = [35, 120, 35]
+        for r in akt:
+            p.cell(aw[0], 7, r["date"], border=1)
+            p.cell(aw[1], 7, r["note"], border=1)
+            # Хөнгөлөлт нь тэмдгээрээ л ялгарна — «−259,500₮» гэж уншигдана
+            p.cell(aw[2], 7, _money(r["amount"]), border=1, align="R")
+            p.ln()
+        p.ln(6)
 
     p.set_font("dejavu", "", 9)
     p.cell(0, 6, "Хугацаа хэтэрсэн тохиолдолд гэрээнд зааснаар алданги тооцно.",

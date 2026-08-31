@@ -121,6 +121,8 @@ class Contract(Base):
     items: Mapped[list["ContractItem"]] = relationship(back_populates="contract")
     movements: Mapped[list["Movement"]] = relationship(back_populates="contract")
     invoices: Mapped[list["Invoice"]] = relationship(back_populates="contract")
+    # Чөлөөт актын бичилтүүд (R12 / H4) — циклд эвхэгдэж нэхэмжлэл болно
+    akt_entries: Mapped[list["AktEntry"]] = relationship(back_populates="contract")
 
 
 class ContractItem(Base):
@@ -276,6 +278,39 @@ class PenaltyCharge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     contract: Mapped["Contract"] = relationship()
+
+
+class AktEntry(Base):
+    """ЧӨЛӨӨТ АКТ БИЧИЛТ — хоёр талын гарын үсэгтэй хэлэлцээрийн мөр (R12 / H4).
+
+    Отгоо эгчийн «акт» бол эвдрэлийн хөлс биш, ХЭЛЭЛЦЭЭРИЙН БАРИМТ: тээвэр,
+    цэвэрлэгээ, кран дуудлага нэг циклд эвхэгддэг
+    (`=1730000+350000+1163500+1206500`), БАС хөнгөлөлт байдаг — «нийт актнаас
+    15% хасч тооцлоо» (×0.85). Систем нь хөдөлгөөнөөс гарсан засвар/актын
+    хөлсийг л боддог байсан тул «акт» гэдэг үгийн НӨГӨӨ ХАГАСТ нүд алга байв:
+    эхний хэлэлцээр гарын үсэгтэй цаас үлдээгээд, хавсралт нь таарахаа больдог.
+
+    ТЭМДЭГ УТГАТАЙ: эерэг = НЭМЭГДЭЛ, сөрөг = ХӨНГӨЛӨЛТ. Хоёулаа нэг мөрийн
+    хэлбэртэй — тэр Excel дээрээ ч нэг нүдэнд хоёуланг нь бичдэг.
+
+    `note` ЗААВАЛ: энэ бол гарын үсэгтэй баримт, «юуны төлөө» гэдэг нь мөрөндөө
+    байх ёстой. Хоосон тэмдэглэлтэй мөр нь маргааш нь тайлагдахгүй мөнгө болно.
+
+    ХҮЧИНГҮЙ (void) нь төлбөр, хөдөлгөөнтэй ЯГ ижил журмаар (H1): мөр устахгүй,
+    тооцоо түүнийг хараагүй мэт ажиллана, дэлгэц дээр шалтгаантайгаа үлдэнэ.
+    """
+    __tablename__ = "akt_entries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contracts.id"))
+    date: Mapped[date] = mapped_column(Date)
+    amount: Mapped[float] = mapped_column(Float, default=0)   # + нэмэгдэл, − хөнгөлөлт
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_by: Mapped[str] = mapped_column(String(100), default="")
+
+    contract: Mapped["Contract"] = relationship(back_populates="akt_entries")
 
 
 # ---------- Бартер ----------

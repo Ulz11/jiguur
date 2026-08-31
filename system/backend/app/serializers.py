@@ -395,6 +395,27 @@ def invoice(inv: models.Invoice, today: date):
             "detail": json.loads(inv.detail_json or "[]")}
 
 
+def akt_entry(a: models.AktEntry):
+    """Чөлөөт актын бичилт (R12 / H4) — мөр нь ХААШАА буусныг өөрөө хэлнэ.
+
+    `cycle_start`/`cycle_end` нь СЕРВЕР талын цонх: жагсаалт дээр «энэ мөр аль
+    циклд нэхэгдэх вэ» гэдгийг Отгоо тааварлах ёсгүй. Гэрээний эхлэлээс өмнөх
+    огноо (цикл эхлээгүй) бол хоосон.
+
+    ХҮЧИНГҮЙ болсон нь ч ЭНД гарна — цуцлалт бол устгал БИШ (H1).
+    """
+    win = billing.cycle_of(a.contract, a.date) if a.contract else None
+    return {"id": a.id, "contract_id": a.contract_id, "date": str(a.date),
+            "amount": a.amount, "note": a.note or "",
+            "cycle_start": str(win[0]) if win else None,
+            "cycle_end": str(win[1]) if win else None,
+            "created_at": str(a.created_at)[:19] if a.created_at else None,
+            "voided": a.voided_at is not None,
+            "void_reason": a.void_reason or "",
+            "voided_by": a.voided_by or "",
+            "voided_at": str(a.voided_at)[:19] if a.voided_at else None}
+
+
 def payment(p: models.Payment):
     """Төлбөрийн мөр. ХҮЧИНГҮЙ болсон нь ч ЭНД гарна — цуцлалт бол устгал БИШ.
 
@@ -436,7 +457,8 @@ _F_TOP = ("balance", "penalty", "penalty_booked", "penalty_unbooked",
           "penalty_percent", "day_amount", "deposit",
           "deposit_status", "deposit_applied", "deposit_returned",
           "deposit_settled_date", "vat_percent")
-_F_BLOCKS = ("invoices", "payments")
+# Актын бичилт нь МӨНГӨ (±дүн) — бүхэл бүлгээрээ санхүүгийнх
+_F_BLOCKS = ("invoices", "payments", "akt_entries")
 _F_ITEM = ("daily_rate", "unit_price", "day_amount", "repair_fee", "writeoff_price")
 # Хөдөлгөөний/дэвтрийн мөр: падангийн ТАРИФ, засвар/актын ДҮН явахгүй.
 # `repair_qty`, `writeoff_qty` нь ТОО — тэр бол даргын ажил, үлдэнэ.

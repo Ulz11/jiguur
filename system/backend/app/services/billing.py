@@ -303,8 +303,11 @@ def accrue_rent_segments(contract: models.Contract, d_from: date, d_to: date) ->
     return out
 
 
-def charges_in(contract: models.Contract, d_from: date, d_to: date):
-    """[d_from, d_to) доторх засвар + актын төлбөрүүд."""
+def movement_charges_in(contract: models.Contract, d_from: date, d_to: date):
+    """[d_from, d_to) доторх ХӨДӨЛГӨӨНӨӨС гарсан засвар + актын хөлс.
+
+    Тоо ширхэгээс каталогийн үнээр бодогддог, гараар бичигддэггүй хэсэг.
+    """
     total = 0.0
     items = []
     for mv in contract.movements:
@@ -318,6 +321,54 @@ def charges_in(contract: models.Contract, d_from: date, d_to: date):
                 total += ln.writeoff_fee
                 items.append({"date": str(mv.date), "desc": "Акт", "amount": ln.writeoff_fee})
     return total, items
+
+
+def akt_active(a: models.AktEntry) -> bool:
+    """Актын бичилт ТООЦООНД ОРОХ уу — хүчингүй болоогүй эсэх.
+
+    Хөдөлгөөний `movement_active`-тэй ижил үүрэг: тооцооны хөдөлгүүр рүү орох
+    ГАНЦ хаалга. Цуцлагдсан бичилт дэлгэц дээр ХАРАГДСААР үлдэнэ, гэхдээ
+    нэхэмжлэл, хавсралт, акт-PDF-ийн аль нь ч түүнийг хэзээ ч хэвлэхгүй.
+    """
+    return a.voided_at is None
+
+
+def akt_entries_of(contract: models.Contract) -> list[models.AktEntry]:
+    """Гэрээний ХҮЧИНТЭЙ актын бичилтүүд, огноогоор эрэмбэлэгдсэн.
+
+    `getattr` уналттай: талбаргүй туслах объект («fake» гэрээ) ч хуучин
+    зан төлөвөө хадгална.
+    """
+    rows = [a for a in (getattr(contract, "akt_entries", None) or []) if akt_active(a)]
+    return sorted(rows, key=lambda a: (a.date, a.id or 0))
+
+
+def akt_charges_in(contract: models.Contract, d_from: date, d_to: date):
+    """[d_from, d_to) доторх ЧӨЛӨӨТ актын бичилтүүд (R12 / H4).
+
+    Мөр бүр өөрийн ТЭМДЭГЛЭЛЭЭ шошго болгож авч явна («Акт: Кран дуудлага») —
+    хөдөлгөөнөөс гарсан «Засвар»/«Акт» мөрөөс тодоор ялгарна. Хөнгөлөлт нь
+    сөрөг дүнтэйгээ л явна: тусдаа төрөл биш, тэмдэг нь өөрөө хэлнэ.
+    """
+    total = 0.0
+    items = []
+    for a in akt_entries_of(contract):
+        if not (d_from <= a.date < d_to):
+            continue
+        total += a.amount
+        items.append({"date": str(a.date), "desc": f"Акт: {a.note}", "amount": a.amount})
+    return total, items
+
+
+def charges_in(contract: models.Contract, d_from: date, d_to: date):
+    """[d_from, d_to) доторх БҮХ төлбөр: засвар/акт (хөдөлгөөнөөс) + чөлөөт акт.
+
+    Нэхэмжлэлийн `charge_amount`, хавсралтын төлбөрийн мөрүүд, НӨАТ-ын суурь
+    гурвуулаа ЭНД нийлнэ — тиймээс актын бичилт нэмэхэд гурвуулаа өөрөө дагана.
+    """
+    mv_total, mv_items = movement_charges_in(contract, d_from, d_to)
+    akt_total, akt_items = akt_charges_in(contract, d_from, d_to)
+    return mv_total + akt_total, mv_items + akt_items
 
 
 # ---------- цикл ба нэхэмжлэл ----------
@@ -362,6 +413,75 @@ def cycle_window(contract: models.Contract, n: int) -> tuple[date, date]:
     step = timedelta(days=contract.cycle_days)
     cs = contract.start_date + n * step
     return cs, cs + step
+
+
+def cycle_of(contract: models.Contract, d: date) -> tuple[date, date] | None:
+    """`d` огноо АЛЬ циклийн цонхонд унах вэ. Гэрээний эхлэлээс өмнө бол None.
+
+    Хоногийн горимд шууд хуваалт; календарь горимд сарын алхмаас эхлээд
+    хумигдсан хилээс болж нэг алхам хазайж болох тул зэргэлдээ рүү нь
+    ГУЛСАНА (`cycle_window` нь зайгүй, давхцалгүй тул хамгийн ихдээ нэг алхам).
+
+    ЗӨВХӨН ЦОНХЫГ хэрэглэнэ — горимоо мэдэхгүй.
+    """
+    if d < contract.start_date:
+        return None
+    if cycle_mode(contract) == "month":
+        n = ((d.year - contract.start_date.year) * 12
+             + d.month - contract.start_date.month)
+        for _ in range(4):                     # хумилтын хазайлт ≤ 1 алхам
+            cs, ce = cycle_window(contract, max(n, 0))
+            if d < cs:
+                n -= 1
+                continue
+            if d >= ce:
+                n += 1
+                continue
+            return cs, ce
+        return None
+    return cycle_window(contract, (d - contract.start_date).days // contract.cycle_days)
+
+
+# Хөнгөлөлт нь ЦИКЛИЙГ сөрөг болгож болохгүй: сөрөг нэхэмжлэл нь харилцагчид
+# «бид танд өртэй» гэсэн баримт болно — Отгоо ийм цаас хэвлэж үзээгүй.
+AKT_NEGATIVE_ERR = "Циклийн нийт дүн сөрөг болно — хөнгөлөлт хэт их байна"
+
+
+def akt_negative_windows(contract: models.Contract, *, drop_id: int | None = None,
+                         add: tuple[date, float] | None = None) -> list[tuple[date, date]]:
+    """Санал болгож буй актын өөрчлөлтийн дараа НИЙТ дүн нь сөрөг болох циклүүд.
+
+    `drop_id` — устгагдаж/хөдөлж буй бичилт (засвар, хүчингүй болголт),
+    `add` — шинээр орох (огноо, дүн). Хоёул өгөгдвөл ЗАСВАР болно.
+
+    ХОЁР цонх шалгагдана: бичилт ГАРЧ буй цонх (эерэг мөр гарахад тэнд үлдсэн
+    хөнгөлөлт нүцгэн үлдэж болно) ба бичилт ОРЖ буй цонх. Цонх бүрийн дүн нь
+    түрээс + хөдөлгөөний засвар/акт + тэр цонхны актын бичилтүүд.
+    """
+    wins: set[tuple[date, date]] = set()
+    for a in akt_entries_of(contract):
+        if a.id is not None and a.id == drop_id:
+            w = cycle_of(contract, a.date)
+            if w:
+                wins.add(w)
+    if add is not None:
+        w = cycle_of(contract, add[0])
+        if w:
+            wins.add(w)
+
+    rows = [(a.date, a.amount) for a in akt_entries_of(contract)
+            if a.id is None or a.id != drop_id]
+    if add is not None:
+        rows.append(add)
+
+    bad = []
+    for cs, ce in sorted(wins):
+        rent, _ = accrue_rent(contract, cs, ce)
+        mv_charge, _ = movement_charges_in(contract, cs, ce)
+        akt = sum(amt for d, amt in rows if cs <= d < ce)
+        if rent + mv_charge + akt < -0.005:
+            bad.append((cs, ce))
+    return bad
 
 
 def cycles_of(contract: models.Contract, today: date):

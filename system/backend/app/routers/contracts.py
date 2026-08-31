@@ -158,6 +158,10 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
                          for m in sorted(c.movements, key=lambda m: (m.date, m.id), reverse=True)],
            "invoices": [serializers.invoice(i, today)
                         for i in sorted(c.invoices, key=lambda i: i.due_date, reverse=True)],
+           # Чөлөөт актын бичилт (R12 / H4) — хүчингүй болсон нь ч ХАРАГДАНА
+           "akt_entries": [serializers.akt_entry(a)
+                           for a in sorted(c.akt_entries,
+                                           key=lambda a: (a.date, a.id), reverse=True)],
            "payments": [serializers.payment(p) for p in
                         db.query(models.Payment).filter_by(contract_id=c.id).order_by(models.Payment.date.desc()).all()]}
     # Үйлдвэрийн дарга — тоо, зэрэглэл, огнооны хүн. Мөнгө нь дэлгэц дээр
@@ -599,6 +603,169 @@ def void_movement(mid: int, body: MovementVoidIn, db: Session = Depends(get_db),
     db.refresh(mv)
     out = serializers.movement(mv, gmap, mmap)
     return {**out, "rebuilt": rebuilt} if rebuilt else out
+
+
+# ---------------- ЧӨЛӨӨТ АКТ БИЧИЛТ (R12 / түр R15 / H4) ----------------
+#
+# Отгоо эгчийн «акт» бол эвдрэлийн хөлс биш, ХЭЛЭЛЦЭЭРИЙН гарын үсэгтэй
+# баримт: тээвэр, цэвэрлэгээ, кран дуудлага нэг циклд эвхэгддэг, БАС
+# хөнгөлөлт байдаг («нийт актнаас 15% хасч тооцлоо»). Систем нь хөдөлгөөнөөс
+# гарсан засвар/актын хөлсийг л боддог байсан тул эхний акт-хэлэлцээр гарын
+# үсэгтэй цаас үлдээгээд, хавсралт нь таарахаа больдог байв.
+#
+# Бүх гурван зам (бичих, засах, хүчингүй болгох) НЭГ хаалгаар: нэхэмжлэгдээгүй
+# цонхонд чөлөөтэй, нэхэмжлэгдсэн цонхонд `_gated` — эхлээд зөрүү, дараа нь
+# баталгаажуулалт.
+
+class AktIn(_BM):
+    date: _date_t
+    amount: float                    # + нэмэгдэл, − хөнгөлөлт
+    note: str = ""
+    confirm: bool = False
+
+
+class AktPatch(_BM):
+    date: _date_t | None = None
+    amount: float | None = None
+    note: str | None = None
+    confirm: bool = False
+
+
+class AktVoidIn(_BM):
+    reason: str = ""
+    confirm: bool = False
+
+
+AKT_NOTE_ERR = ("Актын тэмдэглэл заавал бичигдэнэ — «юуны төлөө» гэдэг нь "
+                "гарын үсэгтэй мөрөндөө байх ёстой")
+AKT_RENT_ONLY_ERR = ("Актын бичилт зөвхөн ТҮРЭЭСИЙН гэрээнд бичигдэнэ — "
+                     "худалдааны гэрээнд тооцооны цикл байхгүй")
+AKT_ZERO_ERR = "Актын дүн 0 байж болохгүй"
+AKT_BEFORE_START_ERR = "Огноо гэрээний эхлэлээс өмнө байна"
+AKT_VOIDED_ERR = "Энэ актын бичилт аль хэдийн хүчингүй болсон байна"
+
+akt_roles = auth.require_roles("manager", "finance")
+
+
+def _akt_note(raw: str | None) -> str:
+    note = (raw or "").strip()
+    if not note:
+        raise HTTPException(400, AKT_NOTE_ERR)
+    return note
+
+
+def _akt_check(c: models.Contract, d: date, amount: float, *, drop_id: int | None = None):
+    """Санал болгож буй бичилтийн ЕРӨНХИЙ шалгуурууд — бичих, засах хоёуланд."""
+    if d < c.start_date:
+        raise HTTPException(400, AKT_BEFORE_START_ERR)
+    if abs(amount) < 0.005:
+        raise HTTPException(400, AKT_ZERO_ERR)
+    if billing.akt_negative_windows(c, drop_id=drop_id, add=(d, amount)):
+        raise HTTPException(400, billing.AKT_NEGATIVE_ERR)
+
+
+def _akt_out(a: models.AktEntry, rebuilt):
+    out = serializers.akt_entry(a)
+    return {**out, "rebuilt": rebuilt} if rebuilt else out
+
+
+def _akt_label(a: models.AktEntry) -> str:
+    return f"{a.date} · {a.amount:+,.0f}₮ · {a.note}"
+
+
+@router.post("/contracts/{cid}/akt")
+def add_akt(cid: int, body: AktIn, db: Session = Depends(get_db), user=Depends(akt_roles)):
+    """Гэрээнд чөлөөт акт бичнэ — эерэг нэмэгдэл, сөрөг хөнгөлөлт."""
+    c = db.get(models.Contract, cid)
+    if not c:
+        raise HTTPException(404, "Гэрээ олдсонгүй")
+    if c.type != "rent":
+        raise HTTPException(400, AKT_RENT_ONLY_ERR)
+    note = _akt_note(body.note)
+    _akt_check(c, body.date, body.amount)
+
+    box: dict = {}
+
+    def mutate():
+        a = models.AktEntry(contract_id=c.id, date=body.date,
+                            amount=body.amount, note=note)
+        # relationship-д нэмнэ — эс бөгөөс тухайн session дотор ачаалагдсан
+        # `c.akt_entries` хуучирч, дахин бодолт актыг ХАРАХГҮЙ өнгөрнө.
+        c.akt_entries.append(a)
+        box["a"] = a
+
+    rebuilt, preview = _gated(db, user, c, mutate, [body.date], body.confirm,
+                              f"акт {body.amount:+,.0f}₮ бичив")
+    if preview:
+        return preview
+    a = box["a"]
+    audit.log(db, user, "create", "akt", a.id, f"№{c.no} · {_akt_label(a)}")
+    return _akt_out(a, rebuilt)
+
+
+@router.patch("/akt/{aid}")
+def patch_akt(aid: int, body: AktPatch, db: Session = Depends(get_db),
+              user=Depends(akt_roles)):
+    """Актын огноо / дүн / тэмдэглэлийг засна — хэлэлцээр дахин тохирогддог."""
+    a = db.get(models.AktEntry, aid)
+    if not a:
+        raise HTTPException(404, "Актын бичилт олдсонгүй")
+    if a.voided_at is not None:
+        raise HTTPException(409, AKT_VOIDED_ERR)
+    c = a.contract
+    new_date = body.date or a.date
+    new_amount = a.amount if body.amount is None else body.amount
+    new_note = a.note if body.note is None else _akt_note(body.note)
+    _akt_check(c, new_date, new_amount, drop_id=a.id)
+    before = _akt_label(a)
+    # Огноо хөдөлбөл ХОЁР цонх хөндөгдөнө — хуучин нь ч дахин бодогдоно
+    days = sorted({a.date, new_date})
+
+    def mutate():
+        a.date, a.amount, a.note = new_date, new_amount, new_note
+
+    rebuilt, preview = _gated(db, user, c, mutate, days, body.confirm, "актын бичилт зассан")
+    if preview:
+        return preview
+    audit.log(db, user, "update", "akt", a.id,
+              f"№{c.no} · {before} → {_akt_label(a)}")
+    return _akt_out(a, rebuilt)
+
+
+@router.post("/akt/{aid}/void")
+def void_akt(aid: int, body: AktVoidIn, db: Session = Depends(get_db),
+             user=Depends(akt_roles)):
+    """Актын бичилтийг ХҮЧИНГҮЙ болгоно — устгахгүй, тооцооноос гаргана (H1).
+
+    Мөр нь жагсаалтад ХҮЧИНГҮЙ тэмдэгтэй, шалтгаантайгаа үлдэнэ; нэхэмжлэл,
+    хавсралт, акт-PDF-ийн аль нь ч түүнийг дахин хэвлэхгүй.
+    """
+    a = db.get(models.AktEntry, aid)
+    if not a:
+        raise HTTPException(404, "Актын бичилт олдсонгүй")
+    if a.voided_at is not None:
+        raise HTTPException(409, AKT_VOIDED_ERR)
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "Цуцлах шалтгаан заавал бичигдэнэ")
+    c = a.contract
+    # Нэмэгдэл гарахад тэр циклд үлдсэн хөнгөлөлт нүцгэн үлдэж болно
+    if billing.akt_negative_windows(c, drop_id=a.id):
+        raise HTTPException(400, billing.AKT_NEGATIVE_ERR)
+    label = _akt_label(a)
+
+    def mutate():
+        a.voided_at = datetime.utcnow()
+        a.void_reason = reason
+        a.voided_by = getattr(user, "name", "") or ""
+
+    rebuilt, preview = _gated(db, user, c, mutate, [a.date], body.confirm,
+                              "актын бичилт хүчингүй болгов")
+    if preview:
+        return preview
+    audit.log(db, user, "void", "akt", a.id,
+              f"№{c.no} · {label} — ХҮЧИНГҮЙ: {reason}")
+    return _akt_out(a, rebuilt)
 
 
 @router.patch("/contracts/{cid}/items")
