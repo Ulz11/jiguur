@@ -11,6 +11,7 @@ import { rowClickProps } from "../lib/rowClick";
 import { contractHref } from "../lib/links";
 import { dueLabel, todayIso } from "../lib/schedule";
 import { penaltySplit, UNCHARGED } from "../lib/penalty";
+import { uninvoicedLine } from "../lib/receivable";
 import {
   buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth, dayCellLabel,
   parseIso, isoOf, WEEKDAYS_MN, monthLabelMN, type TLEvent, type YearMonth,
@@ -36,12 +37,19 @@ export default function ClientProfile() {
   /* Төлбөр цуцлах нь мөнгөний засвар — менежер, санхүүчийнх (сервер ч тэгнэ). */
   const canVoid = u?.role === "manager" || u?.role === "finance";
 
+  /* InlineEdit-ийн хадгалалт: алдааг toast-оор гаргаад ДАХИН шиднэ (H10).
+     Урьд нь энд try/catch байгаагүй тул `api`-ийн шидсэн алдааг InlineEdit
+     чимээгүй залгидаг байв: Отгоо регистр/утсаа засаад ✓ дарахад дэлгэц дээр
+     ЮУ Ч болохгүй, хуучин утга нь эргэж ирнэ. Одоо Loans/Salary/Machines/
+     ContractDetail-ийн `doPatch`-тай ЯГ ижил зам — toast + throw. */
   async function saveClient(patch: Record<string, string>) {
-    await api(`/api/clients/${id}`, { method: "PUT", body: JSON.stringify({
-      name: d.name, reg: d.reg || "", person: d.person || "", phone: d.phone || "",
-      note: d.note || "", ...patch }) });
-    toast("Хадгалагдлаа");
-    load();
+    try {
+      await api(`/api/clients/${id}`, { method: "PUT", body: JSON.stringify({
+        name: d.name, reg: d.reg || "", person: d.person || "", phone: d.phone || "",
+        note: d.note || "", ...patch }) });
+      toast("Хадгалагдлаа");
+      load();
+    } catch (e: any) { toast(e.message, "err"); throw e; }
   }
 
   const TABS = [
@@ -102,7 +110,12 @@ export default function ClientProfile() {
               үлдэнэ — гэхдээ АВЛАГА ярихад «12.3 сая» гэдэг хангалтгүй: залгаж
               нэхэх, тулгах дүн нь доор нь бүтнээрээ зогсоно. */}
           <div className="grid grid-cols-4 gap-6 max-sm:grid-cols-2">
-            <Stat label="Авлага" val={sayaFmt(d.receivable) + "₮"} exact={money(d.receivable)} danger={d.overdue} />
+            {/* АВЛАГА = нэхэмжилсэн + одоогийн циклийн хуримтлал (H9b) — энэ
+                тоо жагсаалт, дашбоард, Авлага цуглуулах дээр ЯГ ИЖИЛ. Дундах
+                хуримтлалыг доор нь нэрлэнэ: нуувал «тоо зөрж байна» болно. */}
+            <Stat label="Авлага" val={sayaFmt(d.receivable) + "₮"} exact={money(d.receivable)}
+                  danger={d.overdue}
+                  note={uninvoicedLine(d.receivable_uninvoiced, sayaFmt) || undefined} />
             {/* АЛДАНГИ ХОЁР НҮҮРТЭЙ (R25 / H2): нэхэгдсэн нь ӨР (улаан),
                 нэхэгдээгүй нь зөвхөн ТООЦООЛОЛ — ≈ угтвартай, бүдэг, доор нь
                 «нэхэгдээгүй» гэж бичигдэнэ. Нэг тоо болгож нийлүүлбэл Отгоо
@@ -184,6 +197,13 @@ export default function ClientProfile() {
                       {money(d.receivable)}
                     </b>
                   </div>
+                  {/* Дээрх «≈» төсөөллүүд ба энэ үлдэгдэл хоёр хоорондоо
+                      холбогдоно: үлдэгдлийн дотор хэдэн төгрөг нь хараахан
+                      нэхэгдээгүй хуримтлал болохыг ЭНД хэлнэ (H9b). */}
+                  {uninvoicedLine(d.receivable_uninvoiced) && (
+                    <div className="text-right text-[12px] text-t3 tabular-nums">
+                      {uninvoicedLine(d.receivable_uninvoiced)}
+                    </div>)}
                 </div>
               )}
               <h2 className="font-bold text-[14.5px] mb-3.5">Нэхэмжлэлийн байдал</h2>

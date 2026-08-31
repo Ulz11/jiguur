@@ -9,6 +9,7 @@ import { nextSort, ariaSort, sortByNumber, type SortState } from "../lib/sort";
 import { clientHref } from "../lib/links";
 import { todayIso } from "../lib/schedule";
 import { UNCHARGED } from "../lib/penalty";
+import { uninvoicedLine } from "../lib/receivable";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
 // хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
@@ -110,10 +111,15 @@ export default function Collections() {
       </div>
 
       <div className="card overflow-x-auto">
-        <table className="w-full min-w-[900px]">
+        <table className="w-full min-w-[1020px]">
           <thead><tr>
             <th className="th">Харилцагч</th>
             {sortTh("overdue", "Хэтэрсэн", true)}
+            {/* НЭГ АВЛАГА (H9b): дашбоард, харилцагчийн жагсаалт, профайл
+                дээрхтэй ЯГ ИЖИЛ тоо. «Хэтэрсэн» нь түүний ДОТОРХ хэсэг —
+                нэхэгдсэн, хугацаа нь өнгөрсөн. Хоёр багана зэрэгцэж зогсох нь
+                залгах эрэмбийг (хэтэрсэн) авлагын бүтэн үнэнээс салгана. */}
+            <th className="th text-right">Авлага</th>
             <th className="th text-right">Нэхэгдсэн алданги</th>
             {sortTh("oldest", "Хамгийн хуучин")}
             <th className="th">Сүүлд холбогдсон</th>
@@ -144,6 +150,14 @@ export default function Collections() {
                 {/* Жагсаалт нь «хэнд эхэлж залгах вэ» гэдгийг хэлдэг тул сая нь
                     зөв — харин залгахын өмнө нэхэх дүнгээ бүтнээр нь хардаг. */}
                 <td className="td text-right tabular-nums font-bold text-danger" title={money(r.overdue)}>{sayaFmt(r.overdue)}₮</td>
+                {/* Авлагын НИЙТ дүн — бусад дэлгэцтэй ЯГ ижил, задаргаатайгаа */}
+                <td className="td text-right tabular-nums font-bold text-ink" title={money(r.balance)}>
+                  {sayaFmt(r.balance)}₮
+                  {uninvoicedLine(r.balance_uninvoiced, sayaFmt) && (
+                    <span className="block text-[12px] text-t3 font-normal"
+                          title={`Одоогийн цикл — ${money(r.balance_uninvoiced)}`}>
+                      {uninvoicedLine(r.balance_uninvoiced, sayaFmt)}</span>)}
+                </td>
                 {/* Утсаар ярихад ХОЁР өөр зэвсэг: нэхсэн нь өр, нэхээгүй нь
                     хөшүүрэг. Отгоо хэдийг өршөөж байгаагаа энд харна (R25). */}
                 <td className="td text-right tabular-nums text-t2"
@@ -208,6 +222,11 @@ function NoteModal({ r, onClose, onDone }: any) {
     <FormModal title={`Тэмдэглэл — ${r.client}`} onClose={onClose} dirty={formDirty(f0, f)}>
       <div className="bg-sunken rounded-lg px-3.5 py-2.5 mb-4 text-[13px] text-t2">
         Хэтэрсэн <b className="text-danger tabular-nums">{money(r.overdue)}</b>
+        {/* Утсаар ярихад бүтэн авлага нь хэрэгтэй: «нийт X, үүнээс Y нь
+            хугацаа хэтэрсэн» — хоёр тоо хоёулаа энд, дэлгэцтэйгээ ижил. */}
+        {" · "}авлага <b className="tabular-nums text-ink">{money(r.balance)}</b>
+        {r.balance_uninvoiced > 0 && (
+          <> (<span className="tabular-nums">{uninvoicedLine(r.balance_uninvoiced)}</span>)</>)}
         {r.penalty_booked > 0 && <> · нэхэгдсэн алданги <b className="tabular-nums">{money(r.penalty_booked)}</b></>}
         {r.penalty_unbooked > 0 && <> · тооцоолол <b className="tabular-nums text-t3">≈{money(r.penalty_unbooked)}</b> ({UNCHARGED})</>}
         {r.phone && <> · <a href={telHref(r.phone)} title={`${r.phone} руу залгах`}

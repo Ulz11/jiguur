@@ -7,6 +7,7 @@ import { useDownload } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import { clientHref } from "../lib/links";
 import { UNCHARGED } from "../lib/penalty";
+import { receivableSplit, uninvoicedLine } from "../lib/receivable";
 
 export default function Clients() {
   const [rows, setRows] = useState<any[] | null>(null);
@@ -86,6 +87,13 @@ export default function Clients() {
                 <td className="td text-right tabular-nums">
                   <span className={`font-bold ${c.overdue ? "text-danger" : "text-ink"}`}
                         title={money(c.receivable)}>{sayaFmt(c.receivable)}₮</span>
+                  {/* АВЛАГА = нэхэмжилсэн + одоогийн циклийн хуримтлал (H9b).
+                      Энэ тоо дашбоард, профайл, Авлага цуглуулах дээр ЯГ ижил.
+                      Задаргаа нь доор — «үүнээс нэхэмжлэгдээгүй». */}
+                  {receivableSplit(c.receivable, c.receivable_invoiced).showUninvoiced && (
+                    <span className="block text-[12px] text-t3"
+                          title={`Одоогийн цикл — ${money(c.receivable_uninvoiced)}`}>
+                      {uninvoicedLine(c.receivable_uninvoiced)}</span>)}
                   {/* Нэхэгдсэн нь ӨР (улаан «+»); нэхэгдээгүй нь зөвхөн
                       тооцоолол (бүдэг «≈» + шошго) — нийлүүлж болохгүй (H2). */}
                   {c.penalty_booked > 0 && <span className="block text-[12px] text-danger"

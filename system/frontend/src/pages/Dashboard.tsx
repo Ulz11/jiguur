@@ -10,6 +10,7 @@ import { clientHref, contractHref, contractsHref, invoiceHref, notificationHref 
 import { invoiceLabel } from "../lib/invoice";
 import { dueLabel, todayIso } from "../lib/schedule";
 import { UNCHARGED } from "../lib/penalty";
+import { uninvoicedLine } from "../lib/receivable";
 import RevChart from "../components/RevChart";
 
 /** Даргад хамаарах мэдэгдлүүд — ачилт, гэрээний хугацаа. Нэхэмжлэлийн
@@ -265,6 +266,15 @@ export default function Dashboard() {
                title={money(k.receivable)}>
             {sayaFmt(k.receivable)} <span className="text-sm text-white/70 font-semibold">₮</span>
           </div>
+          {/* НЭГ АВЛАГА (H9b): энэ тоо = нэхэмжилсэн + одоогийн циклийн
+              хуримтлал, харилцагчийн жагсаалт/профайл/Авлага цуглуулах дээрхтэй
+              ЯГ ИЖИЛ. Дундах хуримтлалыг доор нь нэрлэнэ — «яагаад тэр
+              хуудсанд өөр тоо байна вэ» гэсэн асуулт бүтцээрээ үгүй болно. */}
+          {uninvoicedLine(k.receivable_uninvoiced, sayaFmt) && (
+            <div className="text-[12px] text-white/70 tabular-nums mt-1"
+                 title={`Одоогийн цикл — ${money(k.receivable_uninvoiced)}`}>
+              {uninvoicedLine(k.receivable_uninvoiced, sayaFmt)}
+            </div>)}
           {/* АЛДАНГИ ХОЁР ТЭМДЭГ (R25 / H2). Дүүрэн тэмдэг = НЭХЭГДСЭН, өр —
               «+». Тасархай хүрээтэй, ≈ угтвартай нь ТООЦООЛОЛ: Отгоо хэдийг
               өршөөж байгаагаа анх удаа харна. Нэг тэмдэг болгож нийлүүлбэл
@@ -443,6 +453,11 @@ export default function Dashboard() {
                         title={`Төсөөлөл — ${money(s.projected_amount)}`}>≈{money(s.projected_amount)}</td>
                     <td className={`td text-right tabular-nums ${s.receivable > 0 ? "text-danger font-semibold" : "text-t3"}`}>
                       {s.receivable > 0 ? money(s.receivable) : "—"}
+                      {/* Харилцагчийн мөртэй ЯГ ижил тоо, ижил задаргаа (H9b) */}
+                      {uninvoicedLine(s.receivable_uninvoiced, sayaFmt) && (
+                        <span className="block text-[12px] text-t3 font-normal"
+                              title={`Одоогийн цикл — ${money(s.receivable_uninvoiced)}`}>
+                          {uninvoicedLine(s.receivable_uninvoiced, sayaFmt)}</span>)}
                     </td>
                   </tr>
                 ))}

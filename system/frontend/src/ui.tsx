@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, ReactNode, useEffect,
 import { tabbablesIn, trapNext } from "./lib/focus";
 import { editKeyAction } from "./lib/edit";
 import { saysIrreversible } from "./lib/danger";
+import { inlineErrorText, saveErrorOf, unsavedToast } from "./lib/saveError";
 
 /* ---------- Toast ---------- */
 const ToastCtx = createContext<(msg: string, kind?: "ok" | "err") => void>(() => {});
@@ -444,20 +445,78 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
   const [val, setVal] = useState("");
   const [busy, setBusy] = useState(false);
   const [flip, setFlip] = useState(false);
+  const [err, setErr] = useState("");
   const anchorRef = useRef<HTMLSpanElement | null>(null);
   const popRef = useRef<HTMLSpanElement | null>(null);
   const viewRef = useRef<HTMLButtonElement | null>(null);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const refocus = useRef(false);
+  const errId = useId();
   /* ГАРААР гарсан үед л фокусыг товч дээрээ буцаана. Хулганаар ✓ дарсан
      хүнийг татахгүй — тэр хаана байгаагаа нүдээрээ мэднэ. */
   const backToView = useRef(false);
+
+  /* ---- «Хадгалагдсангүй» нь ДАГАЖ ЯВНА (H10) ----
+     Талбар дээр улаан хүрээ гарсан ч Отгоо хажуу тийш товшоод явбал тэр
+     дохио дэлгэцээс алга болно. Явах агшинд ӨӨРӨӨ АРИЛДАГГҮЙ мэдэгдэл
+     («err» toast нь ✕ дартал зогсдог) ЮУ хадгалагдаагүйг нэрлэж үлдэнэ.
+     Ref-ээр уншина: unmount-ын цэвэрлэгээ анхны рендерийн closure дотор
+     ажилладаг тул төлөвийг шууд барьж болохгүй. */
+  const toast = useToast();
+  const errRef = useRef("");
+  const labelRef = useRef(label);
+  const announced = useRef(false);
+  errRef.current = err;
+  labelRef.current = label;
+  const announce = () => {
+    if (!errRef.current || announced.current) return;
+    announced.current = true;
+    toast(unsavedToast(labelRef.current, errRef.current), "err");
+  };
+  useEffect(() => () => announce(), []);          // хуудас/самбар солигдоход ч
+
   const start = (e: React.MouseEvent) => {
-    e.stopPropagation(); setVal(String(value ?? "")); setFlip(false); setMode("edit");
+    e.stopPropagation(); setVal(String(value ?? "")); setFlip(false);
+    setErr(""); announced.current = false; setMode("edit");
   };
   const commit = async () => {
+    /* Хадгалж байх хугацаанд товч `disabled` болдог — хөтөч фокусыг <body>
+       руу ХАЯНА. Тэгвэл хожим хажуу тийш товшиход энэ бүрэлдэхүүнээс
+       `focusout` ГАРАХГҮЙ (фокус аль хэдийн гадна) бөгөөд «хадгалагдсангүй»
+       мэдэгдэл хэзээ ч төрөхгүй. Дараад хүлээж байсан хүнийг хуудасны эхэнд
+       хаях нь өөрөө ч алдаа — фокусаа буцааж авчирна. */
+    const hadFocus = !!confirmRef.current && document.activeElement === confirmRef.current;
     setBusy(true);
-    try { await onSave(val); setMode("view"); }
-    catch { /* toast нь дуудагч талд */ }
-    finally { setBusy(false); }
+    try {
+      await onSave(val);
+      errRef.current = ""; setErr(""); announced.current = false; setMode("view");
+    } catch (e) {
+      /* ТАТГАЛЗАЛ ЧИМЭЭГҮЙ ӨНГӨРӨХГҮЙ. Горимоо СОЛИХГҮЙ — бичсэн утга нь
+         талбартаа үлдэж, доор нь шалтгаан гарна. Дуудагч тал ерөнхий toast-оо
+         аль хэдийн гаргасан; энд талбарын нэртэй нь холбож, орхиж явбал
+         давтаж хэлнэ. */
+      announced.current = false;
+      errRef.current = saveErrorOf(e);     // announce() ЭНЭ агшинд уншиж чадна
+      setErr(errRef.current);
+      if (!hadFocus) announce();           // фокус аль хэдийн гадна байсан бол
+    } finally {
+      refocus.current = hadFocus;
+      setBusy(false);                      // ↓ фокус нь РЕНДЕРИЙН ДАРАА буцна
+    }
+  };
+  /* `busy` унтармагц (товч дахин идэвхжсэн хойно) фокусаа буцаана. `focus()`-ыг
+     rAF дотроос дуудвал React-ын дахин рендерээс ӨМНӨ ажиллаж, `disabled`
+     товч дээр УНАДАГ (disabled элемент фокус авахгүй) — тэгээд фокус <body>-д
+     үлдэж, «хадгалагдсангүй» мэдэгдэл хэзээ ч төрөхгүй. */
+  useEffect(() => {
+    if (busy || !refocus.current) return;
+    refocus.current = false;
+    if (errRef.current) confirmRef.current?.focus();
+  }, [busy]);
+  /* Талбараас гадагш фокус явахад (Tab, өөр нүд рүү товшилт) мэдэгдэл үлдээнэ */
+  const onFocusOut = (e: React.FocusEvent<HTMLElement>) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    announce();
   };
   const onKey = (e: { key: string; preventDefault: () => void }) => {
     const act = editKeyAction(e.key, mode, busy);
@@ -508,23 +567,30 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
       </button>
     );
   }
+  const inputProps = {
+    "aria-label": label ? `${label} — шинэ утга` : "Шинэ утга",
+    ...(err ? { "aria-invalid": true as const, "aria-describedby": errId } : {}),
+  };
   return (
-    <span className="inline-edit-live" ref={anchorRef} onClick={(e) => e.stopPropagation()}>
+    <span className="inline-edit-live" ref={anchorRef} onClick={(e) => e.stopPropagation()}
+          onBlur={onFocusOut}>
       {/* Сүүдэр: нүдний өргөнийг харагдаж байсан хэвээр нь барина. Уншигчид
           хуучин утгыг давхар уншуулахгүй тул aria-hidden. */}
       <span className="inline-val invisible" aria-hidden="true">
         <span>{shown}{suffix}</span>
         <span className="pen">✎</span>
       </span>
-      <span className={`inline-edit-pop${flip ? " is-flip" : ""}`} ref={popRef}>
+      <span className={`inline-edit-pop${flip ? " is-flip" : ""}${err ? " is-err" : ""}`}
+            ref={popRef}>
+        <span className="inline-edit-row">
         {options ? (
-          <select autoFocus aria-label={label ? `${label} — шинэ утга` : "Шинэ утга"}
+          <select autoFocus {...inputProps}
             className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width}`}
             value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={onKey}>
             {options.map(([v, lb]) => <option key={v} value={v}>{lb}</option>)}
           </select>
         ) : (
-          <input autoFocus type={type} aria-label={label ? `${label} — шинэ утга` : "Шинэ утга"}
+          <input autoFocus type={type} {...inputProps}
             className={`inp !min-h-9 !py-1 !px-2 !rounded-lg !text-[13px] ${width} ${right ? "text-right" : ""}`}
             value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={onKey} />
         )}
@@ -538,11 +604,24 @@ export function InlineEdit({ value, display, onSave, type = "text", suffix = "",
           </>
         ) : (
           <>
-            <button className="h-9 px-3 rounded-lg bg-money text-white text-[12px] font-bold whitespace-nowrap shrink-0"
-                    disabled={busy} onClick={commit}>{busy ? "…" : confirmText}</button>
+            {/* Алдааны дараа энэ товч «Дахин оролдох» болно — нэг дарснаа
+                дахин дарж байгаа гэдгээ хүн мэдэж байх ёстой. */}
+            <button ref={confirmRef}
+                    className="h-9 px-3 rounded-lg bg-money text-white text-[12px] font-bold whitespace-nowrap shrink-0"
+                    disabled={busy} onClick={commit}>
+              {busy ? "…" : err ? "Дахин оролдох" : confirmText}</button>
             <button className="w-9 h-9 rounded-lg bg-sunken text-t2 shrink-0"
                     aria-label="Болих" onClick={() => setMode("view")}>✕</button>
           </>
+        )}
+        </span>
+        {/* ХАДГАЛАГДААГҮЙ гэдэг нь ЯГ ЭНД зогсоно — талбараа орхихгүйгээр
+            уншигдана. `polite`: дуудагчийн assertive toast-ын дараа давхар
+            танхимдахгүй, гэхдээ уншигчаар ажилладаг хүнд ирнэ. */}
+        {err && (
+          <span className="inline-edit-err" id={errId} aria-live="polite">
+            <span aria-hidden="true">⚠ </span>{inlineErrorText(err)}
+          </span>
         )}
       </span>
     </span>
