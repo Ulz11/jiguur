@@ -18,12 +18,20 @@ def test_patch_contract_fields(client, as_role):
 
 
 def test_patch_item_rate_changes_day_amount(client, as_role):
+    """M6/H6: энэ зам одоо БҮХ ТҮҮХЭНД үйлчлэх тарифын өөрчлөлт болов.
+
+    ⚠ ПИН ШИНЭЧЛЭГДЭВ (үндэслэл): тест нь нэхэмжлэгдсэн түүхийг ЧИМЭЭГҮЙ
+    ухрааж дарж бичдэг зан төлөвийг барьж байсан — яг тэр нь H6-ийн алдаа.
+    Дүнгийн шалгуур ХЭВЭЭР; өөрчлөгдсөн нь ганц зүйл — засвар нь одоо
+    `confirm`-оор дамжина (RebuildModal-ын хаалга).
+    """
     h = as_role("otgoo")
     d = client.get("/api/contracts/1", headers=h).json()
     it = d["items"][0]
     old_day = d["day_amount"]
     r = client.patch(f"/api/contracts/1/items", headers=h, json={
-        "material_id": it["material_id"], "grade_id": it["grade_id"], "daily_rate": it["daily_rate"] + 100})
+        "material_id": it["material_id"], "grade_id": it["grade_id"],
+        "daily_rate": it["daily_rate"] + 100, "confirm": True})
     assert r.status_code == 200
     d2 = client.get("/api/contracts/1", headers=h).json()
     assert d2["day_amount"] == old_day + it["qty"] * 100
@@ -33,7 +41,12 @@ def test_patch_item_rate_propagates_to_lots_at_old_default(client, as_role):
     """Тариф засахад ЗӨВХӨН тэр тарифтай падан шинэчлэгдэнэ.
 
     330₮-ийн 100ш + 300₮-ийн 50ш падантай гэрээнд 330 → 400 болгоход:
-    330-ийн падан 400 болж, 300-ийн падан ХЭВЭЭР үлдэнэ."""
+    330-ийн падан 400 болж, 300-ийн падан ХЭВЭЭР үлдэнэ.
+
+    ⚠ ПИН ШИНЭЧЛЭГДЭВ (үндэслэл): `old_rate`-ийн ХҮРЭЭ (нэг падангийн үе)
+    гэсэн шалгуур бүрэн ХЭВЭЭР — өөрчлөгдсөн нь зөвхөн ЗАМ: тариф одоо
+    падан дээр дарж бичигдэхээ болиод, гэрээний эхлэлээс хүчинтэй ЯВДАЛ
+    болов. Нэхэмжлэгдсэн цикл хөндөгдөх тул `confirm` шаардана (H6)."""
     h = as_role("otgoo")
     cl = client.post("/api/clients", json={"name": "Падан тариф ХХК"}, headers=h).json()
     mats = client.get("/api/materials", headers=h).json()
@@ -59,7 +72,7 @@ def test_patch_item_rate_propagates_to_lots_at_old_default(client, as_role):
 
     r = client.patch(f"/api/contracts/{cid}/items", headers=h, json={
         "material_id": m["id"], "grade_id": st["grade_id"],
-        "daily_rate": 400, "old_rate": 330})
+        "daily_rate": 400, "old_rate": 330, "confirm": True})
     assert r.status_code == 200
     assert r.json()["daily_rate"] == 400          # гэрээний үндсэн тариф ч шинэчлэгдэв
 

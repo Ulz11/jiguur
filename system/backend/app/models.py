@@ -123,6 +123,8 @@ class Contract(Base):
     invoices: Mapped[list["Invoice"]] = relationship(back_populates="contract")
     # Чөлөөт актын бичилтүүд (R12 / H4) — циклд эвхэгдэж нэхэмжлэл болно
     akt_entries: Mapped[list["AktEntry"]] = relationship(back_populates="contract")
+    # Тарифын дахин тохиролт (R3 / H6) — «шинэ тариф ДАРААГИЙН ЦИКЛЭЭС»
+    rate_changes: Mapped[list["RateChange"]] = relationship(back_populates="contract")
 
 
 class ContractItem(Base):
@@ -282,6 +284,49 @@ class PenaltyCharge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     contract: Mapped["Contract"] = relationship()
+
+
+class RateChange(Base):
+    """ТАРИФЫН ДАХИН ТОХИРОЛТ — «шинэ тариф ДАРААГИЙН ЦИКЛЭЭС» (R3 / H6).
+
+    Отгоо эгчийн Excel-д тариф циклүүдийн хооронд дахин тохирогддог: Мөнхболд
+    300 → 350 → 450. Түүний семантик нэг мөр — ШИНЭ ҮНЭ ДАРААГИЙН ЦИКЛЭЭС,
+    гарын үсэг зурсан ӨНГӨРСӨН нь ХЭВЭЭР.
+
+    Систем нь урьд нь `PATCH /contracts/{id}/items`-ээр падангийн тарифыг
+    УХРААЖ дарж бичдэг байв — дахин бодолтгүй. Нэхэмжлэгдсэн циклүүд хуучин
+    дүнгээ хэдэн сар авч яваад, огт хамаагүй засварын үед гэнэт үсэрдэг:
+    «машин санамсаргүй гарын үсэгтэй түүхийг дахин бичлээ». Одоо тариф нь
+    МӨР БИШ ЯВДАЛ: хэзээнээс, юунаас юу болов, ямар тохиролцооны дор.
+
+    `effective_from` нь ЗААВАЛ тухайн гэрээний циклийн ХИЛ (валидаци) — иймд
+    нэг цонх дотор тариф хоёр болох боломжгүй бөгөөд зурвасууд хагалагдахгүй.
+
+    `old_rate` нь ПАДАНГИЙН ҮЕИЙГ (generation) заана: 330₮-ийн падан ба
+    300₮-ийн падан зэрэгцэж байвал зөвхөн заасан нь хөдөлнө. NULL бол тухайн
+    материал+зэрэглэлийн БҮГД.
+
+    ХҮЧИНГҮЙ (void) нь төлбөр, хөдөлгөөн, актынхтай ЯГ ижил журмаар (H1):
+    мөр устахгүй, тооцоо түүнийг хараагүй мэт ажиллана, дэлгэц дээр
+    шалтгаантайгаа үлдэнэ.
+    """
+    __tablename__ = "rate_changes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contracts.id"))
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id"))
+    grade_id: Mapped[int] = mapped_column(ForeignKey("grades.id"))
+    old_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    new_rate: Mapped[float] = mapped_column(Float, default=0)
+    effective_from: Mapped[date] = mapped_column(Date)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_by: Mapped[str] = mapped_column(String(100), default="")
+
+    contract: Mapped["Contract"] = relationship(back_populates="rate_changes")
+    material: Mapped["Material"] = relationship()
+    grade: Mapped["Grade"] = relationship()
 
 
 class AktEntry(Base):

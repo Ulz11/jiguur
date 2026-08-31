@@ -72,18 +72,74 @@ def default_rates(contract: models.Contract) -> dict[tuple[int, int], float]:
     return {(it.material_id, it.grade_id): it.daily_rate for it in contract.items}
 
 
+def rate_changes_of(contract: models.Contract) -> list:
+    """Гэрээний ХҮЧИНТЭЙ тарифын өөрчлөлтүүд, хилийнхээ дарааллаар (R3 / H6).
+
+    Хүчингүй болсон нь ОГТ БАЙХГҮЙ мэт — `movement_active`, `akt_active`-тай
+    яг ижил журам. Эрэмбэ нь `(effective_from, id)`: нэг хил дээр хоёр удаа
+    тохирсон бол СҮҮЛЧИЙНХ нь хүчинтэй (сүүлийн үг эзэнд үлдэнэ).
+    """
+    rows = [rc for rc in getattr(contract, "rate_changes", None) or []
+            if rc.voided_at is None]
+    rows.sort(key=lambda rc: (rc.effective_from, rc.id or 0))
+    return rows
+
+
+def resolve_rate(contract: models.Contract, material_id: int, grade_id: int,
+                 base: float, day: date | None) -> float:
+    """ЦОНХНЫ тариф — ЭНЭ БОЛ ТАРИФЫН ГАНЦ ШИЙДЭГЧ.
+
+    `base` нь падангийн ТАМГАЛАГДСАН (төрөх үеийн) тариф; `day` нь тухайн
+    цонхны эхлэл. `effective_from <= day` нөхцөлтэй, материал+зэрэглэл нь
+    таарсан, `old_rate` заасан бол ПАДАНГИЙН ЖИНХЭНЭ тарифтай нь тохирсон
+    хамгийн СҮҮЛЧИЙН өөрчлөлт хүчинтэй. Юу ч таараагүй бол `base` хэвээр.
+
+    `day is None` бол огт шийдэхгүй — падангийн төрөлхийн тарифыг л буцаана
+    (падангийн ҮНЭМЛЭХ хэрэгтэй газруудад: бүлэглэл, `old_rate`-ийн хүрээ).
+
+    ⚠ `effective_from` нь заавал циклийн ХИЛ (API-ийн валидаци) тул цонх дотор
+    хариулт нь ТОГТМОЛ: `[cs, ce)` дотор аль ч өдрөөр асуусан нэг л тариф
+    гарна. Иймд зурвасууд тарифын улмаас ХЭЗЭЭ Ч хагалагдахгүй.
+    """
+    if day is None:
+        return base
+    out = base
+    for rc in rate_changes_of(contract):
+        if rc.effective_from > day:
+            break
+        if rc.material_id != material_id or rc.grade_id != grade_id:
+            continue
+        if rc.old_rate is not None and abs(rc.old_rate - base) >= 0.005:
+            continue
+        out = rc.new_rate
+    return out
+
+
 def line_rate(contract: models.Contract, ln: models.MovementLine,
-              defaults: dict[tuple[int, int], float] | None = None) -> float:
+              defaults: dict[tuple[int, int], float] | None = None,
+              on: date | None = None) -> float:
     """Мөрийн тариф: өөрийн тариф, байхгүй бол гэрээний мөрийн үндсэн тариф.
 
     Хуучин (тамгалагдаагүй) мөрүүд болон тестийн туслахууд тарифгүй бичдэг тул
     энэ уналт ХЭРЭГТЭЙ — тэдгээр нь гэрээний тарифаараа хэвээр бодогдоно.
+
+    `on` өгвөл үр дүн нь ЦОНХ-МЭДЭГЧ болно: тухайн өдрөөр хүчинтэй тарифын
+    өөрчлөлт (R3 / H6) дээрээс нь тавигдана. Энэ бол ТАРИФЫН ГАНЦ ЗААМ —
+    хавсралт, нэхэмжлэл, дэлгэц гурвуулаа эндүүр уншина.
     """
     if ln.rate is not None:
-        return ln.rate
-    if defaults is None:
-        defaults = default_rates(contract)
-    return defaults.get((ln.material_id, ln.grade_id), 0.0)
+        base = ln.rate
+    else:
+        if defaults is None:
+            defaults = default_rates(contract)
+        base = defaults.get((ln.material_id, ln.grade_id), 0.0)
+    return resolve_rate(contract, ln.material_id, ln.grade_id, base, on)
+
+
+def lot_rate_in(contract: models.Contract, lot: dict, d_from: date) -> float:
+    """Тухайн цонхонд ЭНЭ падан ямар тарифаар нэхэгдэх вэ (`line_rate`-ийн заам)."""
+    return resolve_rate(contract, lot["material_id"], lot["grade_id"],
+                        lot["rate"], d_from)
 
 
 def _override_of(contract: models.Contract, ln: models.MovementLine, day: date):
@@ -194,9 +250,13 @@ def return_attribution(contract: models.Contract) -> dict[int, list[dict]]:
             billed = days
             if t["ov"] is not None and win is not None:
                 billed = min(t["ov"][0], (win[1] - start).days)
+            # Тариф нь ТЭР БУЦААЛТ нэхэгдсэн цонхны хүчинтэй утга (R3 / H6) —
+            # хавсралт дээр хэвлэгдэх тоотой яг нэг заамаас.
+            eff = resolve_rate(contract, lot["material_id"], lot["grade_id"],
+                               lot["rate"], win[0] if win else lot["date"])
             out.setdefault(t["line_id"], []).append(
                 {"issue_line_id": lot["line_id"], "issue_movement_id": lot["movement_id"],
-                 "date": str(lot["date"]), "rate": lot["rate"],
+                 "date": str(lot["date"]), "rate": eff,
                  "qty": t["qty"], "pinned": t["pinned"],
                  "days": days, "billed_days": billed,
                  "override": t["ov"] is not None})
@@ -291,7 +351,10 @@ def accrue_rent(contract: models.Contract, d_from: date, d_to: date):
     lines: dict[tuple[int, int, float], dict] = {}
     total = 0.0
     for lot in _lots(contract):
-        rate = lot["rate"]
+        # Цонхны тариф (R3 / H6): падангийн тамгалагдсан утга дээр тухайн
+        # цонхонд хүчин төгөлдөр өөрчлөлт тавигдана. `d_from` нь цонхны эхлэл —
+        # `effective_from` нь заавал хил тул цонх дотор хариулт тогтмол.
+        rate = lot_rate_in(contract, lot, d_from)
         if rate <= 0:
             continue
         qty_days = _lot_qty_days(lot, d_from, d_to)
@@ -331,7 +394,7 @@ def accrue_rent_segments(contract: models.Contract, d_from: date, d_to: date) ->
     """
     out: list[dict] = []
     for lot in _lots(contract):
-        rate = lot["rate"]
+        rate = lot_rate_in(contract, lot, d_from)      # `accrue_rent`-тэй НЭГ заам
         if rate <= 0:
             continue
         for s in _lot_segments(lot, d_from, d_to):
@@ -483,6 +546,41 @@ def cycle_of(contract: models.Contract, d: date) -> tuple[date, date] | None:
     return cycle_window(contract, (d - contract.start_date).days // contract.cycle_days)
 
 
+def is_cycle_boundary(contract: models.Contract, d: date) -> bool:
+    """`d` нь энэ гэрээний циклийн ЭХЛЭЛ мөн үү (R3 / H6-ийн валидаци).
+
+    Тарифын өөрчлөлтийн `effective_from` энэ шалгуурыг давна — иймд нэг цонх
+    дотор тариф хоёр болох боломжгүй болж, зурвасууд хагалагдахгүй. Горимоо
+    мэдэхгүй: `cycle_of` цонхыг өөрөө олно.
+    """
+    if d < contract.start_date:
+        return False
+    w = cycle_of(contract, d)
+    return w is not None and w[0] == d
+
+
+def this_cycle_start(contract: models.Contract, today: date | None = None) -> date:
+    """Өнөөдөр аль циклд байна вэ — түүний эхлэл («Энэ циклээс»)."""
+    today = today or date.today()
+    if today < contract.start_date:
+        return contract.start_date
+    w = cycle_of(contract, today)
+    return w[0] if w else contract.start_date
+
+
+def next_cycle_start(contract: models.Contract, today: date | None = None) -> date:
+    """ДАРААГИЙН циклийн эхлэл — тарифын өөрчлөлтийн АНХНЫ утга.
+
+    Отгоогийн семантик: «шинэ тариф дараагийн циклээс». Энэ огноогоор ирсэн
+    өөрчлөлт НЭХЭМЖЛЭГДСЭН юуг ч хөндөхгүй тул дахин бодолт ч шаардахгүй.
+    """
+    today = today or date.today()
+    if today < contract.start_date:
+        return contract.start_date
+    w = cycle_of(contract, today)
+    return w[1] if w else contract.start_date
+
+
 # Хөнгөлөлт нь ЦИКЛИЙГ сөрөг болгож болохгүй: сөрөг нэхэмжлэл нь харилцагчид
 # «бид танд өртэй» гэсэн баримт болно — Отгоо ийм цаас хэвлэж үзээгүй.
 AKT_NEGATIVE_ERR = "Циклийн нийт дүн сөрөг болно — хөнгөлөлт хэт их байна"
@@ -574,10 +672,13 @@ def derivable_invoice_specs(contract: models.Contract, today: date | None = None
         for mv in contract.movements:
             if mv.type != "ISSUE" or not movement_active(mv):
                 continue
-            amount = sum(ln.qty * line_rate(contract, ln, prices) for ln in mv.lines)
+            # Худалдаанд цикл байхгүй — нэгж үнийн өөрчлөлт нь ОЛГОЛТЫН
+            # ӨДРӨӨР шийдэгдэнэ (тарифын нэг л заам, `resolve_rate`).
+            rate_of = {ln.id: line_rate(contract, ln, prices, on=mv.date) for ln in mv.lines}
+            amount = sum(ln.qty * rate_of[ln.id] for ln in mv.lines)
             detail = [{"material_id": ln.material_id, "grade_id": ln.grade_id, "qty": ln.qty,
-                       "rate": line_rate(contract, ln, prices),
-                       "amount": ln.qty * line_rate(contract, ln, prices)} for ln in mv.lines]
+                       "rate": rate_of[ln.id],
+                       "amount": ln.qty * rate_of[ln.id]} for ln in mv.lines]
             vat = amount * contract.vat_percent / 100
             specs.append({"no": f"S-{contract.no}-{mv.id}", "cycle_start": mv.date,
                           "cycle_end": mv.date, "due_date": mv.date,

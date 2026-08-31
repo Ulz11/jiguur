@@ -97,9 +97,15 @@ def create_contract(body: schemas.ContractIn, db: Session = Depends(get_db),
 def _live_items(db: Session, c: models.Contract, today: date, gmap: dict, mmap: dict):
     """Материалын хүснэгт — ПАДАНГААР бүлэглэсэн мөрүүд.
 
-    Бүлэглэх түлхүүр: (материал, зэрэглэл, ТАРИФ). Иймд нэг материал өөр өөр
-    тарифаар гарсан бол ХОЁР мөр болж харагдана (Отгоогийн Numbers дэвтэр шиг).
-    Талбарын нэрс хэвээр — UI өөрчлөлтгүй уншина.
+    Бүлэглэх түлхүүр: (материал, зэрэглэл, ПАДАНГИЙН ТӨРӨЛХИЙН ТАРИФ). Иймд нэг
+    материал өөр өөр тарифаар гарсан бол ХОЁР мөр болж харагдана (Отгоогийн
+    Numbers дэвтэр шиг). Талбарын нэрс хэвээр — UI өөрчлөлтгүй уншина.
+
+    ХАРАГДАХ тариф нь ӨНӨӨДРИЙН ХҮЧИНТЭЙ утга (`resolve_rate`) — тарифын
+    өөрчлөлт (R3 / H6) хүчин төгөлдөр болсны дараа хүснэгт ШИНЭ тарифаа
+    харуулна. Бүлэглэл нь ТӨРӨЛХИЙН тарифаар үлдэх нь чухал: `old_rate`-ийн
+    хүрээ (падангийн ҮЕ) тэр тоогоор л заагддаг, тиймээс мөр нь `orig_rate`-ээ
+    хамт авч явна — дараагийн өөрчлөлт ЯГ тэр үеийг заана.
     """
     order = {(it.material_id, it.grade_id): i for i, it in enumerate(c.items)}
     sale = c.type == "sale"
@@ -127,11 +133,15 @@ def _live_items(db: Session, c: models.Contract, today: date, gmap: dict, mmap: 
         mat = db.get(models.Material, row["material_id"])
         price = db.query(models.MaterialGradePrice).filter_by(
             material_id=row["material_id"], grade_id=row["grade_id"]).first()
-        daily_rate = row["rate"] if not sale else (it.daily_rate if it else 0)
-        unit_price = row["rate"] if sale else (it.unit_price if it else 0)
+        orig = row["rate"]
+        eff = billing.resolve_rate(c, row["material_id"], row["grade_id"], orig, today)
+        daily_rate = eff if not sale else (it.daily_rate if it else 0)
+        unit_price = eff if sale else (it.unit_price if it else 0)
         live.append({"material_id": row["material_id"], "material": mmap.get(row["material_id"]),
                      "grade_id": row["grade_id"], "grade": gmap.get(row["grade_id"]),
                      "qty": row["qty"], "daily_rate": daily_rate, "unit_price": unit_price,
+                     # Дараагийн өөрчлөлтийн ХҮРЭЭ энэ тоогоор заагдана
+                     "orig_rate": orig,
                      "day_amount": round(row["qty"] * daily_rate),
                      "repair_fee": mat.repair_fee if mat else 0,
                      "writeoff_price": price.nb_price if price else 0})
@@ -162,6 +172,15 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
            "akt_entries": [serializers.akt_entry(a)
                            for a in sorted(c.akt_entries,
                                            key=lambda a: (a.date, a.id), reverse=True)],
+           # Тарифын дахин тохиролт (R3 / H6) — хүчингүй болсон нь ч ХАРАГДАНА
+           "rate_changes": [serializers.rate_change(rc, gmap, mmap)
+                            for rc in sorted(c.rate_changes,
+                                             key=lambda r: (r.effective_from, r.id),
+                                             reverse=True)],
+           # «Хэзээнээс» сонголтын ГУРВАН огноо — UI таамаглахгүй, СЕРВЕР хэлнэ
+           "cycle_bounds": {"contract_start": str(c.start_date),
+                            "current_start": str(billing.this_cycle_start(c, today)),
+                            "next_start": str(billing.next_cycle_start(c, today))},
            "payments": [serializers.payment(p) for p in
                         db.query(models.Payment).filter_by(contract_id=c.id).order_by(models.Payment.date.desc()).all()]}
     # Үйлдвэрийн дарга — тоо, зэрэглэл, огнооны хүн. Мөнгө нь дэлгэц дээр
@@ -346,6 +365,9 @@ class ItemPatch(_BM):
     # Аль ПАДАНГИЙН тарифыг засаж байгаа: зөвхөн энэ тарифтай (эсвэл тамгалагдаагүй)
     # олголтын мөрүүд шинэчлэгдэнэ. Заагаагүй бол — бүгд (хуучин зан төлөв).
     old_rate: float | None = None
+    # Энэ зам одоо БҮХ ТҮҮХЭНД үйлчлэх тарифын өөрчлөлт болов — нэхэмжлэгдсэн
+    # циклд хүрвэл дахин бодолтын хаалгаар л (H6).
+    confirm: bool = False
 
 
 @router.patch("/contracts/{cid}")
@@ -794,44 +816,179 @@ def void_akt(aid: int, body: AktVoidIn, db: Session = Depends(get_db),
     return _akt_out(a, rebuilt)
 
 
+# ---------- ТАРИФЫН ДАХИН ТОХИРОЛТ (R3 / H6) ----------
+#
+# Отгоо эгчийн семантик нэг мөр: ШИНЭ ТАРИФ ДАРААГИЙН ЦИКЛЭЭС. Гарын үсэг
+# зурсан өнгөрсөн нь ХЭВЭЭР. Урьд нь `PATCH /items` нь падангийн тарифыг
+# ЧИМЭЭГҮЙ дарж бичээд дахин бодолт хийдэггүй байсан тул нэхэмжлэгдсэн
+# циклүүд хуучин дүнгээ хэдэн сар авч яваад, огт хамаагүй засварын үед гэнэт
+# үсэрдэг байв — «машин санамсаргүй түүх дахин бичлээ». Одоо тариф нь ЯВДАЛ:
+# хэзээнээс, юунаас юу болов; өнгөрсөн рүү хүрвэл ЯГ ТЭР хаалгаар (`_gated`).
+
+class RateChangeIn(_BM):
+    material_id: int
+    grade_id: int
+    # Аль ПАДАНГИЙН ҮЕИЙГ заасан бэ — заагаагүй бол материал+зэрэглэлийн бүгд
+    old_rate: float | None = None
+    new_rate: float
+    # Заагаагүй бол ДАРААГИЙН циклийн эхлэл (Отгоогийн анхны утга)
+    effective_from: _date_t | None = None
+    note: str = ""
+    confirm: bool = False
+
+
+class RateChangeVoidIn(_BM):
+    reason: str = ""
+    confirm: bool = False
+
+
+RATE_RENT_ONLY_ERR = ("Тарифын өөрчлөлт зөвхөн ТҮРЭЭСИЙН гэрээнд — худалдааны "
+                      "гэрээнд тооцооны цикл байхгүй")
+RATE_NEGATIVE_ERR = "Тариф сөрөг байж болохгүй"
+RATE_VOIDED_ERR = "Энэ тарифын өөрчлөлт аль хэдийн хүчингүй болсон байна"
+
+
+def _rate_effective_from(c: models.Contract, raw: date | None) -> date:
+    """«Хэзээнээс» — заагаагүй бол дараагийн цикл; заасан бол ХИЛ байх ёстой.
+
+    Цонхны дунд орсон огноо нь нэг циклийг хоёр тарифтай болгоно: хавсралтын
+    мөрүүд хагарч, «нэг цикл — нэг тариф» гэсэн 20 жилийн хэлбэр эвдэрнэ.
+    """
+    if raw is None:
+        return billing.next_cycle_start(c, date.today())
+    if not billing.is_cycle_boundary(c, raw):
+        win = billing.cycle_of(c, raw)
+        hint = f"{win[0]} эсвэл {win[1]}" if win else str(c.start_date)
+        raise HTTPException(400, f"«Хэзээнээс» нь циклийн ЭХЛЭЛ байх ёстой — {hint}")
+    return raw
+
+
+def _rate_label(rc: models.RateChange, mname: str) -> str:
+    old = f"{rc.old_rate:,.0f}₮" if rc.old_rate is not None else "бүх тариф"
+    return f"{mname}: {old} → {rc.new_rate:,.0f}₮ · {rc.effective_from}-ээс"
+
+
+@router.post("/contracts/{cid}/rate-change")
+def add_rate_change(cid: int, body: RateChangeIn, db: Session = Depends(get_db),
+                    user=Depends(auth.require_roles("manager"))):
+    """Тарифыг ХЭЗЭЭНЭЭС нь дахин тохирно (Мөнхболд 300 → 350 → 450)."""
+    c = db.get(models.Contract, cid)
+    if not c:
+        raise HTTPException(404, "Гэрээ олдсонгүй")
+    if c.type != "rent":
+        raise HTTPException(400, RATE_RENT_ONLY_ERR)
+    if body.new_rate < 0:
+        raise HTTPException(400, RATE_NEGATIVE_ERR)
+    eff = _rate_effective_from(c, body.effective_from)
+    m = db.get(models.Material, body.material_id)
+    if not m:
+        raise HTTPException(404, "Материал олдсонгүй")
+
+    box: dict = {}
+
+    def mutate():
+        rc = models.RateChange(contract_id=c.id, material_id=body.material_id,
+                               grade_id=body.grade_id, old_rate=body.old_rate,
+                               new_rate=body.new_rate, effective_from=eff,
+                               note=(body.note or "").strip())
+        # relationship-д нэмнэ — эс бөгөөс тухайн session дотор ачаалагдсан
+        # `c.rate_changes` хуучирч, дахин бодолт өөрчлөлтийг ХАРАХГҮЙ өнгөрнө.
+        c.rate_changes.append(rc)
+        box["rc"] = rc
+
+    rebuilt, preview = _gated(db, user, c, mutate, [eff], body.confirm,
+                              f"тариф → {body.new_rate:,.0f}₮ ({eff}-ээс)")
+    if preview:
+        return preview
+    rc = box["rc"]
+    audit.log(db, user, "create", "rate_change", rc.id,
+              f"№{c.no} · {_rate_label(rc, m.name)}"
+              + (f" · {rc.note}" if rc.note else ""))
+    gmap, mmap = _maps(db)
+    return {**serializers.rate_change(rc, gmap, mmap), "ok": True,
+            "rebuilt": rebuilt}
+
+
+@router.post("/rate-changes/{rid}/void")
+def void_rate_change(rid: int, body: RateChangeVoidIn, db: Session = Depends(get_db),
+                     user=Depends(auth.require_roles("manager"))):
+    """Тарифын өөрчлөлтийг ХҮЧИНГҮЙ болгоно — устгахгүй, тооцооноос гаргана (H1).
+
+    Падангийн ТӨРӨЛХИЙН тариф хэвээр байдаг тул буцах газар үргэлж бий:
+    хүчингүй болгосон агшинд тариф нь өөрөө хуучин утгадаа эргэж очно.
+    """
+    rc = db.get(models.RateChange, rid)
+    if not rc:
+        raise HTTPException(404, "Тарифын өөрчлөлт олдсонгүй")
+    if rc.voided_at is not None:
+        raise HTTPException(409, RATE_VOIDED_ERR)
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "Цуцлах шалтгаан заавал бичигдэнэ")
+    c = rc.contract
+    m = db.get(models.Material, rc.material_id)
+    label = _rate_label(rc, m.name if m else "?")
+
+    def mutate():
+        rc.voided_at = datetime.utcnow()
+        rc.void_reason = reason
+        rc.voided_by = getattr(user, "name", "") or ""
+
+    rebuilt, preview = _gated(db, user, c, mutate, [rc.effective_from], body.confirm,
+                              "тарифын өөрчлөлт хүчингүй болгов")
+    if preview:
+        return preview
+    audit.log(db, user, "void", "rate_change", rc.id,
+              f"№{c.no} · {label} — ХҮЧИНГҮЙ: {reason}")
+    gmap, mmap = _maps(db)
+    return {**serializers.rate_change(rc, gmap, mmap), "ok": True, "rebuilt": rebuilt}
+
+
 @router.patch("/contracts/{cid}/items")
 def patch_item(cid: int, body: ItemPatch, db: Session = Depends(get_db),
                user=Depends(auth.require_roles("manager"))):
-    """Inline засвар — тариф/нэгж үнэ. Одоогийн циклээс шинэ утгаар бодогдоно."""
+    """Inline засвар — тариф/нэгж үнэ. БҮХ ТҮҮХЭНД үйлчилнэ (хуучин зам).
+
+    Хуучин үйлчлүүлэгчидтэй тохирохын тулд endpoint нь үлдсэн ч ҮР ДҮН нь
+    одоо ЯВДЛААР явна: гэрээний эхлэлээс хүчинтэй `RateChange` үүсч, падангийн
+    тариф ХЭВЭЭР үлдэнэ (дарж бичихээ болив). Нэхэмжлэгдсэн цикл хөндөгдвөл
+    дахин бодолтын хаалга — «чимээгүй ухраах» зам ҮХЛЭЭ (H6).
+    """
     it = db.query(models.ContractItem).filter_by(
         contract_id=cid, material_id=body.material_id, grade_id=body.grade_id).first()
     if not it:
         raise HTTPException(404, "Гэрээний мөр олдсонгүй")
     if body.daily_rate is not None and body.daily_rate < 0:
-        raise HTTPException(400, "Тариф сөрөг байж болохгүй")
-    sale = it.contract.type == "sale"
+        raise HTTPException(400, RATE_NEGATIVE_ERR)
+    c = it.contract
+    sale = c.type == "sale"
     new_rate = body.unit_price if sale else body.daily_rate
-
-    # 1) Тухайн тарифтай ПАДАНГУУД шинэчлэгдэнэ (тамгалагдаагүй мөрүүд ч мөн адил).
-    if new_rate is not None:
-        lines = (db.query(models.MovementLine).join(models.Movement)
-                 .filter(models.Movement.contract_id == cid,
-                         models.Movement.type == "ISSUE",
-                         models.MovementLine.material_id == body.material_id,
-                         models.MovementLine.grade_id == body.grade_id).all())
-        for ln in lines:
-            if (body.old_rate is None or ln.rate is None
-                    or abs(ln.rate - body.old_rate) < 0.005):
-                ln.rate = new_rate
-
-    # 2) Гэрээний үндсэн тариф — зөвхөн ТҮҮНИЙ тарифыг заасан үед солигдоно.
+    if new_rate is None:
+        return {"ok": True, "daily_rate": it.daily_rate, "unit_price": it.unit_price}
     cur = it.unit_price if sale else it.daily_rate
-    if body.old_rate is None or abs(cur - body.old_rate) < 0.005:
-        if body.daily_rate is not None:
-            it.daily_rate = body.daily_rate
-        if body.unit_price is not None:
-            it.unit_price = body.unit_price
-    db.commit()
+
+    def mutate():
+        # 1) ЯВДАЛ — гэрээний эхлэлээс (бүх түүхэнд), заасан ҮЕ дээр л
+        c.rate_changes.append(models.RateChange(
+            contract_id=c.id, material_id=body.material_id, grade_id=body.grade_id,
+            old_rate=body.old_rate, new_rate=new_rate,
+            effective_from=c.start_date, note="Гэрээний тариф — бүх түүхэнд"))
+        # 2) Гэрээний үндсэн тариф — ШИНЭ олголт үүгээр тамгалагдана
+        if body.old_rate is None or abs(cur - body.old_rate) < 0.005:
+            if body.daily_rate is not None:
+                it.daily_rate = body.daily_rate
+            if body.unit_price is not None:
+                it.unit_price = body.unit_price
+
+    rebuilt, preview = _gated(db, user, c, mutate, [c.start_date], body.confirm,
+                              f"тариф → {new_rate:,.0f}₮ (бүх түүхэнд)")
+    if preview:
+        return preview
     m = db.get(models.Material, body.material_id)
     audit.log(db, user, "update", "contract_item", cid,
-              f"{m.name if m else '?'}: тариф/үнэ → "
-              f"{body.daily_rate if body.daily_rate is not None else body.unit_price:,.0f}₮")
-    return {"ok": True, "daily_rate": it.daily_rate, "unit_price": it.unit_price}
+              f"{m.name if m else '?'}: тариф/үнэ → {new_rate:,.0f}₮ · бүх түүхэнд")
+    return {"ok": True, "daily_rate": it.daily_rate, "unit_price": it.unit_price,
+            "rebuilt": rebuilt}
 
 
 @router.post("/contracts/{cid}/movements")

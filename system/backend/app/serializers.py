@@ -342,7 +342,11 @@ def material_lines(c: models.Contract, gmap: dict, mmap: dict, today: date):
                 "counted": billing.movement_active(mv),
                 "voided": mv.voided_at is not None,
                 "void_reason": mv.void_reason or "",
-                "rate": billing.line_rate(c, ln, defaults) if mv.type == "ISSUE" else None,
+                # Тариф нь ӨНӨӨДРИЙН ХҮЧИНТЭЙ утга (`resolve_rate`-ийн заам) —
+                # дээрх материалын мөртэй ЯГ нэг тоо. Хоёр нь зөрвөл «аль нь
+                # үнэн бэ» гэсэн асуулт дэвтэр дээрээ төрнө (R3 / H6).
+                "rate": (billing.line_rate(c, ln, defaults, on=today)
+                         if mv.type == "ISSUE" else None),
                 "sources": attribution.get(ln.id, []) if mv.type != "ISSUE" else None,
                 "return_grade": gmap.get(ln.return_grade_id) if ln.return_grade_id else None,
                 # ГАР ХОНОГ (H5) — `None` бол машины тоо. Дэвтэрт зөрүүний
@@ -420,6 +424,26 @@ def akt_entry(a: models.AktEntry):
             "voided_at": str(a.voided_at)[:19] if a.voided_at else None}
 
 
+def rate_change(rc, gmap: dict | None = None, mmap: dict | None = None):
+    """Тарифын дахин тохиролт (R3 / H6) — «330₮ → 350₮ 2026-04-19-ээс».
+
+    `old_rate` нь ПАДАНГИЙН ҮЕИЙГ заана; NULL бол тухайн материал+зэрэглэлийн
+    БҮГД («бүх тарифаас») — жагсаалтад тэмдэглэгдэнэ.
+
+    ХҮЧИНГҮЙ болсон нь ч ЭНД гарна — цуцлалт бол устгал БИШ (H1).
+    """
+    return {"id": rc.id, "contract_id": rc.contract_id,
+            "material_id": rc.material_id, "material": (mmap or {}).get(rc.material_id, ""),
+            "grade_id": rc.grade_id, "grade": (gmap or {}).get(rc.grade_id, ""),
+            "old_rate": rc.old_rate, "new_rate": rc.new_rate,
+            "effective_from": str(rc.effective_from), "note": rc.note or "",
+            "created_at": str(rc.created_at)[:19] if rc.created_at else None,
+            "voided": rc.voided_at is not None,
+            "void_reason": rc.void_reason or "",
+            "voided_by": rc.voided_by or "",
+            "voided_at": str(rc.voided_at)[:19] if rc.voided_at else None}
+
+
 def payment(p: models.Payment):
     """Төлбөрийн мөр. ХҮЧИНГҮЙ болсон нь ч ЭНД гарна — цуцлалт бол устгал БИШ.
 
@@ -461,9 +485,11 @@ _F_TOP = ("balance", "penalty", "penalty_booked", "penalty_unbooked",
           "penalty_percent", "day_amount", "deposit",
           "deposit_status", "deposit_applied", "deposit_returned",
           "deposit_settled_date", "vat_percent")
-# Актын бичилт нь МӨНГӨ (±дүн) — бүхэл бүлгээрээ санхүүгийнх
-_F_BLOCKS = ("invoices", "payments", "akt_entries")
-_F_ITEM = ("daily_rate", "unit_price", "day_amount", "repair_fee", "writeoff_price")
+# Актын бичилт нь МӨНГӨ (±дүн) — бүхэл бүлгээрээ санхүүгийнх.
+# Тарифын өөрчлөлт нь ТАРИФ — даргад тариф ХЭЗЭЭ Ч харагдахгүй (Мөнгөний хана).
+_F_BLOCKS = ("invoices", "payments", "akt_entries", "rate_changes")
+_F_ITEM = ("daily_rate", "unit_price", "orig_rate", "day_amount",
+           "repair_fee", "writeoff_price")
 # Хөдөлгөөний/дэвтрийн мөр: падангийн ТАРИФ, засвар/актын ДҮН явахгүй.
 # `repair_qty`, `writeoff_qty` нь ТОО — тэр бол даргын ажил, үлдэнэ.
 _F_LINE = ("rate", "repair_fee", "writeoff_fee")
