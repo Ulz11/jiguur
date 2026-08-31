@@ -5,6 +5,7 @@ import { Spinner, useToast, Receipt, ConfirmModal, SubmitButton } from "../ui";
 import { parseMoney, formatMoneyInput } from "../lib/num";
 import { contractDraftDirty } from "../lib/dirty";
 import { todayIso } from "../lib/schedule";
+import { CYCLE_MODES, cycleModeHint, cycleModeLabel } from "../lib/contract";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
 // хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
@@ -37,8 +38,12 @@ export default function ContractNew() {
      нийлүүлэгдэх утга нь 0: алданги бол ХӨШҮҮРЭГ, автомат төлбөр биш
      (Чадварын харьцуулалт R25 / H2). */
   const [penDefault, setPenDefault] = useState(PENALTY_FALLBACK);
+  /* Тооцооны мөчлөг: анхны утга «30 хоног» — олонхи гэрээ ийм. Цөөнх нь
+     гэрээндээ КАЛЕНДАРЬ САРААР тохирсон (H3/R5); тэднийг эндээс оруулахгүй
+     бол тэр хуудсууд Excel-д үлдэнэ. */
   const cond0 = useMemo(() => ({ start_date: today(), penalty_percent: penDefault,
-                                 deposit: "", vat_percent: "0", note: "", no: "" }),
+                                 deposit: "", vat_percent: "0", note: "", no: "",
+                                 cycle_mode: "days" }),
                         [penDefault]);
   const [cond, setCond] = useState(cond0);
   const uid = useId();
@@ -105,6 +110,7 @@ export default function ContractNew() {
         // хувь болгож сольж БОЛОХГҮЙ — тэр бол «нэхэхгүй» гэсэн шийдвэр.
         penalty_percent: cond.penalty_percent.trim() === "" ? 0 : parseMoney(cond.penalty_percent),
         deposit: parseMoney(cond.deposit), vat_percent: parseMoney(cond.vat_percent),
+        cycle_mode: cond.cycle_mode,
         note: cond.note,
         items: items.filter((i) => i.qty > 0),
       };
@@ -287,6 +293,35 @@ export default function ContractNew() {
                   <option value="0">Тооцохгүй</option><option value="10">10%</option>
                 </select></div>
             </div>
+            {/* ТООЦООНЫ МӨЧЛӨГ (H3 / R5). Түүний харилцагчдын цөөнх нь гэрээндээ
+                КАЛЕНДАРЬ САРААР тохирсон: цикл нь '4.01–4.30' → '5.01–5.31'
+                болж, 31 хоногтой сар нь ЖИНХЭНЭЭР ×31/30 илүү нэхэгддэг. Энэ
+                сонголтгүйгээр тэдгээр гэрээний тоо гарын үсэгтэй нөхцөлөө
+                зөрчих тул тэр хуудсууд Excel-д үлдэнэ.
+                Худалдаанд цикл гэж байхгүй — сонголт ч гарахгүй. */}
+            {type === "rent" && (
+              <div className="mt-4">
+                <span className="lbl" id={`${uid}-mode-label`}>Тооцооны мөчлөг</span>
+                <div className="inline-flex bg-white border border-line rounded-full p-1 gap-0.5"
+                     role="group" aria-labelledby={`${uid}-mode-label`}
+                     aria-describedby={`${uid}-mode-hint`}>
+                  {CYCLE_MODES.map(([v, lb]) => (
+                    <button key={v} type="button" aria-pressed={cond.cycle_mode === v}
+                      onClick={() => setCond({ ...cond, cycle_mode: v })}
+                      className={`rounded-full px-4 py-1 text-[12.5px] font-semibold min-h-9 ${
+                        cond.cycle_mode === v ? "bg-brand text-onbrand" : "text-t2"}`}>{lb}</button>
+                  ))}
+                </div>
+                {/* Тайлбар нь НЭГ мөр бөгөөд сонгосон горимоо өөрөө хэлнэ —
+                    «31 хоногтой сар 31 хоногоор нэхэгдэнэ» гэдэг нь мөнгөний
+                    ялгаа тул сонгохоос ӨМНӨ харагдана. */}
+                <p id={`${uid}-mode-hint`} className="text-[12px] text-t3 mt-1.5">
+                  {cond.cycle_mode === "month"
+                    ? cycleModeHint(cond.start_date)
+                    : "Эхлэх огнооноос 30 хоног тутам шинэ цикл — сарын урт нөлөөлөхгүй"}
+                </p>
+              </div>
+            )}
             <p className="text-[12.5px] text-t2 mt-3">
               Гэрээ <b className="text-t1">хугацаагүй</b> — хаах хүртэл тооцоо цикл бүрээр
               үргэлжилнэ. Дуусах огноо хэрэгтэй бол гэрээ үүссэний дараа гэрээн дотроос тавина.
@@ -306,6 +341,7 @@ export default function ContractNew() {
             {(() => {
               const vat = parseMoney(cond.vat_percent);
               const deposit = parseMoney(cond.deposit);
+              const monthly = type === "rent" && cond.cycle_mode === "month";
               const base = type === "rent" ? daySum * 30 : saleSum;
               const vatAmt = base * vat / 100;
               /* Баталгаажуулах алхам нь МӨНГИЙГ л харуулж, ЮУГ түрээслэж
@@ -333,7 +369,12 @@ export default function ContractNew() {
                   ? [{ label: "…", value: `бас ${picked.length - 3} мөр`, accent: "dim" }] : []),
                 ...(type === "rent"
                   ? [{ label: "Өдрийн тооцоо", value: money(daySum) },
-                     { label: "30 хоногийн цикл", value: money(daySum * 30) },
+                     { label: "Тооцооны мөчлөг", value: cycleModeLabel(cond.cycle_mode) },
+                     /* Календарь горимд циклийн урт нь 28–31 хоног — тогтмол
+                        дүн ХУДАЛ болно. Тэр үед ≈ угтвартай, 30 хоногоор
+                        жишсэн тоо гарна (тэр ≈-г уншиж сурсан). */
+                     { label: monthly ? "Сарын дүн (30 хоногоор)" : "30 хоногийн цикл",
+                       value: (monthly ? "≈" : "") + money(daySum * 30) },
                      { label: "Алданги", accent: "dim" as const,
                        value: parseMoney(cond.penalty_percent) > 0
                          ? cond.penalty_percent + " %/хоног"
@@ -348,8 +389,10 @@ export default function ContractNew() {
               const vatTag = vat > 0 ? " (НӨАТ-тай)" : " (НӨАТ-гүй)";
               return (
                 <Receipt className="mb-4" rows={rows}
-                  total={{ label: (type === "rent" ? "Циклийн нэхэмжлэл" : "Нийт төлөх дүн") + vatTag,
-                           value: money(base + vatAmt) }} />
+                  total={{ label: (type === "rent"
+                                     ? (monthly ? "Сарын нэхэмжлэл" : "Циклийн нэхэмжлэл")
+                                     : "Нийт төлөх дүн") + vatTag,
+                           value: (monthly ? "≈" : "") + money(base + vatAmt) }} />
               );
             })()}
             <div className="bg-brand-50 rounded-xl px-4 py-3.5 text-[13.5px] text-t1 mb-2">

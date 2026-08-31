@@ -5,7 +5,7 @@ import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, use
          InlineEdit, Receipt, ConfirmModal, Chevron, DisclosureCell, DisclosureHead } from "../ui";
 import { panelId, disclosureProps } from "../lib/disclosure";
 import { allocationPreview } from "../lib/alloc";
-import { endDateLabel } from "../lib/contract";
+import { CYCLE_MODES, cycleModeHint, cycleModeLabel, endDateLabel } from "../lib/contract";
 import { invoiceLabel } from "../lib/invoice";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
@@ -149,6 +149,23 @@ export default function ContractDetail() {
                     onSave={(v) => savePatch(`/api/contracts/${d.id}`,
                       v ? { end_date: v } : { clear_end_date: true }, "Дуусах огноо шинэчлэгдлээ")} />
                 </span>
+                {/* ТООЦООНЫ МӨЧЛӨГ (H3 / R5) — цөөнх гэрээ КАЛЕНДАРЬ САРААР
+                    нэхэгддэг (31 хоногтой сар ×31/30 илүү). Горим солих нь
+                    эхлэх огноо солихтой ижил хүндийн засвар: БҮХ цикл шинээр
+                    зурагдана, тиймээс `gatedPatch` — нэхэмжлэлтэй гэрээнд
+                    RebuildModal эхлээд зөрүүг харуулна. Дуусах огноо, алданги
+                    шиг ЧӨЛӨӨТЭЙ хадгалагдаж БОЛОХГҮЙ. */}
+                {d.type === "rent" && (
+                  <span className="inline-flex items-center gap-1.5"><span aria-hidden="true">Мөчлөг:</span>
+                    {u?.role === "manager" ? (
+                      <InlineEdit label="Тооцооны мөчлөг" value={d.cycle_mode || "days"}
+                        display={cycleModeLabel(d.cycle_mode)} options={CYCLE_MODES}
+                        width="w-36" confirmText="Мөчлөг солих уу?"
+                        onSave={(v) => gatedPatch(`/api/contracts/${d.id}`, { cycle_mode: v },
+                                                  "Тооцооны мөчлөг шинэчлэгдлээ")} />
+                    ) : cycleModeLabel(d.cycle_mode)}
+                  </span>
+                )}
                 <span className="inline-flex items-center gap-1.5"><span aria-hidden="true">Алданги:</span>
                   <InlineEdit type="number" label="Алданги" value={d.penalty_percent} suffix="%/хоног" width="w-20" right
                     confirmText="Алданги солих уу?"
@@ -244,6 +261,11 @@ export default function ContractDetail() {
               Цикл {cyc.cycle_start} – {cyc.cycle_end} · {cyc.days_done}/{cyc.days_total} хоног
             </div>
             <Prog pct={(cyc.days_done / cyc.days_total) * 100} />
+            {/* Календарь горимд «31 хоног» гэсэн тоо гэнэт гарч ирнэ (30 биш) —
+                тэр нь алдаа биш, ГЭРЭЭНИЙ нөхцөл гэдгийг энд НЭГ мөрөөр хэлнэ. */}
+            {d.cycle_mode === "month" && (
+              <p className="text-[12px] text-t3 mt-2">{cycleModeHint(d.start_date)}</p>
+            )}
           </div>
         )}
       </div>
