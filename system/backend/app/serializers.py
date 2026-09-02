@@ -451,6 +451,25 @@ def rate_change(rc, gmap: dict | None = None, mmap: dict | None = None):
             "voided_at": str(rc.voided_at)[:19] if rc.voided_at else None}
 
 
+def penalty_charge(pc: models.PenaltyCharge):
+    """Алданги НЭХСЭН явдал (R25 / H2) — «2026-08-31 өдрөөр 49,500₮ нэхэв».
+
+    Мөр нь ТҮЛХЭЦийг хадгална, `amount` нь баримт (rebuild огноогоор нь ДАХИН
+    нэхдэг тул хөлдсөн дүн биш). Урьд нь энэ хүснэгт БИЧИГДЭЭД ХЭЗЭЭ Ч
+    ХАРАГДДАГГҮЙ байв — гаргасан шийдвэрүүд нь дэлгэцэн дээр байхгүй.
+
+    ХҮЧИНГҮЙ болсон нь ч ЭНД гарна — цуцлалт бол устгал БИШ (H1).
+    """
+    return {"id": pc.id, "contract_id": pc.contract_id, "client_id": pc.client_id,
+            "as_of": str(pc.as_of), "amount": pc.amount,
+            "user_name": pc.user_name or "",
+            "created_at": str(pc.created_at)[:19] if pc.created_at else None,
+            "voided": pc.voided_at is not None,
+            "void_reason": pc.void_reason or "",
+            "voided_by": pc.voided_by or "",
+            "voided_at": str(pc.voided_at)[:19] if pc.voided_at else None}
+
+
 def payment(p: models.Payment):
     """Төлбөрийн мөр. ХҮЧИНГҮЙ болсон нь ч ЭНД гарна — цуцлалт бол устгал БИШ.
 
@@ -494,7 +513,8 @@ _F_TOP = ("balance", "penalty", "penalty_booked", "penalty_unbooked",
           "deposit_settled_date", "vat_percent")
 # Актын бичилт нь МӨНГӨ (±дүн) — бүхэл бүлгээрээ санхүүгийнх.
 # Тарифын өөрчлөлт нь ТАРИФ — даргад тариф ХЭЗЭЭ Ч харагдахгүй (Мөнгөний хана).
-_F_BLOCKS = ("invoices", "payments", "akt_entries", "rate_changes")
+# Алдангийн нэхэлт нь МӨНГӨ ҮҮСГЭХ ШИЙДВЭР — хамгийн сүүлд орох ёстой блок.
+_F_BLOCKS = ("invoices", "payments", "akt_entries", "rate_changes", "penalty_charges")
 _F_ITEM = ("daily_rate", "unit_price", "orig_rate", "day_amount",
            "repair_fee", "writeoff_price")
 # Хөдөлгөөний/дэвтрийн мөр: падангийн ТАРИФ, засвар/актын ДҮН явахгүй.

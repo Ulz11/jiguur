@@ -279,6 +279,13 @@ class PenaltyCharge(Base):
     баримт болгож. Дахин бодолт (rebuild) нэхэмжлэлүүдийг устгаад шинээр
     төрүүлдэг тул хөлдсөн дүнг буцааж тавих нь БУРУУ: тоо ширхэг засагдвал
     алданги нь ч засагдах ёстой. Replay эдгээр огноогоор ДАХИН нэхнэ.
+
+    ХҮЧИНГҮЙ (void) нь төлбөр, хөдөлгөөн, акт, тарифын өөрчлөлттэй ЯГ ижил
+    журмаар (H1). Хөшүүрэг гэдэг нь ТАТАГДААД СУЛАРДАГ гэсэн үг: андуурч
+    нэхсэн, эсвэл нэхээд утсаар ярьж байгаад өршөөсөн нь ХЭВИЙН тохиолдол.
+    Цуцлалт нь ХАСАЛТ БИШ — replay-ээс хасагдаад дахин бодогдоно: тэгэхэд
+    `penalty_booked`, `penalty_booked_until`, хуваарилалт бүгд өөрсдөө
+    зөв утгаа олно (`penalty_booked`-ыг ГАРААР хасах нь буруу).
     """
     __tablename__ = "penalty_charges"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -288,6 +295,9 @@ class PenaltyCharge(Base):
     amount: Mapped[float] = mapped_column(Float, default=0)
     user_name: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_by: Mapped[str] = mapped_column(String(100), default="")
 
     contract: Mapped["Contract"] = relationship()
 

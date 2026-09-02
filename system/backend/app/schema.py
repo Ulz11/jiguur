@@ -64,12 +64,16 @@ def backfill_penalty_charges(engine):
         # `created_at` нь тэр өдрийн 00:00 — replay-ийн эрэмбэд нэхэлт нь ТЭР
         # ӨДРИЙН төлбөрөөс ӨМНӨ орно. Хуучин автомат зан яг ийм байсан:
         # төлбөрийн POST дотор эхлээд номжиж, дараа нь хуваарилдаг байв.
+        # `void_reason` / `voided_by` нь ИЛЭРХИЙ бичигдэнэ: шинэ хүснэгт
+        # (`create_all`) дээр эдгээр нь NOT NULL — DEFAULT нь зөвхөн ALTER-ээр
+        # нэмэгдсэн хуучин DB дээр байдаг тул түүхий INSERT өөрөө бөглөх ёстой.
         conn.exec_driver_sql("""
             INSERT INTO penalty_charges (contract_id, client_id, as_of, amount,
-                                         user_name, created_at)
+                                         user_name, created_at,
+                                         void_reason, voided_by)
             SELECT i.contract_id, c.client_id, i.penalty_booked_until,
                    ROUND(SUM(i.penalty_booked), 2), '(хуучин системээс)',
-                   i.penalty_booked_until || ' 00:00:00'
+                   i.penalty_booked_until || ' 00:00:00', '', ''
               FROM invoices i
               JOIN contracts c ON c.id = i.contract_id
              WHERE i.penalty_booked_until IS NOT NULL

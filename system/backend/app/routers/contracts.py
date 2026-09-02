@@ -178,6 +178,12 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
                             for rc in sorted(c.rate_changes,
                                              key=lambda r: (r.effective_from, r.id),
                                              reverse=True)],
+           # Алданги НЭХСЭН явдлууд (R25 / H2) — «гаргасан шийдвэрүүдийнх нь
+           # жагсаалт» ХАРАГДАХ ёстой. `live_only=False`: хүчингүй болсон нь ч
+           # мөрөндөө үлдэнэ (H1) — хэдийг өршөөснөө тэр эндээс уншина.
+           "penalty_charges": [serializers.penalty_charge(pc) for pc in
+                               reversed(billing.contract_penalty_charges(
+                                   db, c.id, live_only=False))],
            # «Хэзээнээс» сонголтын ГУРВАН огноо — UI таамаглахгүй, СЕРВЕР хэлнэ
            "cycle_bounds": {"contract_start": str(c.start_date),
                             "current_start": str(billing.this_cycle_start(c, today)),
@@ -963,6 +969,70 @@ def void_rate_change(rid: int, body: RateChangeVoidIn, db: Session = Depends(get
               f"№{c.no} · {label} — ХҮЧИНГҮЙ: {reason}")
     gmap, mmap = _maps(db)
     return {**serializers.rate_change(rc, gmap, mmap), "ok": True, "rebuilt": rebuilt}
+
+
+# ---------- АЛДАНГИЙН НЭХЭЛТ ХҮЧИНГҮЙ БОЛГОХ (R25 / H2 · H1-ийн тэгш хэм) ----------
+#
+# Алданги бол Отгоо эгчийн ХӨШҮҮРЭГ — 20 жилийн Excel-д ганц ч удаа нэхэгдээгүй.
+# Хөшүүрэг гэдэг нь ТАТАГДААД СУЛАРДАГ гэсэн үг: андуурч нэхэх, эсвэл нэхээд
+# утсаар ярьж байгаад өршөөх нь ХЭВИЙН тохиолдол, онцгой нь биш. Систем дээр
+# төлбөр, хөдөлгөөн, акт, тариф, бартерын хөрөнгө бүгд хүчингүй болдог байхад
+# мөнгө ҮҮСГЭДЭГ цорын ганц үйлдэл нь буцаагддаггүй байв.
+#
+# ⚠ ЦУЦЛАЛТ НЬ ХАСАЛТ БИШ, ДАХИН ДЕРИВАЦИ. `penalty_booked`-ыг ГАРААР хасах нь
+# буруу: нэхэлт нь ЯВДАЛ бөгөөс rebuild нь энэ гэрээний явдлууд + харилцагчийн
+# амьд төлбөрүүдийг НЭГ цагийн шугам болгож дахин тоглуулдаг. Тиймээс явдлыг
+# хүчингүй гэж тэмдэглээд, replay-ээс хасаад (`LIVE_CHARGE`), дахин бодуулна —
+# `penalty_booked`, `penalty_booked_until`, хуваарилалт бүгд өөрсдөө зөв утгаа
+# олно. Тэр нэхэлтэд явсан төлбөр нь ижил replay-ээр үндсэн өр рүү буцаж очно.
+
+class PenaltyChargeVoidIn(_BM):
+    reason: str = ""
+    confirm: bool = False
+
+
+CHARGE_VOIDED_ERR = "Энэ алдангийн нэхэлт аль хэдийн хүчингүй болсон байна"
+
+
+@router.post("/penalty-charges/{chid}/void")
+def void_penalty_charge(chid: int, body: PenaltyChargeVoidIn, db: Session = Depends(get_db),
+                        user=Depends(auth.require_roles("manager", "finance"))):
+    """Нэхсэн алдангийг ХҮЧИНГҮЙ болгоно — устгахгүй, тооцооноос гаргана.
+
+    Хаалга нь бусад цуцлалттай ЯГ ижил (`_gated`): нэхэлт нь ЗӨВХӨН
+    нэхэмжлэгдсэн, хугацаа хэтэрсэн цонхон дээр л боломжтой тул цуцлалт нь
+    ҮРГЭЛЖ түүхэнд хүрнэ — эхлээд цикл бүрийн хуучин→шинэ зөрүү, дараа нь
+    `confirm` ирэхэд л бичилт.
+    """
+    pc = db.get(models.PenaltyCharge, chid)
+    if not pc:
+        raise HTTPException(404, "Алдангийн нэхэлт олдсонгүй")
+    if pc.voided_at is not None:
+        raise HTTPException(409, CHARGE_VOIDED_ERR)
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "Цуцлах шалтгаан заавал бичигдэнэ")
+    c = pc.contract
+    if not c:
+        raise HTTPException(404, "Гэрээ олдсонгүй")
+    label = f"{pc.as_of} өдрөөр {pc.amount:,.0f}₮"
+
+    def mutate():
+        pc.voided_at = datetime.utcnow()
+        pc.void_reason = reason
+        pc.voided_by = getattr(user, "name", "") or ""
+
+    # `date.min` — «БҮХ цонхонд хамаарна». Нэхэлтийн `as_of` нь сүүлийн циклийн
+    # ТӨГСГӨЛӨӨС ХОЙШ байх нь энгийн (хугацаа хэтэрсэн үед л нэхнэ) тул түүгээр
+    # шалгавал `_touches_invoiced` ХУДАЛ «хүрэхгүй» гэж хариулаад цуцлалт
+    # дахин бодолтгүй өнгөрч, `penalty_booked` нэхэмжлэл дээрээ ҮЛДЭНЭ.
+    rebuilt, preview = _gated(db, user, c, mutate, [date.min], body.confirm,
+                              "алдангийн нэхэлт хүчингүй болгов")
+    if preview:
+        return preview
+    audit.log(db, user, "void", "penalty_charge", pc.id,
+              f"№{c.no} · {c.client.name} · {label} — ХҮЧИНГҮЙ: {reason}")
+    return {**serializers.penalty_charge(pc), "ok": True, "rebuilt": rebuilt}
 
 
 @router.patch("/contracts/{cid}/items")

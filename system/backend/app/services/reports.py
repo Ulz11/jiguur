@@ -13,6 +13,7 @@ import json
 from datetime import date
 from sqlalchemy.orm import Session
 from .. import models
+from . import billing
 
 
 def is_opening(inv: models.Invoice) -> bool:
@@ -127,7 +128,8 @@ def pnl(db: Session, d_from: date, d_to: date):
                     "contract_no": pc.contract.no, "amount": round(pc.amount),
                     "user": pc.user_name}
                    for pc in db.query(models.PenaltyCharge)
-                   .filter(models.PenaltyCharge.as_of >= d_from,
+                   .filter(billing.LIVE_CHARGE,
+                           models.PenaltyCharge.as_of >= d_from,
                            models.PenaltyCharge.as_of <= d_to)
                    .order_by(models.PenaltyCharge.as_of).all()]
 
@@ -222,7 +224,6 @@ def pnl(db: Session, d_from: date, d_to: date):
     }
 
     # Дуусаагүй циклүүдэд хуримтлагдаж буй дүн — мэдээлэл болгож (үр дүнд ОРОХГҮЙ)
-    from . import billing
     accruing = 0.0
     for c in db.query(models.Contract).filter(models.Contract.status == "active").all():
         if c.no.startswith("OB-"):

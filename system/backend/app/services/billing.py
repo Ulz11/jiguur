@@ -1135,11 +1135,31 @@ def charge_contract_penalty(db: Session, contract: models.Contract, as_of: date,
             "rows": rows}
 
 
-def contract_penalty_charges(db: Session, contract_id: int) -> list[models.PenaltyCharge]:
-    """Гэрээний нэхэлтийн явдлууд — replay-ийн эх сурвалж, огноогоор эрэмбэлэгдсэн."""
-    return (db.query(models.PenaltyCharge).filter_by(contract_id=contract_id)
-            .order_by(models.PenaltyCharge.as_of, models.PenaltyCharge.created_at,
-                      models.PenaltyCharge.id).all())
+# ХҮЧИНГҮЙ болсон НЭХЭЛТИЙГ хасах ганц шүүлтүүр (`LIVE_PAYMENT`-ийн ах дүү).
+# Хаана алданги ТООЦОГДОЖ байна, тэнд энэ нь заавал: replay, тайлан. Жагсаалт
+# (харагдац) нь ЭСРЭГЭЭР — цуцлагдсан нэхэлт ХАРАГДСААР үлдэх ёстой, эс бөгөөс
+# «хэдийг өршөөв» гэдэг нь дэлгэцээс алга болно.
+LIVE_CHARGE = models.PenaltyCharge.voided_at.is_(None)
+
+
+def charge_active(ch: models.PenaltyCharge) -> bool:
+    """ORM объект дээрх ижил шалгуур (query биш, ачаалагдсан цуглуулгад)."""
+    return getattr(ch, "voided_at", None) is None
+
+
+def contract_penalty_charges(db: Session, contract_id: int,
+                             live_only: bool = True) -> list[models.PenaltyCharge]:
+    """Гэрээний нэхэлтийн явдлууд — replay-ийн эх сурвалж, огноогоор эрэмбэлэгдсэн.
+
+    `live_only=True` (анхны утга) — ЗӨВХӨН хүчинтэй нэхэлт: replay нь цуцалсан
+    шийдвэрийг ДАХИН тоглуулж болохгүй (эс бөгөөс огт хамаагүй засвар хийх бүрд
+    өршөөсөн алданги өөрөө амилна). `False` — ХАРАГДАЦ-д: түүх бүтнээрээ.
+    """
+    q = db.query(models.PenaltyCharge).filter_by(contract_id=contract_id)
+    if live_only:
+        q = q.filter(LIVE_CHARGE)
+    return q.order_by(models.PenaltyCharge.as_of, models.PenaltyCharge.created_at,
+                      models.PenaltyCharge.id).all()
 
 
 def contract_balance(contract: models.Contract, today: date | None = None):

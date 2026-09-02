@@ -13,6 +13,8 @@
   (`PenaltyCharge` явдал) тул replay нь ЗӨВХӨН бүртгэгдсэн явдлуудыг, тэдний
   ОГНООГООР нь дахин нэхнэ — хөлдсөн дүнг нь буцааж тавихгүй (тоо ширхэг
   засагдвал алданги нь ч засагдана). Явдалгүй гэрээнд алданги 0 хэвээр.
+  ХҮЧИНГҮЙ болсон нэхэлт нь энэ жагсаалтаас ХАСАГДАНА — алдангийг «буцаах»
+  гэдэг нь хасалт биш, ЭНЭ ДАХИН ДЕРИВАЦИ (H1-ийн тэгш хэм).
 - "OB-" (үлдэгдэл шилжүүлэлт) нэхэмжлэл нь ГАРААР хийгдсэн, өгөгдлөөс
   гаргаж болохгүй тул ХЭЗЭЭ Ч устгагдахгүй.
 - `payment_allocations`-д FK cascade БАЙХГҮЙ — хуваарилалтыг ГАРААР эхэлж
@@ -137,6 +139,9 @@ def rebuild_contract_invoices(db: Session, contract: models.Contract,
     payments = (db.query(models.Payment).filter_by(client_id=contract.client_id)
                 .filter(billing.LIVE_PAYMENT)
                 .order_by(models.Payment.date, models.Payment.id).all())
+    # ХҮЧИНГҮЙ болсон НЭХЭЛТ ч энд ОРОХГҮЙ (`contract_penalty_charges` нь
+    # анхныхаараа зөвхөн амьдыг өгнө). Цуцлалт нь `penalty_booked`-ыг ГАРААР
+    # хасдаггүй — энэ replay-ээс хасагдсанаараа л дахин деривацлагдана.
     charges = billing.contract_penalty_charges(db, contract.id)
     timeline = ([(p.date, p.created_at or _EPOCH, 1, p.id, "pay", p) for p in payments]
                 + [(ch.as_of, ch.created_at or _EPOCH, 0, ch.id, "book", ch) for ch in charges])

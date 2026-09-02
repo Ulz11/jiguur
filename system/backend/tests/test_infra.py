@@ -257,3 +257,34 @@ def test_backfill_penalty_charges_rescues_legacy_bookings(tmp_path):
     migrate_schema(engine)
     assert len(charges()) == 2
     engine.dispose()
+
+
+def test_penalty_charge_void_columns_are_added_by_the_migrator(tmp_path):
+    """Алдангийн нэхэлтийн ХҮЧИНГҮЙ багана нь ALTER-ээр өөрөө нөхөгдөнө.
+
+    Бусад гурван цуцлагддаг хүснэгттэй (төлбөр, хөдөлгөөн, акт, тариф) ЯГ
+    ижил гурвал: `voided_at` (nullable), `void_reason`, `voided_by` (DEFAULT
+    ''). Хуучин мөр NULL болж унахгүй — DEFAULT нь SQL руу буудаг.
+    """
+    path = str(tmp_path / "old.db")
+    engine = create_engine("sqlite:///" + path)
+    Base.metadata.create_all(engine)
+    # Багануудыг «хуучин схем» болгож ХАСНА (SQLite 3.35+ DROP COLUMN)
+    with engine.begin() as c:
+        for col in ("voided_at", "void_reason", "voided_by"):
+            c.exec_driver_sql(f'ALTER TABLE penalty_charges DROP COLUMN "{col}"')
+        c.exec_driver_sql(
+            "INSERT INTO penalty_charges (id, contract_id, client_id, as_of, amount,"
+            " user_name, created_at) VALUES (1, 1, 1, '2026-05-21', 49500,"
+            " 'Санхүүч', '2026-05-21 00:00:00')")
+
+    added = migrate_schema(engine)
+    assert {"penalty_charges.voided_at", "penalty_charges.void_reason",
+            "penalty_charges.voided_by"} <= set(added)
+
+    with engine.connect() as c:
+        row = c.exec_driver_sql(
+            "SELECT voided_at, void_reason, voided_by FROM penalty_charges"
+        ).fetchone()
+    assert row == (None, "", ""), "хуучин нэхэлт хүчинтэй хэвээр унах ёстой"
+    engine.dispose()
