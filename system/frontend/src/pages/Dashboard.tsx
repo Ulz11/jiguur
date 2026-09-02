@@ -463,11 +463,18 @@ export default function Dashboard() {
                         title={`Төсөөлөл — ${money(s.projected_amount)}`}>≈{money(s.projected_amount)}</td>
                     <td className={`td text-right tabular-nums ${s.receivable > 0 ? "text-danger font-semibold" : "text-t3"}`}>
                       {s.receivable > 0 ? money(s.receivable) : "—"}
-                      {/* Харилцагчийн мөртэй ЯГ ижил тоо, ижил задаргаа (H9b) */}
-                      {uninvoicedLine(s.receivable_uninvoiced, sayaFmt) && (
+                      {/* Харилцагчийн мөртэй ЯГ ижил тоо, ижил задаргаа (H9b).
+                          ⚠ Дэд мөр `sayaFmt`-ээр бичигдэж байсан нь ТОЛГОЙТОЙГОО
+                          ЗӨРНӨ: нэг нүдэнд «2,345,678₮» дээр «үүнээс
+                          нэхэмжлэгдээгүй: 1.2 сая₮» тогтож, хоёр өөр хэмжүүр
+                          дараалан уншигдана. Отгоо эгч тэр хоёрыг НЭМЭХ гэж
+                          оролдоод зөрөх болохоор нь тоог тань үл итгэнэ.
+                          Дүрэм (Clients.tsx-д ч ижил): дэд мөр нь толгойныхоо
+                          нягтралаар — толгой бүтэн ₮ бол дэд мөр ч бүтэн ₮. */}
+                      {uninvoicedLine(s.receivable_uninvoiced) && (
                         <span className="block text-[12px] text-t3 font-normal"
                               title={`Одоогийн цикл — ${money(s.receivable_uninvoiced)}`}>
-                          {uninvoicedLine(s.receivable_uninvoiced, sayaFmt)}</span>)}
+                          {uninvoicedLine(s.receivable_uninvoiced)}</span>)}
                     </td>
                   </tr>
                 ))}

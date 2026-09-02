@@ -1,4 +1,4 @@
-import { Fragment, ReactNode, useEffect, useId, useState } from "react";
+import { Fragment, ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { api, money, fmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, useToast,
@@ -152,7 +152,12 @@ export default function ContractDetail() {
       <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
         <div>
           <h1 className="text-[22px] font-extrabold text-ink tracking-tight flex items-center gap-2.5 flex-wrap">
-            <Link to={clientHref(d.client_id)} className="hover:underline">{d.client}</Link>
+            {/* §4: дарагддаг юм 36px-ээс намхан байхгүй. Гарчгийн мөрөнд
+                суусан ч энэ бол ХОЛБООС — 33px байсныг доод шатанд нь
+                (`--target-sm`) хүргэнэ. `inline-flex items-center` байхгүй бол
+                `min-h` нь inline элементэд огт үйлчлэхгүй. */}
+            <Link to={clientHref(d.client_id)}
+                  className="hover:underline inline-flex items-center min-h-[36px]">{d.client}</Link>
             <StatePill state={d.state} /><TypePill type={d.type} />
           </h1>
           <div className="text-t2 text-[13.5px] mt-1.5 flex items-center gap-x-4 gap-y-1.5 flex-wrap">
@@ -679,7 +684,7 @@ export default function ContractDetail() {
                   DOM-д огт байхгүй тул холбоос нь мухардмал болно. Нээлттэй
                   үедээ л заана — `aria-expanded` нь төлөвөө өөрөө хэлнэ. */}
               <button type="button" {...disclosureProps(showHist, "mv-history")}
-                      className="flex items-center gap-2 w-full text-left font-bold text-ink"
+                      className="flex items-center gap-2 w-full text-left font-bold text-ink min-h-[36px]"
                       onClick={() => setHistOpen(!showHist)}>
                 <Chevron open={showHist} />
                 Хөдөлгөөний түүх
@@ -2401,6 +2406,20 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
   const block = p && step ? stepBlock(p, step.key) : null;
   const last = at >= steps.length - 1;
 
+  /* ⚠ СҮҮЛЧИЙН АЛХАМ ДЭЭР ФОКУС «БОЛИХ» ДЭЭР ОЧНО — `ConfirmModal`-ийн
+     `danger` дүрэмтэй ЯГ ижил (UI-ЗАРЧИМ §4: «аюултай үйлдэлд фокус Болих
+     дээр очно»).
+
+     ЯАГААД ЗААВАЛ: «Цааш →» ба «Гэрээ хаах» хоёр нь JSX-ийн ЯГ НЭГ байрлалд
+     сольж зурагддаг тул React нь ижил `<button>` DOM зангилааг ДАХИН
+     АШИГЛАДАГ — товчны бичиг, өнгө нь солигдоод фокус нь ХЭВЭЭР үлдэнэ.
+     Өөрөөр хэлбэл «Цааш →» дарсан хүний хурууны доор тэр агшинд УСТГАХ
+     улаан товч зогсож, фокустай нь тэр болно: дараагийн НЭГ Enter гэрээг
+     хаана. Отгоо эгч жагсаалт дундуур Enter дардаг зуршилтай — энэ бол
+     онолын биш, тохиолдох алдаа. */
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => { if (last) cancelRef.current?.focus(); }, [last]);
+
   const refresh = () => { setSub(null); void load(); onReload(); };
 
   async function doClose() {
@@ -2636,7 +2655,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
         )}
 
         <div className="flex justify-end gap-2.5 mt-5 flex-wrap">
-          <button className="btn-secondary" onClick={onClose}>Болих</button>
+          <button className="btn-secondary" ref={cancelRef} onClick={onClose}>Болих</button>
           {at > 0 && (
             <button className="btn-ghost" onClick={() => setAt(at - 1)}>← Буцах</button>
           )}

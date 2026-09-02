@@ -130,6 +130,19 @@ body::before {
   .pill-blue { @apply bg-brand-50 text-brand-ink; }
   .pill-grey { @apply bg-sunken text-t1; }
   .pill-violet { @apply bg-violet-50 text-violet; }
+  /* ПИЛ нь ХОЁР амьтан. `<span>` бол ШОШГО — уншигдана, дарагддаггүй, 26px
+     тайван зогсоно. `<button>`/`<a>` болмогц тэр нь ҮЙЛДЭЛ: §4-ийн дүрэм
+     «36px-ээс намхан дарагддаг юм БАЙХГҮЙ» шууд хамаарна.
+
+     Агуулах дээр зэрэглэлийн пил бүр (тооллогын залруулга) 26px өндөртэй
+     байсан — үйлдвэрийн даргын планшет дээр 40 ширхэг ийм товч зэрэг зогсож,
+     хуруу нь хөршийг нь оносоор өөр материалын тоо засах цонх нээгддэг байв.
+     Дүрмийг тухайн хуудсанд биш, ПИЛ өөрт нь тавина — дараагийн дарагддаг
+     пил ч төрөхдөө зөв төрнө. */
+  :is(button, a):is(.pill, .pill-green, .pill-amber, .pill-red, .pill-blue,
+                    .pill-grey, .pill-violet) {
+    min-height: var(--target-sm);
+  }
   .inp {
     @apply w-full border border-line rounded-[7px] px-3.5 py-3 outline-none min-h-[46px] text-[14px] transition text-ink;
     background: #fff;
@@ -492,7 +505,22 @@ body::before {
 .dashboard-subtitle { color: var(--color-t2); font-size: 13px; margin: 0; }
 .command-action { margin-bottom: 2px; }
 .command-metrics { display: grid; grid-template-columns: minmax(285px, 1.55fr) repeat(3, minmax(175px, .8fr)); gap: 11px; margin-bottom: 13px; }
-.command-hero { min-height: 176px; padding: 23px; color: white; overflow: hidden; border: 1px solid var(--jz-blue); background: linear-gradient(125deg, var(--jz-blue-deep), var(--jz-blue)); box-shadow: 0 16px 30px rgba(25,41,107,.17); }
+/* ⚠ `position: relative` нь ЧИМЭГЛЭЛ БИШ — ХАМГААЛАЛТ.
+   Доорх `::after` нь `position: absolute; inset: 0 0 0 auto; width: 53%`.
+   Карт өөрөө `static` байхад тэр хэв нь ХАМГИЙН ОЙРЫН БАЙРЛАЛТАЙ өвөг рүү
+   зугтаж, ХУУДАС БҮХЭЛДЭЭ (өндөр 100%, баруун 53%) дүүрдэг байв. `overflow:
+   hidden` нь түүнийг хайчлахгүй: хайчлагч нь зөвхөн ӨӨРИЙН агуулах блок
+   доторх элементэд үйлчилнэ.
+
+   Үр дагавар нь хоёр давхар:
+     · ХАРАГДАЦ — /analytics, /collections, /barter дээр хуудасны баруун
+       хагаст сүүдэр хэв тархана;
+     · ТОВШИЛТ — тэр давхарга нь ҮЛ ҮЗЭГДЭХ хэрнээ хулганы үйл явдлыг ЗАЛГИНА.
+       «Авлага цуглуулах» дээрх «+ Тэмдэглэл» (залгасныг тэмдэглэх — Отгоо
+       эгчийн өдөр тутмын гол товч) ба Аналитикийн харагдац солих товч хоёр нь
+       дарагдахаа больсон байв: дарахад ЮУ Ч болохгүй, алдаа ч гарахгүй.
+   `.command-metric` (доор) анхнаасаа `relative`-тэй — hero л дутуу байв. */
+.command-hero { position: relative; min-height: 176px; padding: 23px; color: white; overflow: hidden; border: 1px solid var(--jz-blue); background: linear-gradient(125deg, var(--jz-blue-deep), var(--jz-blue)); box-shadow: 0 16px 30px rgba(25,41,107,.17); }
 .command-hero::after { content: ""; position: absolute; inset: 0 0 0 auto; width: 53%; background: url("./assets/jiguur-pattern-navy.jpg") center / 155px auto repeat; opacity: .19; mix-blend-mode: screen; mask-image: linear-gradient(90deg, transparent, black 35%); }
 .command-hero > * { position: relative; z-index: 1; }
 /* Navy hero дээр pattern давхарга (.19 screen) дэвсгэрийг гэрэлтүүлдэг —

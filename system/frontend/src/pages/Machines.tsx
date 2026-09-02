@@ -119,8 +119,14 @@ export default function Machines() {
             <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
               {/* Сонгогдсон карт нь хүрээгээрээ хэлдэг — `aria-pressed` нь ЯГ
                   тэр төлөвийг уншигчид хэлнэ (хүрээ нь өнгө, энэ нь үг). */}
-              <button type="button" className="text-left text-ink text-[15px] font-bold rounded-[4px] hover:underline"
-                      aria-label={`${m.name} — бичилтүүдийг нээх`}
+              {/* `min-h-[--target-sm]` — 23px өндөртэй байв. Энэ бол даргын
+                  планшет дээрх ГОЛ зогсоол (машины түүх нээх) тул §4-ийн
+                  доод шатнаас доогуур байж болохгүй. `inline-flex items-center`
+                  нь өндрийг ҮНЭХЭЭР өгнө: `min-height` дангаараа inline
+                  элементэд үйлчлэхгүй. */}
+              <button type="button" aria-label={`${m.name} — бичилтүүдийг нээх`}
+                      className="text-left text-ink text-[15px] font-bold rounded-[4px] hover:underline
+                                 inline-flex items-center min-h-[36px]"
                       aria-pressed={sel?.id === m.id}
                       onClick={(e) => { e.stopPropagation(); openLogs(m.id); }}>
                 {m.name}

@@ -3,22 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { Spinner, useToast, Empty } from "../ui";
 import { auditHref } from "../lib/links";
-
-const ACTIONS: Record<string, [string, string]> = {
-  create: ["Үүсгэсэн", "pill-green"],
-  update: ["Зассан", "pill-blue"],
-  delete: ["Устгасан", "pill-red"],
-  confirm: ["Баталгаажуулсан", "pill-green"],
-  stocktake: ["Тооллого", "pill-amber"],
-  settle_deposit: ["Барьцаа тооцсон", "pill-violet"],
-  rebuild: ["Дахин бодсон", "pill-violet"],
-};
-const ENTITIES: Record<string, string> = {
-  contract: "Гэрээ", contract_item: "Гэрээний мөр", payment: "Төлбөр", stock: "Агуулах",
-  collection_note: "Тэмдэглэл", loan: "Зээл", barter: "Бартер", salary: "Цалин",
-  material: "Материал", grade: "Зэрэглэл", settings: "Тохиргоо", client: "Харилцагч",
-  movement: "Хөдөлгөөн", invoice: "Нэхэмжлэл",
-};
+import { actionLabel, entityLabel } from "../lib/audit";
 
 export default function Audit() {
   const [rows, setRows] = useState<any[] | null>(null);
@@ -34,7 +19,7 @@ export default function Audit() {
   if (!rows) return <Spinner />;
 
   const shown = rows.filter((r) => !q ||
-    (r.detail + r.user_name + (ENTITIES[r.entity] || r.entity)).toLowerCase().includes(q.toLowerCase()));
+    (r.detail + r.user_name + entityLabel(r.entity)).toLowerCase().includes(q.toLowerCase()));
   const entities = [...new Set(rows.map((r) => r.entity))];
 
   return (
@@ -52,7 +37,7 @@ export default function Audit() {
           <button className={entity === "" ? "on" : ""} onClick={() => setEntity("")}>Бүгд</button>
           {entities.map((e) => (
             <button key={e} className={entity === e ? "on" : ""} onClick={() => setEntity(e)}>
-              {ENTITIES[e] || e}
+              {entityLabel(e)}
             </button>
           ))}
         </div>
@@ -68,7 +53,7 @@ export default function Audit() {
           </tr></thead>
           <tbody>
             {shown.map((r) => {
-              const [label, cls] = ACTIONS[r.action] || [r.action, "pill-grey"];
+              const [label, cls] = actionLabel(r.action);
               const to = auditHref(r.entity, r.entity_id);
               return (
                 <tr key={r.id}>
@@ -84,9 +69,9 @@ export default function Audit() {
                   <td className="td text-t2">
                     {to
                       ? <Link to={to} className="text-ink hover:underline">
-                          {ENTITIES[r.entity] || r.entity} #{r.entity_id}
+                          {entityLabel(r.entity)} #{r.entity_id}
                         </Link>
-                      : <>{ENTITIES[r.entity] || r.entity}{r.entity_id ? ` #${r.entity_id}` : ""}</>}
+                      : <>{entityLabel(r.entity)}{r.entity_id ? ` #${r.entity_id}` : ""}</>}
                   </td>
                   <td className="td text-t2">{r.detail}</td>
                 </tr>
