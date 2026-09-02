@@ -84,15 +84,23 @@ export type MvForVoid = { type: string; status: string; lines?: MvLine[] };
  *  хөдөлгөөгүй тул мөр гаргахгүй — хий мөр «бараа хөдөллөө» гэж уншигдана.
  *
  *  Буцаалтын мөр нь БУЦАЖ ИРСЭН зэрэглэлээр нэрлэгдэнэ: агуулахад тэр
- *  зэрэглэлээр нэмэгдсэн тул хасагдах нь ч мөн тэр. */
+ *  зэрэглэлээр нэмэгдсэн тул хасагдах нь ч мөн тэр.
+ *
+ *  ХУДАЛДАА (SALE, H7) нь тусдаа өгүүлбэртэй: тэр бараа агуулахад ХЭЗЭЭ Ч
+ *  ирээгүй тул цуцлахад агуулахаас юу ч хасагдахгүй — зөвхөн ТҮРЭЭСЭНД
+ *  буцаж орно. «Агуулахаас гарна» гэж уншуулбал Отгоо байхгүй хөдөлгөөнийг
+ *  хүлээж, тооллого дээрээ түүнийг хайна. */
 export function movementStockRows(mv: MvForVoid | undefined | null):
     { key: string; label: string; sub: string; value: string }[] {
   if (!mv || mv.status !== "done") return [];
   const issue = mv.type === "ISSUE";
+  const sale = mv.type === "SALE";
   return (mv.lines || []).map((l, i) => ({
     key: String(i),
     label: `${l.material || "?"} (${(issue ? l.grade : l.return_grade || l.grade) || "?"})`,
-    sub: issue ? "агуулахад буцна" : "агуулахаас гарч, дахин түрээсэнд",
+    sub: issue ? "агуулахад буцна"
+       : sale ? "дахин түрээсэнд орно (агуулах хөндөгдөхгүй)"
+       : "агуулахаас гарч, дахин түрээсэнд",
     value: `${issue ? "+" : "−"}${Math.round(l.qty).toLocaleString("en-US")}ш`,
   }));
 }

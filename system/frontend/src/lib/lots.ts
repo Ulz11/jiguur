@@ -34,12 +34,12 @@ export type LotSource = {
 export type LedgerLine = {
   id: number;
   movement_id: number;
-  type: string;                 // ISSUE | RETURN | WRITEOFF
+  type: string;                 // ISSUE | RETURN | WRITEOFF | SALE
   date: string;
   status: string;               // pending | done
   counted: boolean;
   qty: number;
-  delta: number;                // тэмдэгтэй: олголт +, буцаалт/акт −
+  delta: number;                // тэмдэгтэй: олголт +, буцаалт/акт/худалдаа −
   rate: number | null;          // зөвхөн олголтын мөр — падангийн тариф
   sources: LotSource[] | null;  // зөвхөн буцаалт/акт — аль падангаас хассан
   /* Цуцлагдсан хөдөлгөөн — мөр нь ХАРАГДАНА, `counted` нь `false` (хүлээгдэж
@@ -57,6 +57,8 @@ export type LedgerLine = {
   repair_fee?: number;
   writeoff_qty?: number;
   writeoff_fee?: number;
+  /** Худалдаа болгосон мөрийн дүн (H7) — зөвхөн SALE. Даргад ирэхгүй. */
+  sale_fee?: number;
   [k: string]: unknown;
 };
 

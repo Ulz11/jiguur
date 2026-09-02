@@ -287,6 +287,17 @@ function DetailPanel({ id, dt }: { id: string; dt: any }) {
                 rows={dt.rent_invoices.map((r: any) => [
                   cycleLabel(r.cycle_start, r.cycle_end), r.client, r.contract_no,
                   money(r.rent), money(r.charge), money(r.total)])} />
+          {/* «Худалдаа болгосон» мөр нь ТҮРЭЭСИЙН нэхэмжлэл дотор яваа ч
+              орлого нь ХУДАЛДААНЫХ (H7) — дээрх дүнгүүдэд ОРООГҮЙ гэдгийг
+              энд ил хэлнэ, эс бөгөөс «нэхэмжлэл 13.3 сая, тайлан 11 сая»
+              гэсэн зөрүү тайлбаргүй үлдэнэ. */}
+          {dt.sale_charge > 0 && (
+            <p className="text-[12px] text-t2 mt-3">
+              Түрээсийн гэрээн дээр худалдаа болгосон{" "}
+              <b className="text-ink tabular-nums">{money(dt.sale_charge)}</b> нь
+              дээрх дүнд ОРООГҮЙ — «Худалдааны орлого» мөрөнд шилжсэн.
+            </p>
+          )}
           {dt.charge.rows.length > 0 && (
             <>
               <p className="text-[11.5px] font-bold uppercase tracking-wide text-t3 mt-4 mb-1.5">Засвар / актын мөрүүд</p>
@@ -297,8 +308,25 @@ function DetailPanel({ id, dt }: { id: string; dt: any }) {
         </>
       );
     case "sale":
-      return <Mini head={["Огноо", "Харилцагч", "Гэрээ", "Нэхэмжлэл", "Дүн"]} numCols={[4]}
-                   rows={dt.sale_invoices.map((r: any) => [r.date, r.client, r.contract_no, r.no, money(r.amount)])} />;
+      return (
+        <>
+          <Mini head={["Огноо", "Харилцагч", "Гэрээ", "Нэхэмжлэл", "Дүн"]} numCols={[4]}
+                rows={dt.sale_invoices.map((r: any) => [r.date, r.client, r.contract_no, r.no, money(r.amount)])} />
+          {/* ТҮРЭЭСИЙН гэрээнээс гарсан худалдаа (H7): харилцагч ажлын
+              төгсгөлд хэвээ өөртөө авч үлдсэн. Нэхэмжлэл нь түрээсийнх ч
+              орлого нь ЭНД — тиймээс мөрөндөө ил зогсоно. */}
+          {dt.sale_charge > 0 && (
+            <>
+              <p className="text-[11.5px] font-bold uppercase tracking-wide text-t3 mt-4 mb-1.5">
+                Түрээсийн гэрээнээс худалдаа болгосон
+              </p>
+              <Mini head={["Огноо", "Харилцагч", "Гэрээ", "Дүн"]} numCols={[3]}
+                    rows={dt.sale_charges.map((r: any) => [r.date, r.client, r.contract_no,
+                                                           money(r.amount)])} />
+            </>
+          )}
+        </>
+      );
     case "mach-in":
     case "mach-out":
       return machines;

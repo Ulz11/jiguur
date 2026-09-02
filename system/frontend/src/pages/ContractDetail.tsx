@@ -23,23 +23,29 @@ import { AKT_KINDS, AktKind, aktAmountText, aktCycle, aktCycleLabel, aktKind,
          aktLandingText, aktSigned, aktTotal } from "../lib/akt";
 import { EffKey, RATE_RESTATE_WARN, effectiveDate, effectiveOptions,
          rateChangeScope, rateChangeText } from "../lib/rate";
-import { ClosePreview, OutRow, Prefill, StepKey, applyPrefill, closeSteps,
-         outstandingQty, outstandingWriteoff, returnPrefill, stepBlock,
+import { ClosePreview, OutRow, Prefill, SalePrefill, StepKey, applyPrefill,
+         applySalePrefill, closeSteps, outstandingQty, outstandingSale,
+         outstandingWriteoff, returnPrefill, salePrefill, stepBlock,
          stepIndex } from "../lib/close";
+import { mvName, mvTone, saleRowTotal, saleTotal } from "../lib/movement";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
 // хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
 const today = () => todayIso();
-/** Хөдөлгөөний нэр — мөрөн дээр ч, дуудагдах нэрэнд ч НЭГ эх сурвалж. */
-const mvName = (t: string) => (t === "ISSUE" ? "Ачилт" : t === "RETURN" ? "Буцаалт" : "Акт");
+// Хөдөлгөөний нэр ба өнгө нь `lib/movement` дээр — MaterialDetail-тай ЯГ
+// НЭГ толь (UI-ЗАРЧИМ §3: «хувирдаг үг» бол тархай мэдрэмжийн эх үүсвэр).
+const MV_DOT: Record<string, string> = {
+  brand: "border-brand", warn: "border-warn",
+  danger: "border-danger", violet: "border-violet",
+};
 
 export default function ContractDetail() {
   const { id } = useParams();
   const [d, setD] = useState<any>(null);
   const [grades, setGrades] = useState<any[]>([]);
-  const [modal, setModal] = useState<"" | "return" | "add" | "pay" | "extend" | "deposit"
-                                        | "close" | "penalty">("");
+  const [modal, setModal] = useState<"" | "return" | "sale" | "add" | "pay" | "extend"
+                                        | "deposit" | "close" | "penalty">("");
   const [openMv, setOpenMv] = useState<number | null>(null);
   /* Задарсан материалын мөр — `material_id:grade_id` түлхүүрээр санана, тул
      тоо засаад хуудас дахин ачаалагдахад ЯГ тэр мөр задарсан хэвээр үлдэнэ. */
@@ -250,6 +256,10 @@ export default function ContractDetail() {
           {canManage && d.type === "rent" && d.status === "active" && (
             <>
               <button className="btn-secondary" onClick={() => setModal("add")}>+ Нэмэлт олголт</button>
+              {/* ХУДАЛДАА БОЛГОХ нь зөвхөн хаалтын үйл явдал БИШ — харилцагч
+                  ажил дундаа ч худалдаж авдаг. Хөдөлгүүр нь ялгалгүй, тиймээс
+                  хаалгыг нь энд ч нээв (H7). */}
+              <button className="btn-secondary" onClick={() => setModal("sale")}>Худалдаа болгох</button>
               <button className="btn-primary" onClick={() => setModal("return")}>Буцаалт бүртгэх</button>
             </>
           )}
@@ -691,7 +701,7 @@ export default function ContractDetail() {
                 return (
                 <div key={mv.id} className="relative pb-4 last:pb-0">
                   <i className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-white border-[3px] ${
-                    mv.type === "ISSUE" ? "border-brand" : mv.type === "RETURN" ? "border-warn" : "border-danger"}`} />
+                    MV_DOT[mvTone(mv.type)]}`} />
                   {/* Задардаг мөр — хулганаар ч, Tab+Enter-ээр ч нээгдэнэ */}
                   <div className="cursor-pointer" title={voidTitle(mv) || "Дарж дэлгэрэнгүйг нээнэ"}
                        {...disclosureProps(open, mvPid)}
@@ -737,6 +747,15 @@ export default function ContractDetail() {
                             : `${fmt(mv.lines.reduce((s: number, l: any) => s + l.writeoff_qty, 0))}ш`}
                         </span>
                       )}
+                      {/* ХУДАЛДАА БОЛГОВ (H7). Даргад мөрийн ТОО нь дээр аль
+                          хэдийн харагдсан тул энд түүнд нэмэх юм алга — ДҮН нь
+                          зөвхөн Отгоо, санхүүчид (мөнгөний хана). */}
+                      {seesMoney && mv.type === "SALE" && (
+                        <span className="block text-violet">
+                          Худалдаа: {money(mv.lines.reduce(
+                            (s: number, l: any) => s + (l.sale_fee || 0), 0))}
+                        </span>
+                      )}
                       {mv.note && <span className="block text-t3">{mv.note}</span>}
                     </div>
                   ) : (
@@ -775,6 +794,11 @@ export default function ContractDetail() {
                               {(seesMoney ? l.writeoff_fee : l.writeoff_qty) > 0 && (
                                 <span className="text-danger">
                                   {" "}· акт {seesMoney ? money(l.writeoff_fee) : `${fmt(l.writeoff_qty)}ш`}
+                                </span>
+                              )}
+                              {seesMoney && (l.sale_fee || 0) > 0 && (
+                                <span className="text-violet">
+                                  {" "}· худалдаа {money(l.sale_fee)}
                                 </span>
                               )}
                             </span>
@@ -913,6 +937,9 @@ export default function ContractDetail() {
           нээгддэг тул мөнгөний зураас цонх дотор ч үргэлжилнэ. */}
       {modal === "return" && <ReturnModal d={d} grades={grades} seesMoney={seesMoney}
                                           onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+
+      {modal === "sale" && <SaleModal d={d} seesMoney={seesMoney} prefill={null}
+                                      onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
 
       {modal === "add" && <AddModal d={d} seesMoney={seesMoney}
                                     onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
@@ -1548,6 +1575,11 @@ function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit, onVoid }: {
                     {seesMoney && ` · ${money(ln.writeoff_fee ?? 0)}`}
                   </span>
                 )}
+                {/* Худалдаа болгосон мөрийн ДҮН — тоо нь баруун талын
+                    баганад аль хэдийн (−40ш) зогссон тул давхардуулахгүй. */}
+                {seesMoney && (ln.sale_fee ?? 0) > 0 && (
+                  <span className="block text-violet">худалдаа · {money(ln.sale_fee ?? 0)}</span>
+                )}
                 {ln.note ? <span className="block text-t3">{ln.note}</span> : null}
               </td>
               <td className={`${td} text-right tabular-nums whitespace-nowrap`}>
@@ -1920,6 +1952,141 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
   );
 }
 
+/* ---------- ХУДАЛДАА БОЛГОХ (§3 H7-ийн гурав дахь гарц) ----------
+   Ажлын төгсгөлд харилцагч хэвээ буцааж ачихын оронд ӨӨРТӨӨ АВЧ ҮЛДДЭГ.
+   Тэр нь БУЦААЛТ БИШ (бараа ирээгүй) ба ДУТАГДУУЛСАН ч БИШ (алдагдаагүй,
+   зарагдсан) — тиймээс өөрийн цонхтой. Буцаалтын цонхны «очих зэрэглэл»,
+   «засварт», «актлах», «гар хоног» гэсэн асуултууд энд ОГТ утгагүй: тэр
+   барааг бид дахин хэзээ ч харахгүй.
+
+   Хоёр алхам: маягт (FormModal, `dirty`-тэй) → ҮР ДҮНГ ХАРУУЛСАН
+   баталгаажуулалт (ConfirmModal + Receipt). Мөнгө хөдөлж байгаа тул
+   UI-ЗАРЧИМ §4-ийн дүрэм: «болох гэж буйгаа ЭХЛЭЭД харуулаад л асууна». */
+function SaleModal({ d, seesMoney, prefill, onClose, onDone }: any) {
+  const toast = useToast();
+  const uid = useId();
+  const [date, setDate] = useState(today());
+  const [rows, setRows] = useState<any[]>(
+    applySalePrefill(d.items.filter((i: any) => i.qty > 0)
+      .map((i: any) => ({ ...i, sell: 0 })), prefill));
+  const [ask, setAsk] = useState(false);
+  const setRow = (i: number, patch: any) =>
+    setRows(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+
+  const act = rows.filter((r) => r.sell > 0);
+  const totQty = act.reduce((s, r) => s + r.sell, 0);
+  const total = saleTotal(act.map((r) => ({ qty: r.sell, sale_price: r.sale_price || 0 })));
+  const over = rows.some((r) => r.sell > r.qty);
+  const dirty = date !== today() || rows.some((r) => r.sell > 0);
+
+  async function submit() {
+    const lines = act.map((r) => ({
+      material_id: r.material_id, grade_id: r.grade_id, qty: r.sell }));
+    try {
+      await api(`/api/contracts/${d.id}/movements`, { method: "POST",
+        body: JSON.stringify({ type: "SALE", date, note: "Худалдаа болгов", lines }) });
+      toast("Худалдаа бүртгэгдлээ — түрээс тэр өдрөөс зогсоно");
+      onDone();
+    } catch (e: any) { toast(e.message, "err"); setAsk(false); }
+  }
+
+  /* Мөр бүрийн ҮРЖВЭР — Отгоо дэлгэц дээрх тоог өөрөө дахин үржүүлж
+     шалгана. Даргад дүн нь ирэхгүй тул ширхэг дээр зогсоно. */
+  const receiptRows = act.map((r) => ({
+    label: `${r.material} (${r.grade})`,
+    sub: seesMoney
+      ? `${fmt(r.sell)}ш × ${money(r.sale_price || 0)}`
+      : `${fmt(r.sell)}ш`,
+    value: seesMoney
+      ? money(saleRowTotal({ qty: r.sell, sale_price: r.sale_price || 0 }))
+      : `${fmt(r.sell)} ш`,
+  }));
+
+  return (
+    <>
+      <FormModal title="Худалдаа болгох" onClose={onClose} wide dirty={dirty}>
+        <p className="text-[13.5px] text-t2 mb-4">
+          Харилцагч түрээсэнд байгаа бараагаа <b className="text-ink">өөртөө авч
+          үлдэх</b> бол энд бүртгэнэ. Тэр тооны түрээс энэ өдрөөс{" "}
+          <b className="text-ink">зогсоно</b>, бараа паркаас гарна
+          {seesMoney && <>, дүн нь <b className="text-ink">худалдах үнээр</b> тухайн
+            циклийн нэхэмжлэлд нэмэгдэнэ</>}.
+        </p>
+        <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+        <input id={`${uid}-date`} type="date" className="inp mb-4 max-w-[200px]"
+               value={date} onChange={(e) => setDate(e.target.value)} />
+
+        <div className="divide-y divide-line border-t border-line">
+          {rows.map((r, i) => {
+            const bad = r.sell > r.qty;
+            return (
+              <div key={i} className="py-3 flex items-center gap-3 flex-wrap">
+                <div className="min-w-0 flex-1">
+                  <b className="text-[15.5px] text-ink block leading-tight">{r.material}</b>
+                  <span className="text-[12.5px] text-t2">
+                    <span className="pill-grey !py-0 mr-1.5">{r.grade}</span>
+                    түрээсэнд <b className="tabular-nums">{fmt(r.qty)}</b>ш
+                    {seesMoney && <> · худалдах үнэ{" "}
+                      <b className="tabular-nums">{money(r.sale_price || 0)}</b></>}
+                  </span>
+                  {seesMoney && r.sell > 0 && (
+                    <span className="block text-[12.5px] text-violet tabular-nums">
+                      {fmt(r.sell)} × {money(r.sale_price || 0)} ={" "}
+                      <b>{money(saleRowTotal({ qty: r.sell, sale_price: r.sale_price || 0 }))}</b>
+                    </span>
+                  )}
+                </div>
+                <input type="number" inputMode="numeric" min={0} max={r.qty} placeholder="0"
+                       aria-label={`${r.material} — худалдах тоо`}
+                       className={`inp !w-24 !min-h-[52px] text-center !text-[17px] font-bold ${
+                         bad ? "!border-danger" : r.sell > 0 ? "!border-brand" : ""}`}
+                       value={r.sell || ""}
+                       onChange={(e) => setRow(i, { sell: +e.target.value })} />
+              </div>
+            );
+          })}
+        </div>
+
+        {over && (
+          <p className="text-[12.5px] text-danger mt-3">
+            Түрээсэнд байгаагаас их байна — тоогоо шалгана уу.
+          </p>
+        )}
+        {totQty > 0 ? (
+          <Receipt className="mt-4" rows={receiptRows}
+            total={seesMoney
+              ? { label: "Нэхэмжлэлд нэмэгдэх нийт", value: money(total), accent: "danger" }
+              : { label: "Худалдах нийт", value: `${fmt(totQty)} ш` }} />
+        ) : (
+          <p className="text-[12.5px] text-t2 mt-3">
+            Худалдах тоогоо оруулна уу — үржвэр нь доор гарна.
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2.5 mt-5">
+          <button className="btn-secondary tap-lg" onClick={onClose}>Болих</button>
+          <button className="btn-primary tap-lg px-6" disabled={!totQty || over}
+                  onClick={() => setAsk(true)}>Худалдаа болгох</button>
+        </div>
+      </FormModal>
+
+      {ask && (
+        <ConfirmModal title="Худалдаа болгох уу?"
+          intro={<>Гэрээ №{d.no} · <b className="text-ink">{d.client}</b> —{" "}
+                 <b className="text-ink">{date}</b>-нээс эхлэн энэ бараа{" "}
+                 <b className="text-ink">түрээс тооцогдохоо болино</b> ба паркаас
+                 гарна. Хөдөлгөөнийг дараа нь хүчингүй болгож болно.</>}
+          rows={receiptRows}
+          total={seesMoney
+            ? { label: "Нэхэмжлэлд нэмэгдэх нийт", value: money(total), accent: "danger" }
+            : { label: "Худалдах нийт", value: `${fmt(totQty)} ш` }}
+          confirmLabel="Тийм, худалдаа болгоё"
+          onConfirm={submit} onClose={() => setAsk(false)} />
+      )}
+    </>
+  );
+}
+
 /* ---------- Нэмэлт олголт ---------- */
 function AddModal({ d, seesMoney, onClose, onDone }: any) {
   const toast = useToast();
@@ -2217,6 +2384,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
      Хаагдмагц wizard нь СЕРВЕРЭЭС дахин уншина — «гадаа юу үлдэв» гэдэг
      нь дэлгэц дээрх таамаг биш, амьд байдал. */
   const [sub, setSub] = useState<null | { kind: "return"; prefill: Prefill }
+                                      | { kind: "sale"; prefill: SalePrefill }
                                       | { kind: "deposit" }>(null);
   const [done, setDone] = useState<any[] | null>(null);
 
@@ -2303,7 +2471,8 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
             <p className="text-[13.5px] text-t2 mb-4">
               Түрээсэнд <b className="text-ink tabular-nums">{fmt(outstandingQty(p.outstanding))}</b>ш
               байсаар байна. Мөр бүрийг шийднэ: ирсэн бол <b>буцаалт</b>, ирээгүй бол{" "}
-              <b>дутагдуулсан</b> (НБҮнээр нэхэгдэж өрөнд нэмэгдэнэ).
+              <b>дутагдуулсан</b> (НБҮнээр), харилцагч <b>өөртөө авч үлдсэн</b> бол{" "}
+              <b>худалдаа болгоно</b> (худалдах үнээр).
             </p>
             <div className="divide-y divide-line border-t border-line">
               {p.outstanding.map((r: OutRow) => (
@@ -2313,9 +2482,17 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                     <b className="text-[14.5px] text-ink block leading-tight">{r.material}</b>
                     <span className="text-[12.5px] text-t2">
                       <span className="pill-grey !py-0 mr-1.5">{r.grade}</span>
-                      гадаа <b className="tabular-nums">{fmt(r.qty)}</b>ш ·
-                      НБҮнэ <span className="tabular-nums">{money(r.nb_price)}</span> →{" "}
-                      дутагдуулбал <b className="tabular-nums text-danger">{money(r.writeoff_amount)}</b>
+                      гадаа <b className="tabular-nums">{fmt(r.qty)}</b>ш
+                    </span>
+                    {/* ХОЁР ҮНЭ ЗЭРЭГ, ҮРЖВЭРТЭЙГЭЭ. Отгоогийн арга нь бүх
+                        арифметикээ дахин бодох явдал — үр дүн ганцаараа
+                        зогсвол шалгах юмгүй болно (§4). */}
+                    <span className="block text-[12.5px] text-t2 tabular-nums">
+                      дутагдуулбал {fmt(r.qty)} × {money(r.nb_price)} ={" "}
+                      <b className="text-danger">{money(r.writeoff_amount)}</b>
+                      <span className="text-t3"> · </span>
+                      худалдвал {fmt(r.qty)} × {money(r.sale_price)} ={" "}
+                      <b className="text-violet">{money(r.sale_amount)}</b>
                     </span>
                   </div>
                   <div className="flex gap-2 flex-wrap">
@@ -2329,14 +2506,22 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                                                     prefill: returnPrefill(r, "writeoff") })}>
                       Дутагдуулсан<span className="sr-only"> — {r.material} {r.grade}</span>
                     </button>
+                    <button className="btn-ghost btn-row text-violet"
+                            onClick={() => setSub({ kind: "sale", prefill: salePrefill(r) })}>
+                      Худалдаа болгох<span className="sr-only"> — {r.material} {r.grade}</span>
+                    </button>
                   </div>
                 </div>
               ))}
             </div>
             <Receipt className="mt-4"
-              rows={[{ label: "Гадаа нийт", value: `${fmt(outstandingQty(p.outstanding))} ш` }]}
-              total={{ label: "Бүгдийг дутагдуулсан гэж бичвэл",
-                       value: money(outstandingWriteoff(p.outstanding)), accent: "danger" }} />
+              rows={[
+                { label: "Гадаа нийт", value: `${fmt(outstandingQty(p.outstanding))} ш` },
+                { label: "Бүгдийг дутагдуулсан гэж бичвэл",
+                  value: money(outstandingWriteoff(p.outstanding)), accent: "danger" },
+              ]}
+              total={{ label: "Бүгдийг худалдаа болговол",
+                       value: money(outstandingSale(p.outstanding)), accent: "violet" }} />
           </>
         ) : step?.key === "final" ? (
           <>
@@ -2461,6 +2646,10 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
       {sub?.kind === "return" && (
         <ReturnModal d={d} grades={grades} seesMoney prefill={sub.prefill}
                      onClose={() => setSub(null)} onDone={refresh} />
+      )}
+      {sub?.kind === "sale" && (
+        <SaleModal d={d} seesMoney prefill={sub.prefill}
+                   onClose={() => setSub(null)} onDone={refresh} />
       )}
       {sub?.kind === "deposit" && (
         <DepositModal d={d} onClose={() => setSub(null)} onDone={refresh} />

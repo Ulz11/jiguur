@@ -113,6 +113,18 @@ describe("movementStockRows", () => {
     ]);
   });
 
+  it("ХУДАЛДАА цуцлахад зөвхөн түрээсэнд буцна — агуулах хөндөгдөхгүй", () => {
+    /* Зарагдсан бараа агуулахад ХЭЗЭЭ Ч ирээгүй тул цуцлахад тэндээс юу ч
+       хасагдахгүй (`unapply_movement_stock` зөвхөн `on_rent` нэмнэ). */
+    expect(movementStockRows({
+      type: "SALE", status: "done",
+      lines: [{ material: "Хэв хашмал 6012", grade: "А", qty: 40 }],
+    })).toEqual([
+      { key: "0", label: "Хэв хашмал 6012 (А)",
+        sub: "дахин түрээсэнд орно (агуулах хөндөгдөхгүй)", value: "−40ш" },
+    ]);
+  });
+
   it("хүлээгдэж буй ачилт нөөц хөдөлгөөгүй — мөр огт гарахгүй", () => {
     expect(movementStockRows({ ...issue, status: "pending" })).toEqual([]);
   });

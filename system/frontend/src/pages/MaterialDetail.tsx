@@ -5,6 +5,7 @@ import { Spinner, Empty } from "../ui";
 import { rowClickProps } from "../lib/rowClick";
 import { clientHref, contractHref } from "../lib/links";
 import { holdingSections, rateLabel, daysLabel } from "../lib/material";
+import { mvName } from "../lib/movement";
 
 /* Материалын дэлгэрэнгүй — «энэ хэв ХААНА байна вэ?» гэсэн ганц хариу.
  *
@@ -267,7 +268,7 @@ export default function MaterialDetail() {
           <tbody>
             {d.movements.map((mv: any) => {
               const issue = mv.type === "ISSUE";
-              const name = issue ? "Ачилт" : mv.type === "RETURN" ? "Буцаалт" : "Акт";
+              const name = mvName(mv.type);
               return (
                 <tr key={`${mv.movement_id}-${mv.id}`} className="cursor-pointer hover:bg-canvas transition group"
                     {...rowClickProps(() => nav(contractHref(mv.contract_id)),

@@ -441,15 +441,19 @@ function Stat({ label, val, exact, danger, note }: any) {
 const KIND_DOT: Record<string, string> = {
   // «Гэрээ» нь өмнө нь «Ачилт»-тай ЯГ ижил улбар цэгтэй байсан — тайлбар
   // гаргамагц хоёр ижил цэг хоёр өөр нэртэй зогсох тул ялгав.
-  payment: "bg-money", return: "bg-warn", writeoff: "bg-danger", issue: "bg-brand", contract: "bg-violet",
+  payment: "bg-money", return: "bg-warn", writeoff: "bg-danger", issue: "bg-brand",
+  // Худалдаа болгосон (H7) ба гэрээ хоёулаа violet — нэг нь үйл явдал,
+  // нөгөө нь эхлэл; тайлбар нь доор нэрээрээ ялгарна.
+  sale: "bg-violet", contract: "bg-violet",
 };
 /* Цэг бүр ЮУ гэсэн үг болохыг хаана ч бичээгүй байсан — өнгө нь дангаараа
    утга зөөж чадахгүй. Тайлбарыг торны доор ил гаргаж, нүд бүрийн дуудагдах
    нэрэнд ч мөн энэ нэрсийг ашиглана (нэг эх сурвалж). */
 const KIND_LABEL: Record<string, string> = {
-  payment: "Төлбөр", issue: "Ачилт", return: "Буцаалт", writeoff: "Акт", contract: "Гэрээ",
+  payment: "Төлбөр", issue: "Ачилт", return: "Буцаалт", writeoff: "Акт",
+  sale: "Худалдаа болгов", contract: "Гэрээ",
 };
-const KIND_ORDER = ["contract", "issue", "return", "writeoff", "payment"];
+const KIND_ORDER = ["contract", "issue", "return", "writeoff", "sale", "payment"];
 const LEGEND = ["payment", "issue", "return", "writeoff", "contract"];
 const dotCls = (k: string) => KIND_DOT[k] || "bg-brand";
 

@@ -15,7 +15,11 @@ import { fmt } from "./num";
 export type OutRow = {
   material_id: number; material: string;
   grade_id: number; grade: string;
-  qty: number; nb_price: number; writeoff_amount: number;
+  qty: number;
+  /** ДУТАГДУУЛСАН гарц — дансны/нөхөн үнэ (R13) */
+  nb_price: number; writeoff_amount: number;
+  /** ХУДАЛДАА БОЛГОХ гарц — худалдах үнэ (R32-ийн хоёр дахь шатлал) */
+  sale_price: number; sale_amount: number;
 };
 
 export type ClosePreview = {
@@ -70,6 +74,14 @@ export function outstandingWriteoff(rows: OutRow[] | null | undefined): number {
   return (rows || []).reduce((s, r) => s + (r.writeoff_amount || 0), 0);
 }
 
+/** Бүгдийг ХУДАЛДВАЛ нэхэгдэх дүн — дутагдуулсны хажууд зогсох ХОЁР ДАХЬ тоо.
+ *
+ *  Хоёр үнэ ЗӨРНӨ (69,500 ба 58,000) тул аль гарцыг сонгох нь мөнгөний
+ *  шийдвэр. Хоёуланг нь зэрэг харуулж байж л тэр шийдвэр Отгоогийнх болно. */
+export function outstandingSale(rows: OutRow[] | null | undefined): number {
+  return (rows || []).reduce((s, r) => s + (r.sale_amount || 0), 0);
+}
+
 /** Алхам цааш явахыг ЗӨВШӨӨРӨХГҮЙ шалтгаан — байхгүй бол `null`.
  *
  *  Барьцаа нь ХЭЗЭЭ Ч түгжихгүй: Отгоо барьцааг дараа нь ч тооцож болно
@@ -80,7 +92,10 @@ export function stepBlock(p: ClosePreview | null | undefined,
   if (!p) return null;
   const out = outstandingQty(p.outstanding);
   if ((key === "goods" || key === "confirm") && out > 0) {
-    return `Гадаа ${fmt(out)}ш шийдэгдээгүй байна — буцаалт эсвэл дутагдуулсан гэж бүртгэнэ үү.`;
+    // ГУРВУУЛАНГ нэрлэнэ (§3 H7): нэрлээгүй гарц нь БАЙХГҮЙ гарц — Отгоо
+    // худалдаа болгож болохоо мэдэхгүй бол дутагдуулсан гэж бичээд өнгөрнө.
+    return `Гадаа ${fmt(out)}ш шийдэгдээгүй байна — буцаалт, дутагдуулсан `
+         + `эсвэл худалдаа болгосон гэж бүртгэнэ үү.`;
   }
   if (key === "confirm" && p.close_error) return p.close_error;
   return null;
@@ -96,6 +111,34 @@ export function returnPrefill(row: OutRow, mode: "return" | "writeoff") {
 }
 
 export type Prefill = { key: string; ret: number; writeoff: number };
+
+/** «Худалдаа болгох» → худалдааны цонхны урьдчилсан утга.
+ *
+ *  Буцаалтын `Prefill`-ээс ЗОРИУД тусдаа: худалдаа бол БУЦААЛТ БИШ. Тэр
+ *  барааг бид дахин хэзээ ч харахгүй — «очих зэрэглэл», «засварт», «актлах»
+ *  гэсэн асуултууд нь утгагүй болно. Тусдаа цонх, тусдаа урьдчилсан утга. */
+export function salePrefill(row: OutRow) {
+  return { key: `${row.material_id}:${row.grade_id}`, qty: row.qty };
+}
+
+export type SalePrefill = { key: string; qty: number };
+
+/** Худалдааны урьдчилсан тоог маягтын мөрүүд рүү тараана (`applyPrefill`-ийн ах).
+ *
+ *  Нэг материал ХОЁР падангаар гадаа байвал маягт дээр хоёр мөр болно;
+ *  гадаа үлдэгдэл нь тэдгээрийн НИЙЛБЭР тул тоо нь дараалан дүүрнэ. */
+export function applySalePrefill<T extends { material_id: number; grade_id: number;
+                                             qty: number; sell: number }>(
+    rows: T[], p: SalePrefill | null | undefined): T[] {
+  if (!p) return rows;
+  let left = p.qty;
+  return rows.map((r) => {
+    if (`${r.material_id}:${r.grade_id}` !== p.key || left <= 0) return r;
+    const take = Math.min(left, r.qty);
+    left -= take;
+    return { ...r, sell: take };
+  });
+}
 
 /** Урьдчилсан тоог маягтын мөрүүд рүү тарааж БУЦААНА (шинэ жагсаалт).
  *

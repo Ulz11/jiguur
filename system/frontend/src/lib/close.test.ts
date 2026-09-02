@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { applyPrefill, closeSteps, outstandingQty, outstandingWriteoff, returnPrefill,
-         stepBlock, stepIndex, CLOSE_STEP_TITLES } from "./close";
+import { applyPrefill, closeSteps, outstandingQty, outstandingSale, outstandingWriteoff,
+         returnPrefill, salePrefill, stepBlock, stepIndex, CLOSE_STEP_TITLES } from "./close";
 
 const clean = {
   close_date: "2026-05-03", close_error: null, can_close: true,
@@ -16,9 +16,11 @@ const dirty = {
   ...clean, can_close: false,
   outstanding: [
     { material_id: 1, material: "Хэв хашмал 6012", grade_id: 2, grade: "А",
-      qty: 40, nb_price: 69500, writeoff_amount: 2_780_000 },
+      qty: 40, nb_price: 69500, writeoff_amount: 2_780_000,
+      sale_price: 58000, sale_amount: 2_320_000 },
     { material_id: 3, material: "Тулаас В2", grade_id: 2, grade: "А",
-      qty: 12, nb_price: 65000, writeoff_amount: 780_000 },
+      qty: 12, nb_price: 65000, writeoff_amount: 780_000,
+      sale_price: 65000, sale_amount: 780_000 },
   ],
   deposit: { amount: 5_000_000, status: "held", settled: false, applied: 0, returned: 0 },
 };
@@ -130,5 +132,34 @@ describe("урьдчилсан утга маягтын мөрүүд рүү та�
 
   it("урьдчилсан утга байхгүй бол мөрүүд ХЭВЭЭР", () => {
     expect(applyPrefill(rows, null)).toEqual(rows);
+  });
+});
+
+describe("ГУРАВ ДАХЬ ГАРЦ — «Худалдаа болгох» (H7)", () => {
+  /* §3 H7 нь ГУРВАН гарц нэрлэдэг: буцаалт · дутагдуулсан · ХУДАЛДАА БОЛГОХ.
+     Гурав дахь нь баригдаагүй байсан — харилцагч ажлын төгсгөлд хэвийг
+     буцааж ачихын оронд өөртөө авч үлдэх нь бодит үйл явдал. */
+  it("мөр бүр ХОЁР үнэтэй: дутагдуулбал НБҮнэ, худалдвал худалдах үнэ", () => {
+    const r = dirty.outstanding[0];
+    expect(r.writeoff_amount).toBe(2_780_000);        // 40 × 69,500
+    expect(r.sale_amount).toBe(2_320_000);            // 40 × 58,000
+    expect(r.sale_price).toBe(58_000);
+  });
+
+  it("бүгдийг ХУДАЛДВАЛ хэдэн ₮ болох", () => {
+    expect(outstandingSale(dirty.outstanding)).toBe(2_320_000 + 780_000);
+    expect(outstandingSale([])).toBe(0);
+  });
+
+  it("худалдааны урьдчилсан утга нь БУЦААЛТ БИШ — өөрийн цонхтой", () => {
+    expect(salePrefill(dirty.outstanding[0]))
+      .toEqual({ key: "1:2", qty: 40 });
+  });
+
+  it("саадын мессеж ГУРВУУЛАНГ нэрлэнэ — гурав дахь гарц нуугдахгүй", () => {
+    const msg = stepBlock(dirty, "goods") || "";
+    expect(msg).toContain("буцаалт");
+    expect(msg).toContain("дутагдуулсан");
+    expect(msg).toContain("худалдаа");
   });
 });
