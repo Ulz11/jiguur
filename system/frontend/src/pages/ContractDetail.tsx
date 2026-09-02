@@ -14,7 +14,8 @@ import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import { daysVarianceText, lotDaysHint, lotDaysMax, lotOptions, materialSections,
          overrideEffect, MaterialSection } from "../lib/lots";
-import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED } from "../lib/penalty";
+import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED,
+         chargeLabel, chargedTotal, laterLiveCharge } from "../lib/penalty";
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { daysBetween, todayIso } from "../lib/schedule";
 import { isVoided, movementStockRows, voidRowClass, voidTitle } from "../lib/void";
@@ -61,6 +62,8 @@ export default function ContractDetail() {
      засвар зөөж чадахгүй. */
   const [rateRow, setRateRow] = useState<any>(null);
   const [voidRate, setVoidRate] = useState<any>(null);
+  /* Цуцлах гэж буй алдангийн НЭХЭЛТ (R25 / H2) — хөшүүрэг суларна. */
+  const [voidCharge, setVoidCharge] = useState<any>(null);
   const toast = useToast();
   const pdf = usePdf();
   const u = user();
@@ -292,6 +295,49 @@ export default function ContractDetail() {
           </div>
         )}
       </div>
+
+      {/* АЛДАНГИЙН НЭХЭЛТ (R25 / H2 · H1) — дээрх «Нэхэгдсэн алданги» тооны
+          АРД зогсох ШИЙДВЭРҮҮД. Урьд нь нэхэлт бүр явдал болж бичигдээд
+          дэлгэц дээр ХЭЗЭЭ Ч гардаггүй байв: тэр хэзээ, хэдийг нэхснээ
+          хаанаас ч уншиж чадахгүй. Одоо мөр мөрөөрөө гарч, ЦУЦЛАГДАЖ БАС
+          чадна — хөшүүрэг гэдэг нь татагдаад СУЛАРДАГ гэсэн үг. */}
+      {seesMoney && (d.penalty_charges || []).length > 0 && (
+        <div className="card p-4 mb-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-2.5">
+            <h2 className="font-bold text-ink text-[15.5px]">Алдангийн нэхэлт</h2>
+            <span className="text-[12.5px] text-t2">
+              Нийт нэхсэн{" "}
+              <b className="text-ink tabular-nums">{money(chargedTotal(d.penalty_charges))}</b>
+              {d.penalty_charges.some(isVoided) && (
+                <span className="text-t3"> · хүчингүй нь орсонгүй</span>
+              )}
+            </span>
+          </div>
+          <ul className="space-y-1.5">
+            {d.penalty_charges.map((ch: any) => (
+              <li key={ch.id} className="text-[13px] flex items-center gap-2 flex-wrap">
+                <span className={`${voidRowClass(ch)} text-t2`} title={voidTitle(ch)}>
+                  <b className="text-ink tabular-nums">{ch.as_of}</b> өдрөөр{" "}
+                  <b className="text-danger tabular-nums">{money(ch.amount)}</b>
+                  {ch.user_name && <span className="text-t3"> · {ch.user_name}</span>}
+                </span>
+                {isVoided(ch) ? (
+                  <span className="pill-red" title={voidTitle(ch)}>ХҮЧИНГҮЙ</span>
+                ) : canVoid && (
+                  <VoidButton label={chargeLabel(ch)}
+                              onClick={() => setVoidCharge(ch)} />
+                )}
+                {isVoided(ch) && ch.void_reason && (
+                  <span className="basis-full text-[12px] text-danger">
+                    Шалтгаан: {ch.void_reason}
+                    {ch.voided_by && <span className="text-t3"> · {ch.voided_by}</span>}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="grid grid-cols-[1.6fr_1fr] gap-4 max-lg:grid-cols-1">
         <div className="space-y-4">
@@ -902,6 +948,10 @@ export default function ContractDetail() {
       {voidRate && <VoidRateModal d={d} rc={voidRate} onClose={() => setVoidRate(null)}
                                   onDone={() => { setVoidRate(null); load(); }}
                                   onRebuild={(p) => { setVoidRate(null); setPending(p); }} />}
+      {voidCharge && <VoidChargeModal d={d} ch={voidCharge}
+                                      onClose={() => setVoidCharge(null)}
+                                      onDone={() => { setVoidCharge(null); load(); }}
+                                      onRebuild={(p) => { setVoidCharge(null); setPending(p); }} />}
     </div>
   );
 }
@@ -2549,6 +2599,77 @@ function ChargePenaltyModal({ d, onClose, onDone }: any) {
       <label className="lbl" htmlFor={`${uid}-asof`}>Ямар өдрөөр нэхэх вэ</label>
       <input id={`${uid}-asof`} type="date" className="inp max-w-[200px]" value={asOf}
              onChange={(e) => setAsOf(e.target.value)} />
+    </ConfirmModal>
+  );
+}
+
+/* ---------- Алдангийн нэхэлт ХҮЧИНГҮЙ болгох (H1-ийн тэгш хэм) ----------
+   Отгоо утсаар ярьж байгаад «за яахав, алдангийг нь тавьж өгье» гэдэг нь
+   ХЭВИЙН тохиолдол. Систем дээр төлбөр, хөдөлгөөн, акт, тариф бүгд хүчингүй
+   болдог байхад мөнгө ҮҮСГЭДЭГ цорын ганц үйлдэл нь буцаагддаггүй байв.
+
+   Цуцлалт нь ХАСАЛТ БИШ, ДАХИН ДЕРИВАЦИ: сервер тал явдлыг хүчингүй гэж
+   тэмдэглээд нэхэмжлэлүүдийг дахин боддог. Тиймээс энэ цонх ТООГ ТААМАГЛАХГҮЙ
+   — RebuildModal цикл бүрийн жинхэнэ зөрүүг дараагийн алхамд харуулна. */
+function VoidChargeModal({ d, ch, onClose, onDone, onRebuild }: {
+  d: any; ch: any; onClose: () => void; onDone: () => void;
+  onRebuild: (p: Pending) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const toast = useToast();
+  const rid = useId();
+  const path = `/api/penalty-charges/${ch.id}/void`;
+  /* Хожуу нэхэлт амьд байвал нэхэлтийн ХИЛ тэндээ үлдэнэ — дүн нь буурахгүй
+     байж болно. «Дарлаа, юу ч болсонгүй» гэж уншигдахаас ӨМНӨ хэлнэ. */
+  const later = laterLiveCharge(d.penalty_charges, ch);
+
+  return (
+    <ConfirmModal
+      title="Алдангийн нэхэлт хүчингүй болгох"
+      intro={<>
+        <b className="text-ink">{ch.as_of} өдрөөр {money(ch.amount)}</b> — энэ нэхэлт
+        УСТАХГҮЙ: жагсаалтад «ХҮЧИНГҮЙ» тэмдэгтэй, шалтгаантайгаа хамт үлдэнэ.
+        Нэхэгдсэн алданги тооцооноос гарч, түүнд төлөгдсөн мөнгө ҮНДСЭН өр рүү
+        буцаж хуваарилагдана. Энэ үйлдлийг буцаах боломжгүй.
+      </>}
+      rows={[{ label: `${ch.as_of} өдрийн нэхэлт`, sub: "тооцооноос гарна",
+               value: "−" + money(ch.amount), accent: "danger" as const },
+             ...(later
+               ? [{ label: `${later.as_of} өдрийн нэхэлт`, sub: "хүчинтэй хэвээр",
+                    value: money(later.amount), accent: "dim" as const }]
+               : [])]}
+      total={{ label: "Үлдэх нэхэлтийн нийлбэр",
+               value: money(chargedTotal(d.penalty_charges) - ch.amount),
+               accent: "danger" }}
+      note={later
+        ? "Түүнээс ХОЙШ нэхсэн мөр хүчинтэй хэвээр байна — нэхэлтийн хил тэндээ "
+          + "үлдэж, нэхэгдсэн дүн буурахгүй байж болзошгүй. Дараагийн алхам "
+          + "нэхэмжлэл бүрийн ЖИНХЭНЭ зөрүүг харуулна."
+        : "Дараагийн алхам нэхэмжлэл бүрийн зөрүүг харуулна."}
+      confirmLabel="Хүчингүй болгох"
+      confirmDisabled={!reason.trim()}
+      danger
+      onClose={onClose}
+      onConfirm={async () => {
+        const body = { reason: reason.trim() };
+        try {
+          const r = await api(path, { method: "POST", body: JSON.stringify(body) });
+          if (r?.rebuild_required) {
+            onRebuild({ path, body, method: "POST",
+                        okMsg: "Алдангийн нэхэлт хүчингүй болов",
+                        diffs: r.diffs || [], warnings: r.warnings || [] });
+            return;
+          }
+          toast("Алдангийн нэхэлт хүчингүй болов");
+          onDone();
+        } catch (e: any) { toast(e.message, "err"); }
+      }}>
+      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+        Цуцлах шалтгаан <span className="text-danger">*</span>
+      </label>
+      <input id={rid} className="inp w-full" value={reason} autoFocus
+             placeholder="ж: утсаар ярьж өршөөв"
+             onChange={(e) => setReason(e.target.value)} />
     </ConfirmModal>
   );
 }

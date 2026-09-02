@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED } from "./penalty";
+import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED,
+         chargeLabel, chargedTotal, laterLiveCharge, liveCharges,
+         type PenaltyChargeEvent } from "./penalty";
 
 /* Алданги = ХӨШҮҮРЭГ (R25 / H2). Дэлгэц дээр НЭХЭГДСЭН ба НЭХЭГДЭЭГҮЙ нь
    ХЭЗЭЭ Ч нэг тоо болж нийлэхгүй — нийлбэл «машин өр зохиов» гэж уншигдана. */
@@ -99,5 +101,48 @@ describe("penaltyChargeRows", () => {
     const bare = [{ id: 9, no: "R-9", outstanding: 100_000, due_date: "2026-05-01" }];
     expect(penaltyChargeRows(bare, 1, "2026-05-11")[0])
       .toMatchObject({ days: 10, amount: 10_000 });
+  });
+});
+
+
+/* ---------- НЭХЭЛТИЙН ТҮҮХ ба цуцлалт (H1-ийн тэгш хэм) ---------- */
+
+const CH = (id: number, as_of: string, amount: number,
+            voided = false): PenaltyChargeEvent =>
+  ({ id, as_of, amount, user_name: "Санхүүч", voided,
+     void_reason: voided ? "өршөөв" : "" });
+
+describe("нэхэлтийн түүх", () => {
+  const rows = [CH(1, "2026-05-04", 24_750), CH(2, "2026-05-09", 24_750),
+                CH(3, "2026-05-11", 9_000, true)];
+
+  it("цуцлагдсан нэхэлт нийлбэрт ОРОХГҮЙ, харин мөрөндөө үлдэнэ", () => {
+    expect(chargedTotal(rows)).toBe(49_500);
+    expect(liveCharges(rows).map((r) => r.id)).toEqual([1, 2]);
+    expect(rows.length).toBe(3);
+  });
+
+  it("хоосон оролтод унахгүй", () => {
+    expect(chargedTotal(undefined)).toBe(0);
+    expect(liveCharges(null)).toEqual([]);
+  });
+
+  it("мөр өөрийгөө дуудагдах нэрээр нэрлэнэ", () => {
+    expect(chargeLabel(rows[0])).toBe("2026-05-04 өдрөөр нэхсэн алданги");
+  });
+
+  it("ХОЖУУ амьд нэхэлт байвал хил нь тэндээ үлдэнэ гэж сануулна", () => {
+    // 05-04-ийг цуцлахад 05-09 нь амьд — хил нь хэвээр, дүн буурахгүй байж болно
+    expect(laterLiveCharge(rows, rows[0])?.id).toBe(2);
+    // сүүлчийнхийг нь цуцлахад ард нь амьд мөр АЛГА (05-11 нь цуцлагдсан)
+    expect(laterLiveCharge(rows, rows[1])).toBeUndefined();
+    // өөрийгөө хэзээ ч заахгүй
+    expect(laterLiveCharge([rows[0]], rows[0])).toBeUndefined();
+  });
+
+  it("хамгийн ХОЖУУ амьд мөрийг заана (олон байвал)", () => {
+    const many = [CH(1, "2026-05-04", 100), CH(2, "2026-05-09", 100),
+                  CH(3, "2026-05-20", 100)];
+    expect(laterLiveCharge(many, many[0])?.as_of).toBe("2026-05-20");
   });
 });

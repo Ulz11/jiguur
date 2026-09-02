@@ -14,6 +14,7 @@
  * Энэ файл нь ЦЭВЭР логик: React-гүй, сүлжээгүй, детерминистик.
  */
 import { daysBetween } from "./schedule";
+import type { Voidable } from "./void";
 
 export type PenaltySplit = {
   /** Ил нэхэгдсэн — төлөгдөнө */
@@ -86,4 +87,51 @@ export function penaltyChargeRows(invoices: PenaltyInvoice[] | undefined,
 
 export function penaltyChargeTotal(rows: PenaltyChargeRow[]): number {
   return rows.reduce((s, r) => s + r.amount, 0);
+}
+
+/* ---------- НЭХЭЛТИЙН ТҮҮХ ба түүнийг БУЦААХ (R25 / H2 · H1) ----------
+ *
+ * Нэхэлт бүр ЯВДАЛ болж үлддэг байсан ч дэлгэц дээр ХЭЗЭЭ Ч гардаггүй байв —
+ * «гаргасан шийдвэрүүдийнх нь жагсаалт бичигдээд үзүүлэгддэггүй». Одоо
+ * гэрээний хуудсанд мөр мөрөөрөө гарч, менежер/санхүүч түүнийг ХҮЧИНГҮЙ
+ * болгож чадна: хөшүүрэг гэдэг нь ТАТАГДААД СУЛАРДАГ гэсэн үг.
+ */
+export type PenaltyChargeEvent = Voidable & {
+  id: number;
+  /** Ямар өдрөөр нэхсэн — ТҮЛХЭЦ (дүн нь зөвхөн баримт) */
+  as_of: string;
+  amount: number;
+  user_name?: string;
+  created_at?: string | null;
+};
+
+/** Хүчинтэй (цуцлагдаагүй) нэхэлтүүд — `aktTotal`-ийн ах дүү дүрэм. */
+export function liveCharges(rows: PenaltyChargeEvent[] | undefined | null):
+    PenaltyChargeEvent[] {
+  return (rows || []).filter((r) => !r.voided);
+}
+
+/** Хүчинтэй нэхэлтүүдийн НИЙЛБЭР — цуцлагдсан мөр орохгүй. */
+export function chargedTotal(rows: PenaltyChargeEvent[] | undefined | null): number {
+  return liveCharges(rows).reduce((s, r) => s + (r.amount || 0), 0);
+}
+
+/** Мөрийн дуудагдах нэр: «2026-08-31 өдрөөр нэхсэн алданги». */
+export function chargeLabel(ch: PenaltyChargeEvent): string {
+  return `${ch.as_of} өдрөөр нэхсэн алданги`;
+}
+
+/** Энэ мөрийг цуцлахад нэхэлтийн ХИЛ нь ӨӨР амьд нэхэлтээр баригдсаар үлдэх үү?
+ *
+ *  Нэхэлт нь ОГНООГ хадгалдаг, хөлдсөн дүнг биш: сервер тал цуцалсны дараа
+ *  амьд үлдсэн явдлуудыг ДАХИН тоглуулна. Тиймээс хожуу нэхэлт амьд байвал
+ *  тэр нь цэвэрлэгдсэн нэхэмжлэл дээр хугацаа хэтэрснээс хойших БҮХ хоногийг
+ *  дахин нэхэж, нэхэгдсэн дүн БУУРАХГҮЙ байж болно. Цонх үүнийг ДАРАХААС
+ *  ӨМНӨ хэлэх ёстой — «дарлаа, юу ч болсонгүй» гэж уншигдахгүйн тулд. */
+export function laterLiveCharge(rows: PenaltyChargeEvent[] | undefined | null,
+                                ch: PenaltyChargeEvent): PenaltyChargeEvent | undefined {
+  return liveCharges(rows)
+    .filter((r) => r.id !== ch.id && r.as_of > ch.as_of)
+    .sort((a, b) => (a.as_of < b.as_of ? -1 : a.as_of > b.as_of ? 1 : 0))
+    .pop();
 }
