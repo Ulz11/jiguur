@@ -194,19 +194,86 @@ export function lotOptions(group: { lines?: LedgerLine[] } | undefined | null,
  *
  *  Буцаалт хоёр падан дамнавал сервер тэдгээр бүрд ТҮҮНИЙ хоногийг тавина;
  *  сануулга нь ЭХЭЛЖ хаагдах падангийнхыг харуулна — тэр л түгээмэл тохиолдол. */
+function pickLot(group: { lines?: LedgerLine[] } | undefined | null,
+                 onDate: string, pinLineId?: number): LedgerLine | null {
+  const ids = lotOptions(group, onDate).slice(1).map((o) => Number(o[0]));
+  const id = pinLineId && ids.includes(pinLineId) ? pinLineId : ids[0];
+  if (!id) return null;
+  return (group?.lines || []).find((ln) => ln.id === id) || null;
+}
+
+/** Падан ТУХАЙН ЦИКЛД орсон өдөр — падангийн огноо ба циклийн эхлэл, хожуу нь. */
+function lotStart(lot: LedgerLine, cycleStart: string): string {
+  return lot.date > cycleStart ? lot.date : cycleStart;
+}
+
 export function lotDaysHint(group: { lines?: LedgerLine[] } | undefined | null,
                             onDate: string, cycleStart: string | null | undefined,
                             pinLineId?: number): number | null {
   if (!cycleStart) return null;
-  const opts = lotOptions(group, onDate);
-  const ids = opts.slice(1).map((o) => Number(o[0]));
-  const id = pinLineId && ids.includes(pinLineId) ? pinLineId : ids[0];
-  if (!id) return null;
-  const lot = (group?.lines || []).find((ln) => ln.id === id);
+  const lot = pickLot(group, onDate, pinLineId);
   if (!lot) return null;
-  const from = lot.date > cycleStart ? lot.date : cycleStart;
-  const days = daysBetween(from, onDate);
+  const days = daysBetween(lotStart(lot, cycleStart), onDate);
   return days >= 0 ? days : null;
+}
+
+/** Гар хоногийн ДЭЭД ХЯЗГААР — падан циклдээ орсноос цонхны төгсгөл хүртэл.
+ *
+ *  Серверийн `billing.override_cap`-ийн толь. Хязгаар нь ЦИКЛИЙН УРТ БИШ:
+ *  циклийн дунд гарсан падангаас буцаасан хэсэг тэр падангийн өдрөөс өмнө
+ *  гадаа байж чадахгүй. Маягтын `max` ба серверийн татгалзал НЭГ тоо руу
+ *  харахгүй бол Отгоо зөвшөөрөгдсөн тоогоо бичээд 400 иднэ. */
+export function lotDaysMax(group: { lines?: LedgerLine[] } | undefined | null,
+                           onDate: string, cycleStart: string | null | undefined,
+                           cycleEnd: string | null | undefined,
+                           pinLineId?: number): number | null {
+  if (!cycleStart || !cycleEnd) return null;
+  const lot = pickLot(group, onDate, pinLineId);
+  if (!lot) return null;
+  const days = daysBetween(lotStart(lot, cycleStart), cycleEnd);
+  return days >= 0 ? days : null;
+}
+
+/* ---------- Гар хоног = МӨНГӨ (H5) ----------
+   Буцаалтын цонхны тооцоо нь «хэдэн ширхэг» дээр зогсдог байсан: хоногоо
+   бичиж байхад нь ямар дүн хөдлөхийг ХЭЛДЭГГҮЙ байв. Хөдөлгүүр яг
+   (гараар − системээр) × тоо × тарифаар л хөдөлдөг тул тэр нэг үржвэрийг
+   маягт дээр нь харуулна — тэр бичихдээ мөнгөө хараагүй байж гарын үсэг
+   зурах ёсгүй. */
+
+export type ReturnDaysRow = {
+  /** Буцаах тоо */
+  qty: number;
+  /** Материалын өдрийн тариф */
+  rate: number;
+  /** Отгоогийн бичсэн хоног — хоосон бол `null` (= авто) */
+  days: number | null;
+  /** Машины тоолсон хоног (`lotDaysHint`) — мэдэгдэхгүй бол `null` */
+  hint: number | null;
+};
+
+export type OverrideEffect = {
+  /** Гар хоног бичигдсэн мөрийн тоо */
+  count: number;
+  /** ₮ зөрүү: эерэг = нэхэмжлэл ӨСНӨ, сөрөг = БУУРНА */
+  delta: number;
+  /** Ганц мөр байвал ТҮҮНИЙ хоёр тоо — «гараар 12 / системээр 10» */
+  manual: number | null;
+  auto: number | null;
+};
+
+export function overrideEffect(rows: ReturnDaysRow[]): OverrideEffect {
+  const manual = rows.filter((r) => r.days != null);
+  let delta = 0;
+  for (const r of manual) {
+    // Машины тоо мэдэгдэхгүй бол зөрүү нь мэдэгдэхгүй — таамгаар тоо гаргахгүй
+    if (r.hint == null) continue;
+    delta += ((r.days as number) - r.hint) * r.qty * r.rate;
+  }
+  const one = manual.length === 1 ? manual[0] : null;
+  return { count: manual.length, delta,
+           manual: one ? (one.days as number) : null,
+           auto: one ? one.hint : null };
 }
 
 /** Дэвтрийн мөрөн дээрх хоногийн бичиг — зөрүүг ХЭЗЭЭ Ч нууцлахгүй.

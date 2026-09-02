@@ -12,8 +12,8 @@ import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
-import { daysVarianceText, lotDaysHint, lotOptions, materialSections,
-         MaterialSection } from "../lib/lots";
+import { daysVarianceText, lotDaysHint, lotDaysMax, lotOptions, materialSections,
+         overrideEffect, MaterialSection } from "../lib/lots";
 import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED } from "../lib/penalty";
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { daysBetween, todayIso } from "../lib/schedule";
@@ -1610,6 +1610,15 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
   const cycleLen = win ? daysBetween(win.start, win.end) : 0;
   const groupOf = (r: any) => (d.material_lines || []).find(
     (g: any) => g.material_id === r.material_id && g.grade_id === r.grade_id);
+  /* Хоногийн ДЭЭД ХЯЗГААР нь ЦИКЛИЙН УРТ БИШ, ПАДАНГИЙН цонх — сервер яг
+     тэгж татгалздаг (`billing.override_cap`). Маягт нь өөр тоог зөвшөөрвөл
+     Отгоо бичээд илгээж байж л «болохгүй» гэж сонсоно. */
+  const rowMax = (r: any) => lotDaysMax(groupOf(r), date, win?.start, win?.end,
+                                        Number(r.pin) || undefined) ?? (cycleLen || null);
+  const rowHint = (r: any) => lotDaysHint(groupOf(r), date, win?.start,
+                                          Number(r.pin) || undefined);
+  const rowDays = (r: any) =>
+    r.days.trim() === "" ? null : Math.round(parseMoney(r.days));
 
   async function submit() {
     const lines = rows.filter((r) => r.ret > 0).map((r) => ({
@@ -1622,11 +1631,12 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
     for (const r of rows.filter((r) => r.ret > 0)) {
       if (r.ret > r.qty) { toast(`${r.material}: түрээсэнд байгаагаас их байна`, "err"); return; }
       if (r.repair + r.writeoff > r.ret) { toast(`${r.material}: засвар + акт нь буцаалтаас их байна`, "err"); return; }
-      if (r.days.trim() !== "") {
-        const n = Math.round(parseMoney(r.days));
+      const n = rowDays(r);
+      if (n != null) {
         if (n < 0) { toast(`${r.material}: хоног сөрөг байж болохгүй`, "err"); return; }
-        if (cycleLen && n > cycleLen) {
-          toast(`${r.material}: гар хоног циклийн уртаас (${cycleLen} хоног) их байна`, "err");
+        const cap = rowMax(r);
+        if (cap != null && n > cap) {
+          toast(`${r.material}: гар хоног ${cap} хоногоос их байж болохгүй`, "err");
           return;
         }
       }
@@ -1665,7 +1675,10 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
              ганц падантай мөрөнд «аль падангаас» гэсэн асуулт нь хариултгүй
              чимээ (сонголт бүр нь шийдвэр гуйдаг). */
           const pins = lotOptions(grp, date);
-          const hint = lotDaysHint(grp, date, win?.start, Number(r.pin) || undefined);
+          const hint = rowHint(r);
+          const maxDays = rowMax(r);
+          const typed = rowDays(r);
+          const dayOver = typed != null && maxDays != null && typed > maxDays;
           return (
             <div key={i} className="py-3">
               <div className="flex items-center gap-3">
@@ -1712,9 +1725,10 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                     Хоног (гараар)
                   </label>
                   <input id={`${uid}-days-${i}`} type="number" inputMode="numeric" min={0}
-                         max={cycleLen || undefined}
+                         max={maxDays ?? undefined}
                          placeholder={hint != null ? String(hint) : "авто"}
-                         className="inp !w-20 !min-h-11 !py-2 text-center font-bold"
+                         className={`inp !w-20 !min-h-11 !py-2 text-center font-bold${
+                           dayOver ? " !border-danger" : ""}`}
                          value={r.days} onChange={(e) => setRow(i, { days: e.target.value })} />
                   <span className="text-[12.5px] text-t3">
                     {hint != null ? `системээр ${hint} хоног` : "хоосон = авто"}
@@ -1754,6 +1768,13 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                 </div>
               )}
 
+              {ret > 0 && dayOver && (
+                <p className="text-[12.5px] text-danger mt-2">
+                  Гар хоног {maxDays} хоногоос их байж болохгүй — энэ падан
+                  циклдээ {maxDays} хоног л гадаа байсан.
+                </p>
+              )}
+
               {ret > 0 && feeOver && (
                 <p className="text-[12.5px] text-danger mt-2">
                   Засвар + акт ({fmt(flagged)}ш) нь буцаалтаас ({fmt(ret)}ш) их байна.
@@ -1771,6 +1792,13 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
         const repFee = act.reduce((s, r) => s + r.repair * (r.repair_fee || 0), 0);
         const woQty = act.reduce((s, r) => s + r.writeoff, 0);
         const woFee = act.reduce((s, r) => s + r.writeoff * (r.writeoff_price || 0), 0);
+        /* ГАР ХОНОГ бол мөнгө: хөдөлгүүр яг (гараар − системээр) × тоо ×
+           тарифаар хөдөлдөг. Тэр бичиж байхад нь дүн нь ЭНД харагдана —
+           «ширхэг» дээр зогссон тооцоо нь H5-ийн шийдвэрийг нууж байв. */
+        const eff = overrideEffect(act.map((r) => ({
+          qty: r.ret, rate: r.daily_rate, days: rowDays(r), hint: rowHint(r) })));
+        const net = repFee + woFee + eff.delta;
+        const signed = (n: number) => (n < 0 ? "−" : "+") + money(Math.abs(n));
         if (!totRet) return (
           <p className="text-[12.5px] text-t2 mt-3">
             Засварын фикс үнэ болон актын НБҮнэ автоматаар харилцагчийн тооцоонд нэмэгдэнэ.
@@ -1792,11 +1820,21 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
             rows={[
               { label: "Буцаах нийт", value: `${fmt(totRet)} ш` },
               { label: "Өдрийн тооцоо буурна", value: "−" + money(dayDrop), accent: "money" },
+              ...(eff.count > 0 ? [{
+                label: eff.manual != null && eff.auto != null
+                  ? `Гар хоног (гараар ${eff.manual} / системээр ${eff.auto})`
+                  : `Гар хоногийн зөрүү (${eff.count} мөр)`,
+                value: signed(eff.delta),
+                accent: eff.delta > 0 ? ("danger" as const)
+                      : eff.delta < 0 ? ("money" as const) : ("dim" as const),
+              }] : []),
               ...(repQty > 0 ? [{ label: `Засварын төлбөр (${fmt(repQty)}ш × фикс)`, value: "+" + money(repFee), accent: "danger" as const }] : []),
               ...(woQty > 0 ? [{ label: `Актын төлбөр (${fmt(woQty)}ш × НБҮнэ)`, value: "+" + money(woFee), accent: "danger" as const }] : []),
             ]}
-            total={{ label: "Нэхэмжлэлд нэмэгдэх нийт", value: money(repFee + woFee),
-                     accent: repFee + woFee > 0 ? "danger" : undefined }} />
+            total={{ label: net < 0 ? "Нэхэмжлэлээс хасагдах нийт"
+                                    : "Нэхэмжлэлд нэмэгдэх нийт",
+                     value: (net < 0 ? "−" : "") + money(Math.abs(net)),
+                     accent: net > 0 ? "danger" : net < 0 ? "money" : undefined }} />
         );
       })()}
       <div className="flex justify-end gap-2.5 mt-5">

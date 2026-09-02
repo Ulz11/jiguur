@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { materialSections, lotOptions, lotDaysHint, daysVarianceText } from "./lots";
+import { materialSections, lotOptions, lotDaysHint, lotDaysMax, overrideEffect,
+         daysVarianceText } from "./lots";
 
 /* Отгоо материалын мөр дээр дарахад доор нь ТЭР материалын түүх задарна:
    юу гарсан, юу буцсан, аль паданнаас, тэгээд ХЭД үлдсэн. Үлдэгдлийн багана
@@ -196,6 +197,69 @@ describe("lotDaysHint", () => {
 
   it("цикл олдоогүй үед (гэрээний эхлэлээс өмнөх огноо) null", () => {
     expect(lotDaysHint(lots, "2026-04-15", null)).toBeNull();
+  });
+});
+
+describe("lotDaysMax", () => {
+  const lots = grp([
+    issue(11, "2026-03-20", 100, 330),
+    issue(12, "2026-04-09", 50, 300),
+  ]);
+
+  it("цикл эхлэхээс ӨМНӨ гарсан падан — бүтэн циклийн урт", () => {
+    expect(lotDaysMax(lots, "2026-04-15", "2026-03-20", "2026-04-19")).toBe(30);
+  });
+
+  it("ДУНД циклд гарсан падан — цонх нь ТЭР ПАДАНГИЙНХ (сервертэй ижил)", () => {
+    // 4.09-нд гарсан падан 4.19 хүртэл ердөө 10 хоног гадаа байж чадна
+    expect(lotDaysMax(lots, "2026-04-15", "2026-03-20", "2026-04-19", 12)).toBe(10);
+  });
+
+  it("падан ч, цикл ч байхгүй бол хязгаар алга", () => {
+    expect(lotDaysMax(grp([]), "2026-04-15", "2026-03-20", "2026-04-19")).toBeNull();
+    expect(lotDaysMax(lots, "2026-04-15", null, "2026-04-19")).toBeNull();
+    expect(lotDaysMax(lots, "2026-04-15", "2026-03-20", null)).toBeNull();
+  });
+});
+
+/* Гар хоног нь МӨНГӨНИЙ шийдвэр — маягт дээр бичиж байхад нь дүн нь
+   харагдах ёстой. Хөдөлгүүр яг (гараар − системээр) × тоо × тарифаар л
+   хөдөлдөг (pytest: test_override_shifts_accrual_by_exactly_the_day_difference). */
+describe("overrideEffect", () => {
+  it("хоосон хоног (= авто) — мөнгө хөдлөхгүй", () => {
+    expect(overrideEffect([{ qty: 30, rate: 330, days: null, hint: 12 }]))
+      .toEqual({ count: 0, delta: 0, manual: null, auto: null });
+  });
+
+  it("гараар 13 / системээр 12 → ЯГ (13−12) × 30ш × 330₮ = 9,900₮", () => {
+    expect(overrideEffect([{ qty: 30, rate: 330, days: 13, hint: 12 }]))
+      .toEqual({ count: 1, delta: 9900, manual: 13, auto: 12 });
+  });
+
+  it("богиносгосон хоног нэхэмжлэлийг БУУРУУЛНА (сөрөг)", () => {
+    expect(overrideEffect([{ qty: 30, rate: 330, days: 10, hint: 12 }]).delta)
+      .toBe(-2 * 30 * 330);
+  });
+
+  it("машинтай ТААРСАН тоо — зөрүү 0, гэхдээ мөр нь тоологдоно", () => {
+    expect(overrideEffect([{ qty: 30, rate: 330, days: 12, hint: 12 }]))
+      .toEqual({ count: 1, delta: 0, manual: 12, auto: 12 });
+  });
+
+  it("олон мөрийн зөрүү НИЙЛНЭ — задаргаа нь ганц мөр дээр л гарна", () => {
+    const e = overrideEffect([
+      { qty: 30, rate: 330, days: 13, hint: 12 },
+      { qty: 50, rate: 300, days: 8, hint: 10 },
+    ]);
+    expect(e.count).toBe(2);
+    expect(e.delta).toBe(9900 - 2 * 50 * 300);
+    expect(e.manual).toBeNull();
+    expect(e.auto).toBeNull();
+  });
+
+  it("машины тоо мэдэгдэхгүй бол зөрүү бодогдохгүй — худал тоо гаргахгүй", () => {
+    expect(overrideEffect([{ qty: 30, rate: 330, days: 13, hint: null }]))
+      .toEqual({ count: 1, delta: 0, manual: 13, auto: null });
   });
 });
 
