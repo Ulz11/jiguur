@@ -157,6 +157,47 @@ def test_opening_balance_not_counted_as_income(db):
     assert p["net"] == 8_000_000
 
 
+def test_internal_crane_work_is_income_on_none_of_the_three_surfaces(db):
+    """ДОТООД ажил орлого биш — P&L, машины карт, мөнгөн урсгал ГУРВУУЛАА нэг тоо.
+
+    Нэхэмжлэл нь дотоод ажлыг хасдаг (`billable_jobs` — өөрийн агуулах руу
+    нэхэмжлэл явуулдаггүй), карт ба cashflow ч хасдаг байтал P&L нэмсээр
+    байв: нэг сарын ижил ажил гурван дэлгэц дээр хоёр өөр дүнтэй гарна.
+    Тоо нь алга болохгүй — ӨӨРИЙН мөрөөр («орлогод ороогүй») үлдэнэ.
+    """
+    from app.services import reports as R
+    from app.routers.machines import machine_ser
+
+    m = models.Machine(name="Кран-1")
+    db.add(m)
+    db.flush()
+    db.add(models.MachineLog(machine_id=m.id, date=date(2026, 7, 3), entry="job",
+                             label="Гадуур ажил", amount=2_000_000, method="BANK"))
+    db.add(models.MachineLog(machine_id=m.id, date=date(2026, 7, 9), entry="job",
+                             label="Дотоод ажил", amount=300_000, method="INTERNAL"))
+    db.add(models.MachineLog(machine_id=m.id, date=date(2026, 7, 11), entry="expense",
+                             label="Түлш", amount=500_000))
+    db.commit()
+
+    p = R.pnl(db, date(2026, 7, 1), date(2026, 7, 31))
+    card = machine_ser(m)
+    flow = R.cashflow_series(db, date(2026, 7, 31), n=1)
+
+    assert card["income"] == 2_000_000
+    assert p["machine_income"] == 2_000_000
+    assert flow["cash_in"][-1] == 2_000_000
+    assert p["total_income"] == 2_000_000
+
+    # Задаргаа нь толгойн тоотойгоо ХЭВЭЭР тэнцэнэ
+    rows = p["detail"]["machines"]
+    assert sum(r["income"] for r in rows) == p["machine_income"]
+
+    # Дотоод ажил АЛГА БОЛОХГҮЙ — картынхтай ижил хэлбэрээр тусдаа
+    assert p["machine_internal"] == card["internal"] == 300_000
+    assert p["machine_internal_count"] == card["internal_count"] == 1
+    assert rows[0]["internal"] == 300_000
+
+
 def test_cashflow_split_by_method_controlled(db):
     """Мөнгөн урсгалын ОРСОН дүн төлбөрийн хэлбэрээр задарна: бэлэн / данс / бартер.
     Механизмын ажил ч мөн адил (INTERNAL = дотоод ажил, огт тооцогдохгүй;

@@ -156,6 +156,19 @@ export default function Reports() {
           <XRow {...rowProps("rent", "Түрээсийн орлого", p.rent_income)} />
           <XRow {...rowProps("sale", "Худалдааны орлого", p.sale_income)} />
           <XRow {...rowProps("mach-in", "Механизмын орлого", p.machine_income)} />
+          {/* Дотоод ажил ОРЛОГО БИШ (нэхэмжлэх ч, машины карт ч, мөнгөн урсгал
+              ч хасдаг) — гэхдээ алга болох ёсгүй: машины картынхтай ЯГ ижил
+              үгээр, тусдаа бүдэг мөрөөр. */}
+          {p.machine_internal_count > 0 && (
+            <div className="flex justify-between items-center py-1.5 pl-5 border-b border-line/60">
+              <span className="text-[12px] text-t3">
+                Дотоод ажил {p.machine_internal_count}ш — орлогод ороогүй
+              </span>
+              <b className="tabular-nums text-[12px] text-t3" title={money(p.machine_internal)}>
+                {sayaFmt(p.machine_internal)}₮
+              </b>
+            </div>
+          )}
           <XRow {...rowProps("penalty", "Алдангийн орлого", p.penalty_income)} />
           <Total label="Нийт орлого" val={p.total_income} tone="money" />
           <Sect label="Зардал" cls="mt-5" />
@@ -247,10 +260,16 @@ function XRow({ id, label, val, colored, open, onToggle, expandable }: {
 
 /** Сонгогдсон мөрийн задаргаа — өргөн самбарт хүснэгтүүд амьсгалтай багтана. */
 function DetailPanel({ id, dt }: { id: string; dt: any }) {
+  /* «Дотоод» багана нь орлогод ОРООГҮЙ тоо — Цэвэр нь түүнгүйгээр бодогдоно.
+     Багана нь ажил байсан үед л гарна: 0₮-ийн багана асуулт төрүүлдэг. */
+  const anyInternal = dt.machines.some((r: any) => r.internal > 0);
   const machines = (
-    <Mini head={["Машин", "Орлого", "Зарлага", "Цэвэр"]} numCols={[1, 2, 3]}
-          rows={dt.machines.map((r: any) => [r.machine, money(r.income),
-                                             money(r.expense), money(r.net)])} />
+    <Mini head={anyInternal ? ["Машин", "Орлого", "Дотоод", "Зарлага", "Цэвэр"]
+                            : ["Машин", "Орлого", "Зарлага", "Цэвэр"]}
+          numCols={anyInternal ? [1, 2, 3, 4] : [1, 2, 3]}
+          rows={dt.machines.map((r: any) => (anyInternal
+            ? [r.machine, money(r.income), money(r.internal), money(r.expense), money(r.net)]
+            : [r.machine, money(r.income), money(r.expense), money(r.net)]))} />
   );
   switch (id) {
     case "rent":

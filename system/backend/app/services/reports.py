@@ -131,17 +131,33 @@ def pnl(db: Session, d_from: date, d_to: date):
                            models.PenaltyCharge.as_of <= d_to)
                    .order_by(models.PenaltyCharge.as_of).all()]
 
+    # ДОТООД ажил (`INTERNAL`) ОРЛОГО БИШ — өөрийн барилга дээрх кран руу
+    # нэхэмжлэл явдаггүй (`machines.billable_jobs`), машины карт ба мөнгөн
+    # урсгал ч хасдаг. P&L ганцаараа нэмсээр байсан нь нэг сарын ижил ажлыг
+    # ГУРВАН дэлгэц дээр хоёр өөр дүнгээр харуулж байв. Тоо нь алга болохгүй:
+    # картынхтай ижил хэлбэрээр («Дотоод ажил Nш · N₮») тусдаа гарна.
     logs = db.query(models.MachineLog).filter(
         models.MachineLog.date >= d_from, models.MachineLog.date <= d_to).all()
-    machine_income = sum(l.amount for l in logs if l.entry == "job")
+
+    def _internal(l) -> bool:
+        return l.entry == "job" and l.method == "INTERNAL"
+
+    machine_income = sum(l.amount for l in logs if l.entry == "job" and not _internal(l))
     machine_expense = sum(l.amount for l in logs if l.entry == "expense")
+    internal_logs = [l for l in logs if _internal(l)]
+    machine_internal = sum(l.amount for l in internal_logs)
     mach_agg: dict[int, dict] = {}
     for l in logs:
         row = mach_agg.setdefault(l.machine_id, {"machine": l.machine.name,
-                                                 "income": 0.0, "expense": 0.0})
-        row["income" if l.entry == "job" else "expense"] += l.amount
+                                                 "income": 0.0, "expense": 0.0,
+                                                 "internal": 0.0})
+        if _internal(l):
+            row["internal"] += l.amount
+        else:
+            row["income" if l.entry == "job" else "expense"] += l.amount
     machine_rows = [{"machine": r["machine"], "income": round(r["income"]),
                      "expense": round(r["expense"]),
+                     "internal": round(r["internal"]),
                      "net": round(r["income"] - r["expense"])}
                     for r in mach_agg.values()]
     machine_rows.sort(key=lambda r: -r["net"])
@@ -220,6 +236,10 @@ def pnl(db: Session, d_from: date, d_to: date):
     return {"from": str(d_from), "to": str(d_to), "accruing": round(accruing),
             "rent_income": round(rent_income), "sale_income": round(sale_income),
             "machine_income": round(machine_income),
+            # Орлогод ОРООГҮЙ — гэхдээ кран хэдэн өдөр өөрийн барилга дээр
+            # зогссоныг мэдэх нь мэдээлэл (машины картын толь).
+            "machine_internal": round(machine_internal),
+            "machine_internal_count": len(internal_logs),
             "penalty_income": round(penalty_income),
             "machine_expense": round(machine_expense),
             "salary_expense": round(salary_expense),
