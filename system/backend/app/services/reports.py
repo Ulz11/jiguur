@@ -24,14 +24,20 @@ def is_opening(inv: models.Invoice) -> bool:
 def charge_kind(desc: str) -> str:
     """Нэхэмжлэлийн төлбөрийн мөрийн АНГИЛАЛ — billing бичсэн шошгоор нь.
 
-    «Засвар» / «Акт» нь хөдөлгөөнөөс (movement_charges_in), «Акт: …» нь чөлөөт
-    актын бичилт (akt_charges_in). Танигдаагүй нь «other» — буруу ангилалд
-    чимээгүй орохын оронд ил халаасанд гарна.
+    «Засвар» / «Акт» / «Худалдаа» нь хөдөлгөөнөөс (movement_charges_in),
+    «Акт: …» нь чөлөөт актын бичилт (akt_charges_in). Танигдаагүй нь «other» —
+    буруу ангилалд чимээгүй орохын оронд ил халаасанд гарна.
+
+    «sale» нь бусдаасаа ТӨРӨЛХ ЯЛГААТАЙ: нөгөө дөрөв нь ТҮРЭЭСИЙН гэрээний
+    дагалдах төлбөр (түрээсийн орлого) байхад худалдаа нь БАРАА зарсны орлого.
+    Тиймээс `pnl` түүнийг түрээсээс хасаж, худалдааны орлого руу зөөнө (H7).
     """
     if desc == "Засвар":
         return "repair"
     if desc == "Акт":
         return "writeoff"
+    if desc == billing.SALE_CHARGE_DESC:
+        return "sale"
     if desc.startswith("Акт:"):
         return "akt"
     return "other"
@@ -60,6 +66,12 @@ def pnl(db: Session, d_from: date, d_to: date):
     sale_rows: list[dict] = []
     charge_split = {"repair": 0.0, "writeoff": 0.0, "akt": 0.0, "other": 0.0}
     charge_rows: list[dict] = []
+    # ХУДАЛДАА БОЛГОВ (H7) — түрээсийн нэхэмжлэлийн ДОТОР явдаг ч ТҮРЭЭСИЙН
+    # орлого БИШ. `charge_split`-д ОРУУЛАХГҮЙ нь санаатай: тэр толь нь
+    # «түрээсийн дагалдах төлбөр» гэсэн утгатай бөгөөс `rent_net` түүгээр
+    # бодогдоно. Худалдаа тусдаа хураагдаж, тусдаа задарна.
+    sale_charge = 0.0
+    sale_charge_rows: list[dict] = []
     for inv in db.query(models.Invoice).join(models.Contract).all():
         if is_opening(inv):
             continue
@@ -69,31 +81,43 @@ def pnl(db: Session, d_from: date, d_to: date):
             # цикл [start, end) — end нь дуусах агшин тул түүгээр нь тайланд оруулна
             if not (d_from <= inv.cycle_end <= d_to):
                 continue
-            rent_income += base
-            rent_rows.append({"date": str(inv.cycle_end), "client": c.client.name,
-                              "contract_no": c.no, "no": inv.no,
-                              "cycle_start": str(inv.cycle_start),
-                              "cycle_end": str(inv.cycle_end),
-                              "rent": round(inv.rent_amount),
-                              "charge": round(inv.charge_amount),
-                              "total": round(base)})
             # Засвар/акт/чөлөөт актын задаргаа — нэхэмжлэл бичигдэхдээ хадгалсан
             # мөрүүдээс. Задрахгүй үлдсэн нь «other»: нийлбэр ЯМАГТ таарна.
             parsed = 0.0
+            inv_sale = 0.0
             for ch in invoice_charges(inv):
                 amt = float(ch.get("amount") or 0)
+                desc = str(ch.get("desc") or "")
                 parsed += amt
-                charge_split[charge_kind(str(ch.get("desc") or ""))] += amt
-                charge_rows.append({"date": str(ch.get("date") or inv.cycle_end),
-                                    "client": c.client.name, "contract_no": c.no,
-                                    "desc": str(ch.get("desc") or ""),
-                                    "amount": round(amt)})
+                row = {"date": str(ch.get("date") or inv.cycle_end),
+                       "client": c.client.name, "contract_no": c.no,
+                       "desc": desc, "amount": round(amt)}
+                if charge_kind(desc) == "sale":
+                    inv_sale += amt
+                    sale_charge_rows.append(row)
+                    continue
+                charge_split[charge_kind(desc)] += amt
+                charge_rows.append(row)
             leftover = inv.charge_amount - parsed
             if abs(leftover) > 0.5:
                 charge_split["other"] += leftover
                 charge_rows.append({"date": str(inv.cycle_end), "client": c.client.name,
                                     "contract_no": c.no, "desc": "Задаргаагүй",
                                     "amount": round(leftover)})
+            # Мөр нь ТҮРЭЭСЭЭР оруулсан хувиа л хэлнэ; зарсан хэсэг нь өөрийн
+            # баганатай. Иймд `rent + charge == total` мөрөндөө ХЭВЭЭР зөв, ба
+            # мөрүүдийн Σ нь толгойн `rent_income`-тэй ЯГ таарна.
+            rent_base = base - inv_sale
+            rent_income += rent_base
+            sale_charge += inv_sale
+            rent_rows.append({"date": str(inv.cycle_end), "client": c.client.name,
+                              "contract_no": c.no, "no": inv.no,
+                              "cycle_start": str(inv.cycle_start),
+                              "cycle_end": str(inv.cycle_end),
+                              "rent": round(inv.rent_amount),
+                              "charge": round(inv.charge_amount - inv_sale),
+                              "sale": round(inv_sale),
+                              "total": round(rent_base)})
         else:
             if not (d_from <= inv.cycle_start <= d_to):
                 continue
@@ -102,6 +126,10 @@ def pnl(db: Session, d_from: date, d_to: date):
                               "contract_no": c.no, "no": inv.no,
                               "amount": round(base)})
     rent_net = rent_income - sum(charge_split.values())
+    # Түрээсийн гэрээн дээр «худалдаа болгосон» бараа нь ХУДАЛДААНЫ орлого:
+    # мөнгө алга болохгүй, зөвхөн ЗӨВ халаас руу орно (машины INTERNAL-тай
+    # ижил журам — толгойн тоо, задаргаа хоёулаа дагана).
+    sale_income += sale_charge
 
     # Алдангийн орлого — КАССЫН зарчмаар (бодит төлөгдсөн, төлбөрийн огноогоор).
     # Түрээс/худалдаа аккруэл боловч алданги бол цуглуулсан цагтаа л орлого.
@@ -214,6 +242,10 @@ def pnl(db: Session, d_from: date, d_to: date):
                    "rows": sorted(charge_rows, key=lambda r: r["date"])},
         "rent_invoices": sorted(rent_rows, key=lambda r: (r["date"], r["client"])),
         "sale_invoices": sorted(sale_rows, key=lambda r: (r["date"], r["client"])),
+        # «Худалдаа болгов» (H7) — түрээсийн гэрээнээс гарсан ХУДАЛДААНЫ орлого.
+        # Толгойн `sale_income` = Σ sale_invoices + `sale_charge`.
+        "sale_charge": round(sale_charge),
+        "sale_charges": sorted(sale_charge_rows, key=lambda r: (r["date"], r["client"])),
         "penalty_paid": penalty_paid_rows,
         "penalty_booked": {"total": round(sum(r["amount"] for r in booked_rows)),
                            "rows": booked_rows},

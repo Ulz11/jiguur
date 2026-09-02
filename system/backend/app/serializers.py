@@ -294,7 +294,9 @@ def movement(mv: models.Movement, gmap: dict, mmap: dict):
                        "return_grade_id": l.return_grade_id,
                        "return_grade": gmap.get(l.return_grade_id) if l.return_grade_id else None,
                        "repair_qty": l.repair_qty, "repair_fee": l.repair_fee,
-                       "writeoff_qty": l.writeoff_qty, "writeoff_fee": l.writeoff_fee}
+                       "writeoff_qty": l.writeoff_qty, "writeoff_fee": l.writeoff_fee,
+                       # ХУДАЛДАА БОЛГОВ (H7) — SALE мөрийн дүн (мөнгө: `_F_LINE`)
+                       "sale_fee": l.sale_fee}
                       for l in mv.lines]}
 
 
@@ -362,6 +364,7 @@ def material_lines(c: models.Contract, gmap: dict, mmap: dict, today: date):
                 "billed_days_override": ln.billed_days_override,
                 "repair_qty": ln.repair_qty, "repair_fee": ln.repair_fee,
                 "writeoff_qty": ln.writeoff_qty, "writeoff_fee": ln.writeoff_fee,
+                "sale_fee": ln.sale_fee,
                 "_key": (mv.date, mv.id, ln.id or 0)})
 
     out = []
@@ -516,10 +519,11 @@ _F_TOP = ("balance", "penalty", "penalty_booked", "penalty_unbooked",
 # Алдангийн нэхэлт нь МӨНГӨ ҮҮСГЭХ ШИЙДВЭР — хамгийн сүүлд орох ёстой блок.
 _F_BLOCKS = ("invoices", "payments", "akt_entries", "rate_changes", "penalty_charges")
 _F_ITEM = ("daily_rate", "unit_price", "orig_rate", "day_amount",
-           "repair_fee", "writeoff_price")
-# Хөдөлгөөний/дэвтрийн мөр: падангийн ТАРИФ, засвар/актын ДҮН явахгүй.
-# `repair_qty`, `writeoff_qty` нь ТОО — тэр бол даргын ажил, үлдэнэ.
-_F_LINE = ("rate", "repair_fee", "writeoff_fee")
+           "repair_fee", "writeoff_price", "sale_price")
+# Хөдөлгөөний/дэвтрийн мөр: падангийн ТАРИФ, засвар/акт/ХУДАЛДААНЫ ДҮН явахгүй.
+# `repair_qty`, `writeoff_qty` нь ТОО — тэр бол даргын ажил, үлдэнэ. Худалдаанд
+# дэд тоо байхгүй (мөрийн БҮХ тоо зарагдсан) тул зөвхөн дүн нь татагдана.
+_F_LINE = ("rate", "repair_fee", "writeoff_fee", "sale_fee")
 _F_CYCLE = ("accrued", "day_amount")
 
 

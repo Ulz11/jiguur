@@ -80,8 +80,11 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
             if mv.status != "done":
                 continue
             qty = sum(l.qty for l in mv.lines)
-            kind = {"ISSUE": "Ачилт", "RETURN": "Буцаалт", "WRITEOFF": "Акт"}[mv.type]
-            charge = sum(l.repair_fee + l.writeoff_fee for l in mv.lines)
+            # Шинэ төрөл нэмэгдэхэд KeyError-оор хуудас бүхэлдээ унахгүй:
+            # нэргүй төрөл нь дугаараараа л гарна.
+            kind = {"ISSUE": "Ачилт", "RETURN": "Буцаалт", "WRITEOFF": "Акт",
+                    "SALE": "Худалдаа болгов"}.get(mv.type, mv.type)
+            charge = sum(l.repair_fee + l.writeoff_fee + l.sale_fee for l in mv.lines)
             sub = " · ".join(f"{mmap.get(l.material_id)} ×{l.qty:g}" for l in mv.lines[:3])
             if charge:
                 sub += f" · төлбөр {charge:,.0f}₮"

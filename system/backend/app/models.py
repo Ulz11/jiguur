@@ -149,11 +149,17 @@ class ContractItem(Base):
 
 
 class Movement(Base):
-    """Бараа хөдөлгөөн: ISSUE (ачилт/нэмэлт), RETURN (буцаалт), WRITEOFF (акт)."""
+    """Бараа хөдөлгөөн: ISSUE (ачилт/нэмэлт), RETURN (буцаалт), WRITEOFF (акт),
+    SALE (ХУДАЛДАА БОЛГОВ — гадаа байсан бараа буцаж ирэлгүй зарагдав, H7).
+
+    ISSUE нь ПАДАН төрүүлдэг, бусад ГУРАВ нь падангаас ХАСДАГ. SALE нь
+    бүтцээрээ WRITEOFF-тэй ах дүү (гадаа байхдаа паркаас гарна) ч үнийн
+    суурь нь `sale_price` (актынх нь `nb_price`) бөгөөс УТГА нь өөр.
+    """
     __tablename__ = "movements"
     id: Mapped[int] = mapped_column(primary_key=True)
     contract_id: Mapped[int] = mapped_column(ForeignKey("contracts.id"))
-    type: Mapped[str] = mapped_column(String(12))  # ISSUE | RETURN | WRITEOFF
+    type: Mapped[str] = mapped_column(String(12))  # ISSUE | RETURN | WRITEOFF | SALE
     date: Mapped[date] = mapped_column(Date)
     note: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(12), default="done")  # pending | done (ачилт дарга баталгаажуулна)
@@ -192,6 +198,13 @@ class MovementLine(Base):
     repair_fee: Mapped[float] = mapped_column(Float, default=0)     # клиентэд тооцох засварын дүн
     writeoff_qty: Mapped[float] = mapped_column(Float, default=0)   # акталсан тоо
     writeoff_fee: Mapped[float] = mapped_column(Float, default=0)   # актын дүн (НБҮнээр)
+    # ХУДАЛДАА БОЛГОВ (H7): SALE хөдөлгөөний мөрийн дүн — qty × ХУДАЛДАХ ҮНЭ.
+    # `writeoff_fee`-г дахин ашиглаагүй нь санаатай: тэр багана «НБҮнээр» гэж
+    # нэрлэгдсэн бөгөөс тайлан, PDF, дэлгэц гурвуулаа түүнийг АКТ гэж уншдаг.
+    # Худалдааг тэнд хийвэл дүн нь актын халаас руу чимээгүй орно.
+    # `sale_qty` БАЙХГҮЙ: SALE мөрийн БҮХ тоо зарагдсан (WRITEOFF-той ижил
+    # журам) — дэд тоо нь зөвхөн буцаалтын мөрөнд утгатай.
+    sale_fee: Mapped[float] = mapped_column(Float, default=0)       # худалдааны дүн (худалдах үнээр)
 
     movement: Mapped["Movement"] = relationship(back_populates="lines")
     material: Mapped["Material"] = relationship(foreign_keys=[material_id])

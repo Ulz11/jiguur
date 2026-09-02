@@ -26,6 +26,10 @@ def _safe(name: str) -> str:
 
 
 CYCLE_MODE_ERR = "Тооцооны мөчлөг «30 хоног» эсвэл «Календарь сар» байна"
+# «Худалдаа болгох» (H7) нь ЗӨВХӨН түрээсийн гэрээнд утгатай — худалдааны
+# гэрээнд ачилт нь өөрөө худалдаа бөгөөс өөрийн нэхэмжлэлтэй.
+SALE_ONLY_RENT_ERR = ("«Худалдаа болгох» нь зөвхөн ТҮРЭЭСИЙН гэрээнд бүртгэгдэнэ — "
+                      "худалдааны гэрээнд олголт нь өөрөө худалдаа")
 
 
 @router.get("/contracts")
@@ -144,7 +148,10 @@ def _live_items(db: Session, c: models.Contract, today: date, gmap: dict, mmap: 
                      "orig_rate": orig,
                      "day_amount": round(row["qty"] * daily_rate),
                      "repair_fee": mat.repair_fee if mat else 0,
-                     "writeoff_price": price.nb_price if price else 0})
+                     "writeoff_price": price.nb_price if price else 0,
+                     # ХУДАЛДАХ ҮНЭ (R32-ийн хоёр дахь шатлал) — «Худалдаа
+                     # болгох» цонх үржвэрээ ЭНДЭЭС гаргана (H7).
+                     "sale_price": price.sale_price if price else 0})
     return live
 
 
@@ -296,7 +303,7 @@ def _touches_invoiced(c: models.Contract, days: list[date]) -> bool:
 
 
 def _recompute_fees(db: Session, mv: models.Movement, ln: models.MovementLine):
-    """Буцаалт/актын мөрийн засвар, актын дүнг каталогоос ДАХИН бодно —
+    """Буцаалт/акт/ХУДАЛДААНЫ мөрийн дүнг каталогоос ДАХИН бодно —
     `add_movement`-тэй яг ижил томьёогоор."""
     price = db.query(models.MaterialGradePrice).filter_by(
         material_id=ln.material_id, grade_id=ln.grade_id).first()
@@ -306,6 +313,10 @@ def _recompute_fees(db: Session, mv: models.Movement, ln: models.MovementLine):
         ln.writeoff_fee = ln.writeoff_qty * (price.nb_price if price else 0)
     elif mv.type == "WRITEOFF":
         ln.writeoff_fee = ln.qty * (price.nb_price if price else 0)
+    elif mv.type == "SALE":
+        # Тоог засахад дүн нь ДАГАНА — эс бөгөөс «40ш зарав» гэсэн мөр
+        # 60ш-ийн мөнгө авч явна (H1-ийн хяналттай засвар).
+        ln.sale_fee = ln.qty * (price.sale_price if price else 0)
 
 
 def _apply_movement_edit(db: Session, mv: models.Movement, new_date=None, note=None,
@@ -1088,25 +1099,33 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
     c = db.get(models.Contract, cid)
     if not c:
         raise HTTPException(404, "Гэрээ олдсонгүй")
-    if body.type not in ("ISSUE", "RETURN", "WRITEOFF"):
+    if body.type not in billing.MOVEMENT_TYPES:
         raise HTTPException(400, "Буруу төрөл")
+    # ХУДАЛДАА БОЛГОВ (H7) нь ТҮРЭЭСИЙН гэрээний гарц. Худалдааны гэрээнд
+    # ачилт нь өөрөө худалдаа бөгөөс мөр бүр өөрийн нэхэмжлэлтэй
+    # (`derivable_invoice_specs` → `S-…`); тэнд SALE бичих нь нэг барааг ХОЁР
+    # УДАА (олголтоор нь ба худалдаагаар нь) нэхэх байсан.
+    if body.type == "SALE" and c.type != "rent":
+        raise HTTPException(400, SALE_ONLY_RENT_ERR)
     status = "pending" if body.type == "ISSUE" else "done"
     # ---- ЭХЛЭЭД БҮГДИЙГ НЯГТАЛНА, дараа нь мөр үүснэ ----
     # Хөдөлгөөнөө урьдчилж үүсгэвэл хагас бүтсэн мөрүүд нь хуваарилалтын
     # тооцоонд (`billing.consumed_lots`) орж, гар хоногийн хязгаарыг өөрөө
     # хөдөлгөнө. Тиймээс нягтлал нь БҮХЭЛДЭЭ DB-д хүрэхээс өмнө болно.
-    if body.type == "RETURN":
+    if body.type in ("RETURN", "SALE"):
         prior: list[dict] = []
         for ln in body.lines:
             out = billing.qty_on(c, ln.material_id, ln.grade_id, body.date)
             if ln.qty > out + 0.001:
-                raise HTTPException(400, f"Түрээсэнд байгаагаас их буцаалт (гадаа: {out:g})")
+                raise HTTPException(400, f"Түрээсэнд байгаагаас их "
+                                         f"{'худалдаа' if body.type == 'SALE' else 'буцаалт'} "
+                                         f"(гадаа: {out:g})")
             # Заалт ба гар хоног нь одоо БҮРТГЭХ АГШИНД ирдэг (UI илгээнэ) —
             # засварын замтай ЯГ ижил хаалгаар нягтлагдана.
             if ln.issue_line_id:
                 _check_pin(db, c, body.date, ln.material_id, ln.grade_id, None,
                            ln.issue_line_id)
-            if ln.billed_days_override is not None:
+            if ln.billed_days_override is not None and body.type == "RETURN":
                 _check_billed_days(c, body.date, ln.material_id, ln.grade_id, ln.qty,
                                    ln.billed_days_override, pin=ln.issue_line_id,
                                    prior=prior)
@@ -1126,7 +1145,7 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
             st = db.query(models.Stock).filter_by(material_id=ln.material_id, grade_id=ln.grade_id).first()
             if not st or st.on_hand < ln.qty:
                 raise HTTPException(400, "Агуулахад хүрэлцэхгүй")
-        repair_fee = writeoff_fee = 0.0
+        repair_fee = writeoff_fee = sale_fee = 0.0
         if body.type == "RETURN":
             m = db.get(models.Material, ln.material_id)
             repair_fee = ln.repair_qty * (m.repair_fee if m else 0)
@@ -1144,6 +1163,13 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
             price = db.query(models.MaterialGradePrice).filter_by(
                 material_id=ln.material_id, grade_id=ln.grade_id).first()
             writeoff_fee = ln.qty * (price.nb_price if price else 0)
+        if body.type == "SALE":
+            # ХУДАЛДАХ ҮНЭ (`sale_price`) — актын НБҮнэ БИШ. Хоёр шатлалт
+            # үнэлгээ (R32) яг энэ ялгаанд зориулагдсан: акт бол нөхөн үнэ,
+            # худалдаа бол зарах үнэ. Дүн нь ХЭЗЭЭ Ч гараар ирэхгүй.
+            price = db.query(models.MaterialGradePrice).filter_by(
+                material_id=ln.material_id, grade_id=ln.grade_id).first()
+            sale_fee = ln.qty * (price.sale_price if price else 0)
         db.add(models.MovementLine(movement_id=mv.id, material_id=ln.material_id,
                                    grade_id=ln.grade_id, qty=ln.qty, rate=rate,
                                    issue_line_id=ln.issue_line_id,
@@ -1151,7 +1177,8 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
                                    billed_days_override=(ln.billed_days_override
                                                          if body.type == "RETURN" else None),
                                    repair_qty=ln.repair_qty, repair_fee=repair_fee,
-                                   writeoff_qty=ln.writeoff_qty, writeoff_fee=writeoff_fee))
+                                   writeoff_qty=ln.writeoff_qty, writeoff_fee=writeoff_fee,
+                                   sale_fee=sale_fee))
     db.commit()
     db.refresh(mv)
     qty = sum(ln.qty for ln in body.lines)
@@ -1214,12 +1241,16 @@ CLOSE_GOODS_ERR = "Түрээсэнд бараа байсаар байна — �
 
 def _outstanding_rows(db: Session, c: models.Contract, today: date,
                       gmap: dict, mmap: dict) -> list[dict]:
-    """Гадаа үлдсэн бараа — материал/зэрэглэл бүрээр, НБҮнэтэйгээ.
+    """Гадаа үлдсэн бараа — материал/зэрэглэл бүрээр, ХОЁР ҮНЭТЭЙГЭЭ.
 
-    Хаалтын wizard-ийн (a) алхам ЭНЭ мөрүүд дээр зогсоно: мөр бүрд «Буцаалт
-    бүртгэх» ба «Дутагдуулсан» гэсэн хоёр л гарц бий. `writeoff_amount` нь
-    дутагдуулсан гэж бичвэл нэхэгдэх дүн — тэр тоог ХАРАХГҮЙГЭЭР шийдэх нь
-    сохроор гарын үсэг зурахтай адил (R13).
+    Хаалтын wizard-ийн (a) алхам ЭНЭ мөрүүд дээр зогсоно. Мөр бүрд ГУРВАН
+    гарц бий (§3 H7): ирсэн бол «Буцаалт бүртгэх», ирээгүй бол
+    «Дутагдуулсан» (НБҮнээр), харилцагч ӨӨРТӨӨ АВЧ ҮЛДСЭН бол «Худалдаа
+    болгох» (худалдах үнээр).
+
+    `writeoff_amount` ба `sale_amount` нь тэр гурван шийдвэрийн ХОЁР өөр ₮ —
+    хоёуланг нь ХАРАХГҮЙГЭЭР сонгох нь сохроор гарын үсэг зурахтай адил
+    (R13 + R32: SKU бүр ХОЁР шатлалт үнэтэй).
     """
     agg: dict[tuple[int, int], float] = {}
     for lot in billing.lot_qty_on(c, today):
@@ -1232,10 +1263,13 @@ def _outstanding_rows(db: Session, c: models.Contract, today: date,
         price = db.query(models.MaterialGradePrice).filter_by(
             material_id=mid, grade_id=gid).first()
         nb = price.nb_price if price else 0
+        sale = price.sale_price if price else 0
         rows.append({"material_id": mid, "material": mmap.get(mid, "?"),
                      "grade_id": gid, "grade": gmap.get(gid, ""),
                      "qty": round(qty, 3), "nb_price": nb,
-                     "writeoff_amount": round(qty * nb)})
+                     "writeoff_amount": round(qty * nb),
+                     "sale_price": sale,
+                     "sale_amount": round(qty * sale)})
     return rows
 
 

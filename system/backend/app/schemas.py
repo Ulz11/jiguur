@@ -95,7 +95,7 @@ class MovementLineIn(BaseModel):
 
 
 class MovementIn(BaseModel):
-    type: str                    # ISSUE | RETURN | WRITEOFF
+    type: str                    # ISSUE | RETURN | WRITEOFF | SALE
     date: date
     note: str = ""
     lines: list[MovementLineIn]

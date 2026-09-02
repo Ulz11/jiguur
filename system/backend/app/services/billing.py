@@ -22,6 +22,20 @@ from sqlalchemy.orm import Session
 from .. import models
 
 
+# ---------- ХӨДӨЛГӨӨНИЙ ТӨРЛҮҮД — ганц эх сурвалж ----------
+#
+# Дөрөв нь ХОЁР анги: ISSUE нь ПАДАН ТӨРҮҮЛНЭ, бусад гурав нь падангаас
+# ХАСНА. Тооцооны хөдөлгүүр бүхэлдээ энэ хуваалт дээр зогсдог (`_deltas`-ийн
+# тэмдэг, `_lots`-ийн `eats`, `_timeline_ok`) — тиймээс шинэ гарц нэмэхэд
+# хөдөлгүүрийн дотор талд салбар нэмэгддэггүй.
+MOVEMENT_TYPES = ("ISSUE", "RETURN", "WRITEOFF", "SALE")
+CONSUMING_TYPES = ("RETURN", "WRITEOFF", "SALE")
+
+# Нэхэмжлэлийн төлбөрийн мөрийн ШОШГО — тайлан үүгээр орлогыг ангилна
+# (`services/reports.charge_kind`). Үг солих нь ангиллыг солино.
+SALE_CHARGE_DESC = "Худалдаа"
+
+
 # ---------- тоо ширхэгийн хугацааны шугам ----------
 
 def movement_active(mv: models.Movement) -> bool:
@@ -37,7 +51,13 @@ def movement_active(mv: models.Movement) -> bool:
 
 
 def _deltas(contract: models.Contract):
-    """(material_id, grade_id) бүрээр огноот өөрчлөлтүүд: ISSUE +qty, RETURN/WRITEOFF -qty."""
+    """(material_id, grade_id) бүрээр огноот өөрчлөлтүүд: ISSUE +qty, бусад -qty.
+
+    ГАНЦ ХУВААЛТ: ISSUE нь ГАДАА гаргадаг, RETURN/WRITEOFF/SALE гурав нь
+    гадаанаас ХАСДАГ. Тиймээс шинэ гарц (SALE — «худалдаа болгов», H7) энэ
+    тэмдгээр АЯНДАА зөв ажиллана: зарагдсан тоо тэр өдрөөсөө гадаа байхаа
+    болино, тусгай салбар шаардахгүй.
+    """
     out: dict[tuple[int, int], list[tuple[date, float]]] = {}
     for mv in contract.movements:
         if not movement_active(mv):
@@ -219,8 +239,11 @@ _DRAFT_KEY = 2 ** 62
 def _lots(contract: models.Contract, drafts: list[dict] = ()) -> list[dict]:
     """Гэрээний бүх падан — баталгаажсан (done) ОЛГОЛТЫН мөр бүр нэг падан.
 
-    Падан бүр өөрийн тариф, огноо, тоотой. Буцаалт/акт паданг ХААНА
-    (`_allocate`): эхлээд заасан падангаас, үлдсэнийг нь FIFO-гоор.
+    Падан бүр өөрийн тариф, огноо, тоотой. ХАСАХ гурван төрөл (буцаалт, акт,
+    ХУДАЛДАА — `CONSUMING_TYPES`) паданг ХААНА (`_allocate`): эхлээд заасан
+    падангаас, үлдсэнийг нь FIFO-гоор. Гурвуулаа ЯГ ижил замаар хаадаг тул
+    падангийн хувьд «худалдсан 40ш» ба «буцсан 40ш» ялгаагүй — ялгаа нь
+    зөвхөн МӨНГӨНД ба НӨӨЦӨД байна.
     Хамаарал нь ХАДГАЛАГДАХГҮЙ, бодогдоно — тул хоёр паданг дамнасан буцаалт
     өөрөө хуваагдана. Хүлээгдэж буй (pending) олголт ХЭЗЭЭ Ч тооцоонд орохгүй.
 
@@ -528,9 +551,14 @@ def accrue_rent_segments(contract: models.Contract, d_from: date, d_to: date) ->
 
 
 def movement_charges_in(contract: models.Contract, d_from: date, d_to: date):
-    """[d_from, d_to) доторх ХӨДӨЛГӨӨНӨӨС гарсан засвар + актын хөлс.
+    """[d_from, d_to) доторх ХӨДӨЛГӨӨНӨӨС гарсан засвар + акт + ХУДАЛДААНЫ хөлс.
 
     Тоо ширхэгээс каталогийн үнээр бодогддог, гараар бичигддэггүй хэсэг.
+
+    ШОШГО НЬ УТГА ЗӨӨНӨ. «Засвар», «Акт», «Худалдаа» гэсэн гурван үг нь
+    зөвхөн цаасны толгой биш — тайлан (`reports.charge_kind`) ЭДГЭЭР ҮГЭЭР
+    орлогыг ангилдаг. «Худалдаа» нь ТҮРЭЭСИЙН орлого БИШ: тэр мөр нэхэмжлэл
+    дотор яваа ч P&L дээр ХУДАЛДААНЫ орлого болж таслагдана (H7).
     """
     total = 0.0
     items = []
@@ -544,6 +572,10 @@ def movement_charges_in(contract: models.Contract, d_from: date, d_to: date):
             if ln.writeoff_fee:
                 total += ln.writeoff_fee
                 items.append({"date": str(mv.date), "desc": "Акт", "amount": ln.writeoff_fee})
+            if getattr(ln, "sale_fee", 0):
+                total += ln.sale_fee
+                items.append({"date": str(mv.date), "desc": SALE_CHARGE_DESC,
+                              "amount": ln.sale_fee})
     return total, items
 
 
@@ -1443,7 +1475,19 @@ def _stock(db: Session, material_id: int, grade_id: int) -> models.Stock:
 
 
 def apply_movement_stock(db: Session, mv: models.Movement):
-    """Хөдөлгөөн 'done' болоход нөөцөд тусгана."""
+    """Хөдөлгөөн 'done' болоход нөөцөд тусгана.
+
+    ХУДАЛДАА БОЛГОВ (SALE, H7): `on_rent` -= qty, БУСАД ХУВААРЬ НЬ ХӨДӨЛӨХГҮЙ.
+    Бараа буцаж ирээгүй тул `on_hand` руу орохгүй; эвдэрсэн ч биш тул
+    `written_off` руу ч орохгүй — тэр ЗАРАГДСАН, компанийнх байхаа больсон.
+    Энэ бол шинэ дүрэм БИШ: худалдааны гэрээний ISSUE яг ингэдэг (`sale`
+    салбар доор — `on_hand` -= qty, `on_rent` руу нэмэхгүй).
+
+    ҮР ДАГАВАР (ил хэлье): «Нийт эзэмшил = Агуулахад + Түрээсэнд + Засварт»
+    гэсэн адилтгал зарагдсан хэмжээгээр БУУРНА. Энэ нь ЗӨВ — парк үнэхээр
+    багассан (R27-ийн «− Зарагдсан» гишүүн) — бөгөөс ердийн худалдааны
+    гэрээнд аль хэдийн үнэн байсан.
+    """
     sale = mv.contract.type == "sale"
     for ln in mv.lines:
         st = _stock(db, ln.material_id, ln.grade_id)
@@ -1461,6 +1505,8 @@ def apply_movement_stock(db: Session, mv: models.Movement):
         elif mv.type == "WRITEOFF":
             st.on_rent -= ln.qty
             st.written_off += ln.qty
+        elif mv.type == "SALE":
+            st.on_rent -= ln.qty
     db.commit()
 
 
@@ -1494,6 +1540,14 @@ def reversal_block(db: Session, mv: models.Movement) -> str | None:
     хасна). Хооронд нь бараа дахин олгогдсон бол хасах юм үлдээгүй — тэр
     үед бид үлдэгдлийг сөрөг болгохын оронд шалтгааныг нь монголоор хэлж
     ТАТГАЛЗАНА.
+
+    ХУДАЛДАА (SALE) нь энд ямагт НЭЭЛТТЭЙ бөгөөс тэр нь МЭДЭЭЖ: түүний
+    урвуу үйлдэл нь `on_rent`-ийг зөвхөн НЭМДЭГ (`unapply_movement_stock`),
+    юуг ч хасдаггүй тул нөөцийг сөрөг болгох арга ЗАРЧМЫН ХУВЬД байхгүй.
+    Худалдааны хоригийг ӨӨР хаалга барина: түүнийг ТЭЖЭЭСЭН олголтыг
+    цуцлах гэвэл `lot_consumers` → `LOT_CONSUMED_ERR` («эхлээд түүнийг
+    цуцална уу») гэж татгалзана. Салбарыг ИЛЭРХИЙ бичсэн нь — «мартагдсан»
+    ба «шалгах юмгүй» хоёрыг дараагийн уншигч ялгах ёстой.
     """
     sale = mv.contract.type == "sale"
     need: dict[tuple[int, int, str], float] = {}
@@ -1514,6 +1568,8 @@ def reversal_block(db: Session, mv: models.Movement) -> str | None:
             take(ln.material_id, tgt, "written_off", ln.writeoff_qty)
         elif mv.type == "WRITEOFF":
             take(ln.material_id, ln.grade_id, "written_off", ln.qty)
+        elif mv.type == "SALE":
+            pass                                   # хасагдах хувиарь БАЙХГҮЙ
 
     for (material_id, grade_id, field), q in need.items():
         st = db.query(models.Stock).filter_by(material_id=material_id,
@@ -1559,6 +1615,10 @@ def unapply_movement_stock(db: Session, mv: models.Movement):
         elif mv.type == "WRITEOFF":
             st.on_rent += ln.qty
             st.written_off -= ln.qty
+        elif mv.type == "SALE":
+            # Зарагдсан бараа ТҮРЭЭСЭНД буцаж орно — өөр ямар ч хувиарь
+            # хөндөгдөөгүй тул хасах юм ч алга (`reversal_block`-ийн тайлбар).
+            st.on_rent += ln.qty
     db.commit()
 
 
