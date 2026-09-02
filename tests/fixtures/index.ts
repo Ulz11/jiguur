@@ -7,4 +7,5 @@
  */
 export { test, expect } from './data';
 export { USERS, assertAuthenticated, type Role } from './auth';
-export { type DataFactory, type CreatedClient, type CreatedContract } from './data';
+export { type DataFactory, type CreatedClient, type CreatedContract,
+         type CreatedMaterial, type RentSetup } from './data';

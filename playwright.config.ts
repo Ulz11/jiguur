@@ -47,10 +47,18 @@ export default defineConfig({
     video: 'retain-on-failure',
     trace: 'on-first-retry',
     actionTimeout: 10_000,
-    navigationTimeout: 30_000,
+    navigationTimeout: 45_000,
     locale: 'mn-MN',
     timezoneId: 'Asia/Ulaanbaatar',
   },
+  /* ⏱ ТЭВЧЭЭР нь ЗӨВХӨН бүхэл тестэд ба хуудас ачаалалтад — БАТАЛГАА
+     (`expect`) ба нэг үйлдэл (`actionTimeout`) 10 секундэд хэвээр. Учир нь
+     `--repeat-each=3` дээр ГАНЦ ажилчинтай тестийн сервер нэгэн зэрэг: дөрвөн
+     хөтчийн 546КБ багц, зураг, CSS-ийг тараах ба бүх API-г хариулах — статик
+     файлын дараалал 30 секундээс давж, `page.goto` ямар ч аппын алдаагүйгээр
+     унадаг байв. Хугацаа сунгах нь ямар ч баталгааг сулруулахгүй: удаан
+     ЗУРАГДСАН дэлгэц (10с) хэвээр л улаан болно. */
+  timeout: 60_000,
   expect: { timeout: 10_000 },
 
   projects: [
@@ -71,7 +79,12 @@ export default defineConfig({
     command:
       'node tests/support/fresh-db.mjs && ' +
       'system/backend/.venv/bin/python -m uvicorn app.main:app ' +
-      `--host 127.0.0.1 --port ${PORT} --app-dir system/backend`,
+      /* `--timeout-keep-alive` — анхдагч 5с нь `--repeat-each` дээр залгуурын
+         уралдаан төрүүлдэг: сервер сул холболтыг хааж байх агшинд клиент дараагийн
+         хүсэлтээ илгээвэл `ECONNRESET` болно (аппын алдаа БИШ). Цонхыг сунгаснаар
+         тэр давхцал бараг үлдэхгүй; `fixtures/data.ts` талаас нь ганц удаа дахин
+         илгээдэг. */
+      `--host 127.0.0.1 --port ${PORT} --app-dir system/backend --timeout-keep-alive 120`,
     url: `${BASE_URL}/api/health`,
     /* ЗӨВХӨН өөрийн сервер. `reuseExistingServer: true` бол хөгжүүлэгчийн
        8000 дээрх (эсвэл өмнөх гүйлтийн) сервер рүү наалдаж, тэр нь Отгоогийн
