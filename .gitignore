@@ -43,6 +43,8 @@ node_modules/
 /playwright/.cache/
 /playwright/.auth/
 
-# E2E (Playwright)
+# E2E (Playwright) — тайлан, артефакт бүгд дахин үүсдэг
 /test-results/
 /playwright-report/
+/playwright-results.xml
+/playwright-results.json
