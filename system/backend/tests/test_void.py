@@ -794,5 +794,7 @@ def test_return_detail_patch_audits(client, as_role):
     mv, ln = _return_line(client, h, cid)
     client.patch(f"/api/movement-lines/{ln['id']}", headers=h, json={"repair_qty": 4})
     trail = client.get("/api/audit?entity=movement", headers=h).json()
+    # `changes_text` нь талбарын нэрийг ч орчуулна: «repair_qty» → «засварын тоо».
     assert any(a["action"] == "update" and a["entity_id"] == mv["id"]
-               and "repair_qty" in a["detail"] for a in trail)
+               and "засварын тоо" in a["detail"] for a in trail)
+    assert not any("repair_qty" in a["detail"] for a in trail)

@@ -429,14 +429,14 @@ def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
         if preview:
             return preview
         audit.log(db, user, "update", "contract", c.id,
-                  f"№{c.no}: " + (audit.changes_text(before, fields) or "clear_end_date"))
+                  f"№{c.no}: " + (audit.changes_text(before, fields) or "дуусах огноог цэвэрлэв"))
         row = serializers.contract_row(c, date.today())
         return {**row, "rebuilt": rebuilt} if rebuilt else row
 
     mutate()
     db.commit()
     audit.log(db, user, "update", "contract", c.id,
-              f"№{c.no}: " + (audit.changes_text(before, fields) or "clear_end_date"))
+              f"№{c.no}: " + (audit.changes_text(before, fields) or "дуусах огноог цэвэрлэв"))
     return serializers.contract_row(c, date.today())
 
 
@@ -685,7 +685,7 @@ def void_movement(mid: int, body: MovementVoidIn, db: Session = Depends(get_db),
         return preview
     qty = sum(ln.qty for ln in mv.lines)
     audit.log(db, user, "void", "movement", mv.id,
-              f"№{c.no} · {mv.date} · {mv.type} {qty:g}ш — ХҮЧИНГҮЙ: {reason}")
+              f"№{c.no} · {mv.date} · {audit.value_mn(mv.type)} {qty:g}ш — ХҮЧИНГҮЙ: {reason}")
     db.refresh(mv)
     out = serializers.movement(mv, gmap, mmap)
     return {**out, "rebuilt": rebuilt} if rebuilt else out
@@ -1183,8 +1183,8 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
     db.refresh(mv)
     qty = sum(ln.qty for ln in body.lines)
     audit.log(db, user, "create", "movement", mv.id,
-              f"№{c.no} · {mv.date} · {mv.type} {qty:g}ш"
-              + (f" ({mv.status})" if mv.status != "done" else "")
+              f"№{c.no} · {mv.date} · {audit.value_mn(mv.type)} {qty:g}ш"
+              + (f" ({audit.value_mn(mv.status)})" if mv.status != "done" else "")
               + ("".join(f" · {x}" for x in marks))
               + (f" · {mv.note}" if mv.note else ""))
     if status == "done":

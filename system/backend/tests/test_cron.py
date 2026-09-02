@@ -12,6 +12,7 @@
   3. Нэг гэрээ унасан ч давхрага зогсохгүй; JIGUUR_NO_CRON=1 үед огт асахгүй.
 """
 import os
+import re
 import sys
 from datetime import date, datetime, timedelta
 
@@ -237,7 +238,35 @@ def test_run_once_writes_one_audit_line_when_it_created_something(db, monkeypatc
     res = cron.run_once(TODAY)
     logs = db.query(models.AuditLog).filter_by(action="cron").all()
     assert len(logs) == 1
-    assert f"cron: {res['created']} нэхэмжлэл үүсэв" in logs[0].detail
+    assert f"Өдөр тутмын гүйлт: {res['created']} нэхэмжлэл үүсэв" in logs[0].detail
+
+
+def test_cron_audit_row_is_signed_and_speaks_mongolian(db, monkeypatch):
+    """/audit нь Отгоо эгчийн НҮД — тэнд «—» ч, англи үг ч байх ёсгүй.
+
+    Хоёр зүйлийг зэрэг барина:
+      1. `user_name` — хүнгүй зам ч гарын үсэгтэй («Систем»). Хоосон
+         үлдвэл дэлгэц дээр «—» болж, «энэ нэхэмжлэлийг хэн үүсгэв» гэсэн
+         хариулагдахгүй асуулт үлдэнэ.
+      2. `detail` дотор ЛАТИН ҮСЭГ алга — гэрээний дугаараас (`24/03`) бусад.
+         Урьд нь мөр «cron: …» гэж эхэлдэг байв.
+    """
+    monkeypatch.setattr(cron, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    build_world(db)
+
+    cron.run_once(TODAY)
+    row = db.query(models.AuditLog).filter_by(action="cron").one()
+
+    assert row.user_name == "Систем"
+    assert row.user_id is None, "хуурамч хэрэглэгч рүү заасан гадны түлхүүр"
+
+    numbers = {c.no for c in db.query(models.Contract).all()}
+    text = row.detail
+    for no in numbers:
+        text = text.replace(no, "")
+    latin = re.findall(r"[A-Za-z]+", text)
+    assert not latin, f"/audit-ийн «Дэлгэрэнгүй» дээр англи үг: {latin}"
 
 
 def test_a_run_that_created_nothing_stays_silent(db, monkeypatch):

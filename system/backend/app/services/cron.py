@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..db import SessionLocal
 from . import billing
-from .audit import log as audit_log
+from .audit import SYSTEM as AUDIT_SYSTEM, log as audit_log
 
 #: Орон нутгийн цаг — ажил эхлэхээс өмнө. Отгоо 09:00-д нээхэд бэлэн байна.
 CRON_HOUR = 6
@@ -108,11 +108,15 @@ def run_once(today: date | None = None) -> dict:
     try:
         res = generate_all(db, today)
         if res["created"]:
-            line = (f"cron: {res['created']} нэхэмжлэл үүсэв · "
+            # ⚠ Мөрийн ЭХЭНД «cron:» гэж бичигддэг байв — /audit-ийн
+            # «Дэлгэрэнгүй» багана нь Отгоо эгчийн НҮД, тэнд англи үг байх
+            # ёсгүй. Серверийн лог (`print`) нь хөгжүүлэгчийнх тул «[cron]»
+            # хэвээр.
+            line = (f"Өдөр тутмын гүйлт: {res['created']} нэхэмжлэл үүсэв · "
                     f"{len(res['contracts'])} гэрээ ({', '.join(res['contracts'])}) · "
                     f"{res['date']}")
             print("[cron] " + line)
-            audit_log(db, None, "cron", "invoice", None, line)
+            audit_log(db, AUDIT_SYSTEM, "cron", "invoice", None, line)
         if res["errors"]:
             print(f"[cron] {len(res['errors'])} гэрээ алдаатай — давхрага үргэлжилнэ")
     finally:

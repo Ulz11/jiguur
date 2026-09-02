@@ -143,7 +143,7 @@ def add_note(cid: int, body: NoteIn, db: Session = Depends(get_db), user=Depends
     db.add(n)
     db.commit()
     audit_svc.log(db, user, "create", "collection_note", n.id,
-                  f"харилцагч #{cid}: {body.kind} · {body.note[:80]}")
+                  f"харилцагч #{cid}: {audit_svc.value_mn(body.kind)} · {body.note[:80]}")
     return note_ser(n)
 
 
@@ -156,7 +156,8 @@ def patch_note(nid: int, body: NotePatch, db: Session = Depends(get_db), user=De
         raise HTTPException(400, "Буруу төлөв")
     n.status = body.status
     db.commit()
-    audit_svc.log(db, user, "update", "collection_note", n.id, f"төлөв → {body.status}")
+    audit_svc.log(db, user, "update", "collection_note", n.id,
+                  f"төлөв → {audit_svc.value_mn(body.status)}")
     return note_ser(n)
 
 

@@ -541,7 +541,10 @@ def test_creating_a_movement_leaves_an_audit_line(client, as_role):
     trail = client.get("/api/audit?entity=movement", headers=h).json()
     row = next(a for a in trail
                if a["action"] == "create" and a["entity_id"] == r.json()["id"])
-    assert "RETURN" in row["detail"] and "40ш" in row["detail"]
+    # ⚠ Урьд нь мөр «RETURN 40ш» гэж бичигддэг байв — /audit-ийн «Дэлгэрэнгүй»
+    # багана нь Отгоо эгчийн НҮД, тэнд DB-ийн түүхий утга гарах ёсгүй.
+    assert "буцаалт 40ш" in row["detail"]
+    assert "RETURN" not in row["detail"]
 
 
 def test_the_audit_line_carries_her_day_count_and_the_pin(client, as_role):
@@ -578,7 +581,10 @@ def test_factory_issue_is_audited_too(client, as_role):
     trail = client.get("/api/audit?entity=movement", headers=h).json()
     row = next(a for a in trail
                if a["action"] == "create" and a["entity_id"] == r.json()["id"])
-    assert "ISSUE" in row["detail"]
+    assert "ачилт 10ш" in row["detail"]
+    # Төлөв нь ч монголоор: урьд нь «(pending)» гэж бичигддэг байв.
+    assert "(хүлээгдэж буй)" in row["detail"]
+    assert not any(w in row["detail"] for w in ("ISSUE", "pending"))
 
 
 # ---------- Хавсралт: ТҮҮНИЙ тоо цаасан дээр, тэмдэгтэйгээ ----------
