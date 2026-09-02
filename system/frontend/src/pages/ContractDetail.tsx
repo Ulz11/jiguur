@@ -2621,8 +2621,18 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                        value: money(p.unpaid + p.penalty_booked
                                     + p.final_invoices.reduce((s, f) => s + f.total, 0)),
                        accent: "danger" }} />
-            {block && <p className="text-[12.5px] text-danger mt-3">⚠ {block}</p>}
           </>
+        )}
+
+        {/* ЗОГСООХ ШАЛТГААН нь АЛХАМ БҮР дээр ил байна.
+            Урьд нь энэ мөр зөвхөн СҮҮЛЧИЙН (хаах) алхам дотор байсан: «Гадаа
+            үлдэгдэл» алхам дээр «Цааш →» товч чимээгүй идэвхгүй болж, шалтгаан
+            нь товчны `title`-д НУУГДДАГ байв. Отгоо эгч идэвхгүй товч дээр
+            хулгана БАРЬДАГГҮЙ (дэлгэц дээр болж буйг анзаардаггүй) — түүний
+            хувьд тэр тайлбар БАЙХГҮЙТЭЙ адил: «дараад юу ч болсонгүй».
+            Одоо шалтгаан нь товчныхоо дэргэд, алхмаас үл хамааран зурагдана. */}
+        {block && (
+          <p className="text-[12.5px] text-danger mt-3" role="status">⚠ {block}</p>
         )}
 
         <div className="flex justify-end gap-2.5 mt-5 flex-wrap">
