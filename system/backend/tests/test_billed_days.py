@@ -141,6 +141,41 @@ def test_override_never_leaks_past_the_cycle_end(db):
     assert billing.accrue_rent(c, T, date(2026, 5, 19))[0] == pytest.approx(210 * 30 * 330)
 
 
+def test_the_bound_is_the_lot_window_not_the_cycle_length(db):
+    """ЦИКЛИЙН УРТ биш, ПАДАНГИЙН ЦОНХ — валидаци ба хөдөлгүүр НЭГ хязгаартай.
+
+    Падан циклийн ДУНД гарвал (4.9 — цикл эхлээд 20 хоног) тэр падангаас
+    буцаасан хэсэг нь ихдээ 10 хоног гадаа байж чадна. Хөдөлгүүр яг тэр
+    тоогоор хумидаг байсан; валидаци нь харин 30 (циклийн урт) гэж үздэг тул
+    Отгоо 12 гэж бичихэд ЗӨВШӨӨРӨГДӨӨД, дараа нь 10 болж ХЭВЛЭГДЭНЭ.
+    Хоёр хязгаар нэг илэрхийллээс гарах ёстой.
+    """
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100, rate=330)])
+    late = mv(db, c, "ISSUE", date(2026, 4, 9),
+              [dict(material_id=m.id, grade_id=ga.id, qty=50, rate=300)])
+    lot = late.lines[0]
+    r = mv(db, c, "RETURN", date(2026, 4, 17),
+           [dict(material_id=m.id, grade_id=ga.id, qty=30, return_grade_id=gb.id,
+                 issue_line_id=lot.id)])
+    ln = r.lines[0]
+
+    # Машины тоо — падан циклдээ орсноос (4.9) буцаалт хүртэл (4.17) = 8 хоног
+    assert billing.return_attribution(c)[ln.id][0]["days"] == 8
+    # ДЭЭД ХЯЗГААР нь 30 (циклийн урт) БИШ, 10 (4.9 → 4.19)
+    assert billing.max_billed_days(c, ln.movement.date, m.id, ga.id, ln.qty,
+                                   pin=lot.id, line_id=ln.id) == 10
+
+    before = billing.accrue_rent(c, F, T)[0]
+    ln.billed_days_override = 10
+    db.commit()
+    db.refresh(c)
+    # Хязгаар дээрх тоо нь ЯГ өөрөө нэхэгдэнэ — хумигдахгүй
+    assert billing.return_attribution(c)[ln.id][0]["billed_days"] == 10
+    assert billing.accrue_rent(c, F, T)[0] == pytest.approx(before + 2 * 30 * 300)
+
+
 def test_override_applies_to_every_lot_the_return_consumed(db):
     """Хоёр падан дамнасан буцаалт — хоёуланд нь ТҮҮНИЙ хоног тавигдана.
 
@@ -336,6 +371,101 @@ def test_creation_rejects_an_impossible_day_count(client, as_role):
     assert r.status_code == 400
 
 
+# ---------- Дунд циклд гарсан падан: хязгаар нь ПАДАНГИЙНХ ----------
+
+def _late_lot(client, as_role, h, cid, mid, gid):
+    """Циклийн 20 дахь хоногт гарсан хоёр дахь падан — цонх нь ердөө 10 хоног."""
+    client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "ISSUE", "date": _iso(20), "note": "Дунд циклийн падан",
+        "lines": [{"material_id": mid, "grade_id": gid, "qty": 50, "rate": 300}]})
+    _confirm_all(client, as_role, cid)
+    return next(x for x in _issue_lines(client, h, cid) if x["rate"] == 300)
+
+
+def test_creation_refuses_days_the_lot_window_cannot_hold(client, as_role):
+    """Бүртгэх агшинд: цонхонд багтахгүй хоног — ЖИНХЭНЭ ДЭЭД тоог нэрлэсэн 400.
+
+    Циклийн 20 дахь хоногт гарсан падангаас буцаахад ихдээ 10 хоног. Урьд нь
+    12 гэж бичихэд зөвшөөрөгдөж, хавсралт дээр 10 болж хэвлэгддэг байв —
+    гарын үсэг зурсан тоог машин чимээгүй дарж байсан (H5).
+    """
+    h = as_role("otgoo")
+    cid, mid, gid = _contract(client, as_role, h)
+    late = _late_lot(client, as_role, h, cid, mid, gid)
+
+    r = client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": _iso(12),
+        "lines": [{"material_id": mid, "grade_id": gid, "qty": 30,
+                   "issue_line_id": late["id"], "billed_days_override": 12}]})
+    assert r.status_code == 400
+    assert "10" in r.json()["detail"]
+    assert "30" not in r.json()["detail"]        # циклийн уртыг нэрлэхээ болив
+
+
+def test_creation_accepts_the_exact_lot_window_and_bills_it(client, as_role):
+    """Хязгаар дээрх тоо — зөвшөөрөгдөж, ЯГ тэрээрээ нэхэгдэнэ (хумилтгүй)."""
+    h = as_role("otgoo")
+    cid, mid, gid = _contract(client, as_role, h)
+    late = _late_lot(client, as_role, h, cid, mid, gid)
+
+    r = client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": _iso(12),
+        "lines": [{"material_id": mid, "grade_id": gid, "qty": 30,
+                   "issue_line_id": late["id"], "billed_days_override": 10}]})
+    assert r.status_code == 200
+    src = _return_line(client, h, cid)["sources"]
+    assert len(src) == 1
+    assert src[0]["issue_line_id"] == late["id"]
+    assert (src[0]["days"], src[0]["billed_days"]) == (8, 10)
+
+
+def test_patch_refuses_days_the_lot_window_cannot_hold(client, as_role):
+    """Засварын зам ч ижил хаалга — хоёр зам НЭГ хязгаартай."""
+    h = as_role("otgoo")
+    cid, mid, gid = _contract(client, as_role, h)
+    late = _late_lot(client, as_role, h, cid, mid, gid)
+    client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": _iso(12),
+        "lines": [{"material_id": mid, "grade_id": gid, "qty": 30,
+                   "issue_line_id": late["id"]}]})
+    ln = _return_line(client, h, cid)
+
+    r = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                     json={"billed_days_override": 12, "confirm": True})
+    assert r.status_code == 400
+    assert "10" in r.json()["detail"]
+
+    ok = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                      json={"billed_days_override": 10, "confirm": True})
+    assert ok.status_code == 200
+    assert _return_line(client, h, cid)["sources"][0]["billed_days"] == 10
+
+
+def test_growing_the_qty_cannot_silently_shrink_a_stored_day_count(client, as_role):
+    """ТОО нь өөрөө хязгаарыг хөдөлгөнө — хоногоо хөндөөгүй ч дахин шалгагдана.
+
+    25 хоног нь хуучин падан дээр (цонх 30) хүчинтэй. Тоог 120 болгоход
+    буцаалт ДУНД циклийн падан руу халина — тэнд цонх нь 10 тул хадгалагдсан
+    25 чимээгүй хумигдана. Дахин шалгахгүй бол H5-ийн зөрчил хаалганы АРААР
+    буцаж орно.
+    """
+    h = as_role("otgoo")
+    cid, mid, gid = _contract(client, as_role, h)
+    _late_lot(client, as_role, h, cid, mid, gid)
+    client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": _iso(12),
+        "lines": [{"material_id": mid, "grade_id": gid, "qty": 30,
+                   "billed_days_override": 25}]})
+    ln = _return_line(client, h, cid)
+    assert ln["billed_days_override"] == 25          # ганц падан дээр хүчинтэй
+
+    r = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                     json={"qty": 120, "confirm": True})
+    assert r.status_code == 400
+    assert "10" in r.json()["detail"]
+    assert _return_line(client, h, cid)["qty"] == 30  # хөдлөөгүй
+
+
 # ---------- Падан-pin бүртгэх агшинд (Task 2) ----------
 
 def _issue_lines(client, h, cid):
@@ -396,6 +526,59 @@ def _contract2(client, as_role, h):
                    "qty": 20, "daily_rate": 330}]}).json()["id"]
     _confirm_all(client, as_role, cid)
     return cid, m["id"], st["grade_id"]
+
+
+# ---------- Бүртгэх АГШИН ч audit-тай (H5) ----------
+
+def test_creating_a_movement_leaves_an_audit_line(client, as_role):
+    """Хөдөлгөөн ҮҮСГЭХ нь ч мөрөө үлдээнэ — урьд нь зөвхөн ЗАСВАР бүртгэгддэг байв."""
+    h = as_role("otgoo")
+    cid, mid, gid = _contract(client, as_role, h)
+    r = client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": _iso(25),
+        "lines": [{"material_id": mid, "grade_id": gid, "qty": 40}]})
+
+    trail = client.get("/api/audit?entity=movement", headers=h).json()
+    row = next(a for a in trail
+               if a["action"] == "create" and a["entity_id"] == r.json()["id"])
+    assert "RETURN" in row["detail"] and "40ш" in row["detail"]
+
+
+def test_the_audit_line_carries_her_day_count_and_the_pin(client, as_role):
+    """Гар хоног ба падан-заалт нь ТОХИРСОН АГШИНДАА audit-д буудаг (H5).
+
+    «Хэн, хэзээ, ХЭДЭН хоног гэж тохирсон» нь мөнгөний шийдвэр. Зөвхөн хожмын
+    засвар бүртгэгдээд анхны тохиролт мөргүй үлдвэл гарын үсгийн ард хэн
+    зогсож байсныг дараа нь асуух аргагүй болно.
+    """
+    h = as_role("otgoo")
+    cid, mid, gid = _contract(client, as_role, h)
+    late = _late_lot(client, as_role, h, cid, mid, gid)
+    r = client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": _iso(12),
+        "lines": [{"material_id": mid, "grade_id": gid, "qty": 30,
+                   "issue_line_id": late["id"], "billed_days_override": 10}]})
+
+    trail = client.get("/api/audit?entity=movement", headers=h).json()
+    row = next(a for a in trail
+               if a["action"] == "create" and a["entity_id"] == r.json()["id"])
+    assert "гар хоног 10" in row["detail"]
+    assert f"падан #{late['id']}" in row["detail"]
+
+
+def test_factory_issue_is_audited_too(client, as_role):
+    """Даргын ачилт ч мөрөө үлдээнэ — нөөц хөдөлгөх бүхэн бүртгэгдэнэ."""
+    h = as_role("otgoo")
+    cid, mid, gid = _contract(client, as_role, h)
+    hd = as_role("darga")
+    r = client.post(f"/api/contracts/{cid}/movements", headers=hd, json={
+        "type": "ISSUE", "date": _iso(5), "note": "Нэмэлт олголт",
+        "lines": [{"material_id": mid, "grade_id": gid, "qty": 10}]})
+
+    trail = client.get("/api/audit?entity=movement", headers=h).json()
+    row = next(a for a in trail
+               if a["action"] == "create" and a["entity_id"] == r.json()["id"])
+    assert "ISSUE" in row["detail"]
 
 
 # ---------- Хавсралт: ТҮҮНИЙ тоо цаасан дээр, тэмдэгтэйгээ ----------

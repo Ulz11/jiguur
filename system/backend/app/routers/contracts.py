@@ -496,15 +496,25 @@ def _check_pin(db: Session, c: models.Contract, mv_date: date, material_id: int,
 
 
 # ГАР ХОНОГ (H5/R8): «Хоёр тал 12 хоног гэж гарын үсэг зурсан бол 12 нь
-# хэлцлийн баримт». Хоног нь ЦОНХНЫ дотор л утгатай — цонхонд багтахгүй тоо
-# нь дараагийн циклийн мөнгийг чимээгүй идэх тул ЭНД зогсоно.
-def _check_billed_days(c: models.Contract, mv: models.Movement, days: int):
+# хэлцлийн баримт». Тэгвэл бичсэн тоо нь ЯГ тэрээрээ нэхэгдэх, эс бөгөөс
+# ЧАНГА татгалзах хоёрын нэг л байх ёстой — гуравдахь зам (чимээгүй багасгах)
+# нь яг H5-ийн урьдчилан сэргийлэх гэсэн зөрчил өөрөө.
+#
+# Хязгаарыг хөдөлгүүр ӨӨРӨӨ хэлнэ (`billing.max_billed_days` → `override_cap`):
+# буцаалт хасагдах падангуудын хамгийн жижиг цонх. Циклийн уртаар шалгадаг
+# байсан нь дунд циклд гарсан падангийн үед ЗӨРДӨГ — зөвшөөрөгдсөн 12 нь
+# хавсралт дээр 10 болж хэвлэгддэг байв.
+def _check_billed_days(c: models.Contract, day: date, material_id: int, grade_id: int,
+                       qty: float, days: int, *, pin: int | None = None,
+                       line_id: int | None = None, prior: list[dict] = ()):
     if days < 0:
         raise HTTPException(400, "Хоног сөрөг байж болохгүй")
-    win = billing.cycle_of(c, mv.date)
-    if win and days > (win[1] - win[0]).days:
-        raise HTTPException(400, f"Гар хоног циклийн уртаас ({(win[1] - win[0]).days} "
-                                 f"хоног) их байж болохгүй")
+    cap = billing.max_billed_days(c, day, material_id, grade_id, qty,
+                                  pin=pin, line_id=line_id, prior=prior)
+    if cap is not None and days > cap:
+        raise HTTPException(400, f"Гар хоног {cap} хоногоос их байж болохгүй — "
+                                 f"тэр падангаас буцсан хэсэг энэ циклд ихдээ "
+                                 f"{cap} хоног гадаа байсан")
 
 
 @router.patch("/movement-lines/{lid}")
@@ -535,8 +545,6 @@ def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends
     detail = {k: getattr(body, k) for k in DETAIL_FIELDS
               if getattr(body, k) is not None}
     if "billed_days_override" in body.model_fields_set:
-        if body.billed_days_override is not None:
-            _check_billed_days(c, mv, body.billed_days_override)
         detail["billed_days_override"] = body.billed_days_override
     if detail and mv.type != "RETURN":
         raise HTTPException(400, "Буцаалтын дэлгэрэнгүйг зөвхөн буцаалтын мөрд засна")
@@ -558,6 +566,18 @@ def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends
     new_wo = detail.get("writeoff_qty", ln.writeoff_qty)
     if mv.type == "RETURN" and new_rep + new_wo > new_qty + 0.001:
         raise HTTPException(400, "Засвар + акт нь буцаалтын тооноос их байна")
+    # Гар хоногийг ШИНЭ тоо/заалтаар нь шалгана. ТОО ба ЗААЛТ нь өөрсдөө
+    # хязгаарыг хөдөлгөдөг (буцаалт өөр падан руу халина) тул хоногоо
+    # хөндөөгүй засвар дээр ч ХАДГАЛАГДСАН тоог дахин шалгана — эс бөгөөс
+    # чимээгүй хумилт хаалганы араар буцаж орно.
+    if "billed_days_override" in detail:
+        ov_days = detail["billed_days_override"]            # `None` = ТЭГЛЭХ
+    else:
+        ov_days = ln.billed_days_override if mv.type == "RETURN" else None
+    if ov_days is not None:
+        new_pin = detail["issue_line_id"] if "issue_line_id" in detail else ln.issue_line_id
+        _check_billed_days(c, mv.date, ln.material_id, ln.grade_id, new_qty,
+                           ov_days, pin=new_pin, line_id=ln.id)
     if mv.status == "done" and body.qty is not None:
         if not _timeline_ok(c, {(ln.material_id, ln.grade_id)}, line_qty={ln.id: new_qty}):
             raise HTTPException(400, TIMELINE_ERR)
@@ -1000,11 +1020,33 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
     if body.type not in ("ISSUE", "RETURN", "WRITEOFF"):
         raise HTTPException(400, "Буруу төрөл")
     status = "pending" if body.type == "ISSUE" else "done"
+    # ---- ЭХЛЭЭД БҮГДИЙГ НЯГТАЛНА, дараа нь мөр үүснэ ----
+    # Хөдөлгөөнөө урьдчилж үүсгэвэл хагас бүтсэн мөрүүд нь хуваарилалтын
+    # тооцоонд (`billing.consumed_lots`) орж, гар хоногийн хязгаарыг өөрөө
+    # хөдөлгөнө. Тиймээс нягтлал нь БҮХЭЛДЭЭ DB-д хүрэхээс өмнө болно.
+    if body.type == "RETURN":
+        prior: list[dict] = []
+        for ln in body.lines:
+            out = billing.qty_on(c, ln.material_id, ln.grade_id, body.date)
+            if ln.qty > out + 0.001:
+                raise HTTPException(400, f"Түрээсэнд байгаагаас их буцаалт (гадаа: {out:g})")
+            # Заалт ба гар хоног нь одоо БҮРТГЭХ АГШИНД ирдэг (UI илгээнэ) —
+            # засварын замтай ЯГ ижил хаалгаар нягтлагдана.
+            if ln.issue_line_id:
+                _check_pin(db, c, body.date, ln.material_id, ln.grade_id, None,
+                           ln.issue_line_id)
+            if ln.billed_days_override is not None:
+                _check_billed_days(c, body.date, ln.material_id, ln.grade_id, ln.qty,
+                                   ln.billed_days_override, pin=ln.issue_line_id,
+                                   prior=prior)
+            prior.append(billing.draft_line(body.date, ln.material_id, ln.grade_id,
+                                            ln.qty, ln.issue_line_id))
     mv = models.Movement(contract_id=cid, type=body.type, date=body.date,
                          note=body.note, status=status)
     db.add(mv)
     db.flush()
     defaults = billing.default_rates(c)
+    marks: list[str] = []
     for ln in body.lines:
         rate = None
         if body.type == "ISSUE":
@@ -1015,21 +1057,18 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
                 raise HTTPException(400, "Агуулахад хүрэлцэхгүй")
         repair_fee = writeoff_fee = 0.0
         if body.type == "RETURN":
-            out = billing.qty_on(c, ln.material_id, ln.grade_id, body.date)
-            if ln.qty > out + 0.001:
-                raise HTTPException(400, f"Түрээсэнд байгаагаас их буцаалт (гадаа: {out:g})")
-            # Заалт ба гар хоног нь одоо БҮРТГЭХ АГШИНД ирдэг (UI илгээнэ) —
-            # засварын замтай ЯГ ижил хаалгаар нягтлагдана.
-            if ln.issue_line_id:
-                _check_pin(db, c, body.date, ln.material_id, ln.grade_id, None,
-                           ln.issue_line_id)
-            if ln.billed_days_override is not None:
-                _check_billed_days(c, mv, ln.billed_days_override)
             m = db.get(models.Material, ln.material_id)
             repair_fee = ln.repair_qty * (m.repair_fee if m else 0)
             price = db.query(models.MaterialGradePrice).filter_by(
                 material_id=ln.material_id, grade_id=ln.grade_id).first()
             writeoff_fee = ln.writeoff_qty * (price.nb_price if price else 0)
+            # ГАР ХОНОГ ба ПАДАН-ЗААЛТ бол хоёулаа МӨНГӨНИЙ шийдвэр (H5) —
+            # тохирсон АГШИНДАА audit-д буух ёстой, зөвхөн хожмын засвартаа биш.
+            name = m.name if m else f"#{ln.material_id}"
+            if ln.billed_days_override is not None:
+                marks.append(f"{name}: гар хоног {ln.billed_days_override}")
+            if ln.issue_line_id:
+                marks.append(f"{name}: падан #{ln.issue_line_id}")
         if body.type == "WRITEOFF":
             price = db.query(models.MaterialGradePrice).filter_by(
                 material_id=ln.material_id, grade_id=ln.grade_id).first()
@@ -1044,6 +1083,12 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
                                    writeoff_qty=ln.writeoff_qty, writeoff_fee=writeoff_fee))
     db.commit()
     db.refresh(mv)
+    qty = sum(ln.qty for ln in body.lines)
+    audit.log(db, user, "create", "movement", mv.id,
+              f"№{c.no} · {mv.date} · {mv.type} {qty:g}ш"
+              + (f" ({mv.status})" if mv.status != "done" else "")
+              + ("".join(f" · {x}" for x in marks))
+              + (f" · {mv.note}" if mv.note else ""))
     if status == "done":
         billing.apply_movement_stock(db, mv)
     return {"id": mv.id, "status": mv.status}

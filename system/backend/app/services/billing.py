@@ -156,14 +156,77 @@ def _override_of(contract: models.Contract, ln: models.MovementLine, day: date):
     return None if win is None else (int(days), win[0])
 
 
-def _lots(contract: models.Contract) -> list[dict]:
+def _allocate(pool: list[dict], qty: float, pin: int | None) -> list[tuple[dict, float, bool]]:
+    """Буцаалт/акт АЛЬ падангуудаас хасагдах вэ — ГАНЦ дүрэм, ганц газарт.
+
+    Эхлээд `issue_line_id`-аар заасан падангаас (тухайн агшны үлдэгдлээр
+    хязгаарлаж), үлдсэнийг нь FIFO-гоор (`pool` нь хуучнаас шинэ рүү
+    эрэмбэлэгдсэн). Буцна: `[(падан, авсан тоо, заасан эсэх)]`.
+
+    Үлдэгдлийг ЭНД хуулбар дээр бууруулна — дуудагч нь өөрөө (`_lots`) эсвэл
+    огт хөндөхгүй (`consumed_lots`) байж болно. Хуваарилалт хоёр газар хоёр
+    өөр байх боломжгүй болсноор ВАЛИДАЦИ ба ХӨДӨЛГҮҮР нэг тоо руу хардаг.
+    """
+    out: list[tuple[dict, float, bool]] = []
+    left = {l["line_id"]: l["left"] for l in pool}
+    remain = qty
+    if pin:
+        lot = next((l for l in pool if l["line_id"] == pin), None)
+        if lot is not None:
+            take = min(remain, left[lot["line_id"]])
+            if take > 0:
+                out.append((lot, take, True))
+                left[lot["line_id"]] -= take
+                remain -= take
+    for lot in pool:
+        if remain <= 0.0000001:
+            break
+        take = min(remain, left[lot["line_id"]])
+        if take <= 0:
+            continue
+        out.append((lot, take, False))
+        left[lot["line_id"]] -= take
+        remain -= take
+    return out
+
+
+class _DraftLine:
+    """Хараахан ҮҮСЭЭГҮЙ (эсвэл засагдах гэж буй) буцаалтын мөрийн ЗӨӨЛӨН хувилбар.
+
+    Хадгалахаас ӨМНӨ «энэ мөр аль падангаас хасагдах вэ» гэдгийг ЯГ тооцооны
+    хуваарилалтаар асуухад л хэрэгтэй — тиймээс `_lots`-д MovementLine-ийн
+    оронд орох хамгийн бага гадаргуу.
+    """
+    __slots__ = ("id", "material_id", "grade_id", "qty", "issue_line_id",
+                 "billed_days_override")
+
+    def __init__(self, d: dict, new_id: int | None = None):
+        # Шинэ мөрд СӨРӨГ id — жинхэнэ мөрийн id-тай хэзээ ч мөргөлдөхгүй тул
+        # «энэ мөр аль падангаас хассан» гэдгийг `takes`-аас шүүж болно.
+        self.id = d["line_id"] if d.get("line_id") is not None else new_id
+        self.material_id = d["material_id"]
+        self.grade_id = d["grade_id"]
+        self.qty = d["qty"]
+        self.issue_line_id = d.get("issue_line_id")
+        self.billed_days_override = None
+
+
+# Шинэ мөр ҮРГЭЛЖ хамгийн сүүлд ордог: жинхэнэ түлхүүр нь (огноо, mv.id, ln.id)
+# бөгөөд шинэ id-ууд бүгдээс ИХ байна.
+_DRAFT_KEY = 2 ** 62
+
+
+def _lots(contract: models.Contract, drafts: list[dict] = ()) -> list[dict]:
     """Гэрээний бүх падан — баталгаажсан (done) ОЛГОЛТЫН мөр бүр нэг падан.
 
-    Падан бүр өөрийн тариф, огноо, тоотой. Буцаалт/акт паданг ХААНА:
-    эхлээд `issue_line_id`-аар заасан падангаас (тухайн өдрийн үлдэгдлээр
-    хязгаарлаж), үлдсэнийг нь (material, grade) дотор FIFO-гоор.
+    Падан бүр өөрийн тариф, огноо, тоотой. Буцаалт/акт паданг ХААНА
+    (`_allocate`): эхлээд заасан падангаас, үлдсэнийг нь FIFO-гоор.
     Хамаарал нь ХАДГАЛАГДАХГҮЙ, бодогдоно — тул хоёр паданг дамнасан буцаалт
     өөрөө хуваагдана. Хүлээгдэж буй (pending) олголт ХЭЗЭЭ Ч тооцоонд орохгүй.
+
+    `drafts` — хараахан ХАДГАЛАГДААГҮЙ буцаалтын мөрүүд (`consumed_lots`).
+    `line_id` нь байвал ТЭР мөрийг орлоно (засвар), эс бөгөөс шинэ мөр болж
+    хамгийн сүүлд ордог. Тооцоонд ОРОЛЦОХГҮЙ — зөвхөн хуваарилалтыг асуух зам.
 
     Падан бүр хоёр бүртгэл авч явна:
       · `consumed` — (огноо, тоо, ГАР ХОНОГ). ЗӨВХӨН тооцоонд: `_lot_segments`
@@ -173,6 +236,7 @@ def _lots(contract: models.Contract) -> list[dict]:
         оролцохгүй, зөвхөн ХАРУУЛАХ (`return_attribution`) зориулалттай.
     """
     defaults = default_rates(contract)
+    subs = {d["line_id"]: _DraftLine(d) for d in drafts if d.get("line_id") is not None}
     lots: list[dict] = []
     eats: list[tuple] = []
     for mv in contract.movements:
@@ -187,7 +251,10 @@ def _lots(contract: models.Contract) -> list[dict]:
                              "rate": line_rate(contract, ln, defaults),
                              "left": ln.qty, "consumed": [], "takes": [], "_key": key})
             else:
-                eats.append((key, ln))
+                eats.append((key, subs.get(ln.id, ln)))
+    for i, d in enumerate(drafts):
+        if d.get("line_id") is None:
+            eats.append(((d["date"], _DRAFT_KEY, i), _DraftLine(d, -(i + 1))))
     lots.sort(key=lambda l: l["_key"])
 
     def _eat(lot: dict, day: date, take: float, ln, pinned: bool):
@@ -199,31 +266,77 @@ def _lots(contract: models.Contract) -> list[dict]:
 
     for key, ln in sorted(eats, key=lambda e: e[0]):
         day = key[0]
-        remain = ln.qty
         pool = [l for l in lots if l["material_id"] == ln.material_id
                 and l["grade_id"] == ln.grade_id and l["date"] <= day]
-        # 1) заасан падан — тухайн өдрийн үлдэгдлээс ИЛҮҮГ авахгүй
-        if ln.issue_line_id:
-            pinned = next((l for l in pool if l["line_id"] == ln.issue_line_id), None)
-            if pinned:
-                take = min(remain, pinned["left"])
-                if take > 0:
-                    _eat(pinned, day, take, ln, True)
-                    remain -= take
-        # 2) үлдсэнийг FIFO — хамгийн хуучин падангаас
-        for lot in pool:
-            if remain <= 0.0000001:
-                break
-            take = min(remain, lot["left"])
-            if take <= 0:
-                continue
-            _eat(lot, day, take, ln, False)
-            remain -= take
+        for lot, take, pinned in _allocate(pool, ln.qty, ln.issue_line_id):
+            _eat(lot, day, take, ln, pinned)
 
     for lot in lots:
         lot.pop("_key")
         lot["consumed"].sort(key=lambda e: e[0])
     return lots
+
+
+# ---------- ГАР ХОНОГИЙН ДЭЭД ХЯЗГААР (H5) ----------
+#
+# «Хоёр тал 12 хоног гэж гарын үсэг зурсан бол 12 нь хэлцлийн баримт» — гэвч
+# нэг падангаас буцсан хэсэг нь ТЭР ПАДАН ЦИКЛДЭЭ ОРСОН өдрөөс өмнө гадаа
+# байж чадахгүй. Тиймээс хязгаар нь циклийн урт БИШ, ПАДАНГИЙН ЦОНХ.
+#
+# Энэ илэрхийлэл нь ГАНЦ эх сурвалж: `_lot_segments` ба `return_attribution`
+# хумихдаа, роутер валидаци хийхдээ ЯГ үүнийг дууддаг. Хоёр тал зөрөх нь
+# боломжгүй — зөрөх нь яг тэр буг байсан (зөвшөөрөгдсөн тоо чимээгүй багасч,
+# хавсралт дээр өөр тоо хэвлэгдэнэ).
+
+def override_cap(lot_date: date, win: tuple[date, date]) -> int:
+    """Тухайн цонхонд ЭНЭ падангийн хамгийн урт боломжит хоног."""
+    return (win[1] - max(lot_date, win[0])).days
+
+
+def draft_line(day: date, material_id: int, grade_id: int, qty: float,
+               pin: int | None = None) -> dict:
+    """Нэг хадгалагдаагүй буцаалтын мөрийн тодорхойлолт (`prior`-т хураахад)."""
+    return {"line_id": None, "date": day, "material_id": material_id,
+            "grade_id": grade_id, "qty": qty, "issue_line_id": pin}
+
+
+def consumed_lots(contract: models.Contract, day: date, material_id: int,
+                  grade_id: int, qty: float, *, pin: int | None = None,
+                  line_id: int | None = None,
+                  prior: list[dict] = ()) -> list[dict]:
+    """Энэ буцаалт АЛЬ падангуудаас хасагдах вэ — тооцооны ЯГ тэр хуваарилалт.
+
+    `line_id` заасан бол тэр мөрийг (хадгалагдсан утгаараа биш) ЭНЭ тоо/заалтаар
+    ОРЛУУЛЖ бодно — засвар нь өөрийнхөө хасалттай зөрчилдөхгүй.
+    `prior` — ижил хүсэлтийн ӨМНӨХ мөрүүд (`draft_line`): нэг буцаалтад нэг
+    материал хоёр мөртэй ирвэл хоёр дахь нь эхнийхийнхээ дараа хасагдана.
+    """
+    drafts = [*prior, draft_line(day, material_id, grade_id, qty, pin)]
+    if line_id is not None:
+        drafts[-1]["line_id"] = line_id
+    probe = line_id if line_id is not None else -len(drafts)
+    return [lot for lot in _lots(contract, drafts)
+            if any(t["line_id"] == probe for t in lot["takes"])]
+
+
+def max_billed_days(contract: models.Contract, day: date, material_id: int,
+                    grade_id: int, qty: float, *, pin: int | None = None,
+                    line_id: int | None = None,
+                    prior: list[dict] = ()) -> int | None:
+    """Гар хоногийн ДЭЭД ХЯЗГААР — хөдөлгүүр яг үүгээр хумидаг тул валидаци ч.
+
+    Буцаалт хэд хэдэн падан дамнавал хамгийн ЖИЖИГ цонх шийднэ: тэр падан
+    дээр хумигдвал нийт дүн нь гарын үсэгтэй тооноос доош унана. Циклд
+    хамаарахгүй огноо (`cycle_of` → None) бол хязгаар байхгүй.
+    """
+    win = cycle_of(contract, day)
+    if win is None:
+        return None
+    caps = [override_cap(lot["date"], win)
+            for lot in consumed_lots(contract, day, material_id, grade_id, qty,
+                                     pin=pin, line_id=line_id, prior=prior)]
+    # Падангүй (бүрэн буцаагдсан) бол цонхны урт — хуучин зан төлөв хэвээр
+    return min(caps) if caps else (win[1] - win[0]).days
 
 
 def return_attribution(contract: models.Contract) -> dict[int, list[dict]]:
@@ -249,7 +362,11 @@ def return_attribution(contract: models.Contract) -> dict[int, list[dict]]:
             days = max((t["date"] - start).days, 0)
             billed = days
             if t["ov"] is not None and win is not None:
-                billed = min(t["ov"][0], (win[1] - start).days)
+                # `min` нь ХАМГААЛАЛТ: роутерын валидаци (`max_billed_days`) яг
+                # энэ `override_cap`-аар татгалздаг тул API-гаар орсон тоо хэзээ
+                # ч хумигдахгүй. Загварыг ШУУД (тест, миграци) хөндсөн үед л
+                # ажиллана — хумилт нь амьд зам БИШ, тор.
+                billed = min(t["ov"][0], override_cap(lot["date"], win))
             # Тариф нь ТЭР БУЦААЛТ нэхэгдсэн цонхны хүчинтэй утга (R3 / H6) —
             # хавсралт дээр хэвлэгдэх тоотой яг нэг заамаас.
             eff = resolve_rate(contract, lot["material_id"], lot["grade_id"],
@@ -283,8 +400,8 @@ def _lot_segments(lot: dict, d_from: date, d_to: date) -> list[dict]:
       · зөвхөн буцаалт БУУСАН цикл — цонхны эхлэл нь тэр циклийн эхлэлтэй
         таарсан үед л (өмнөх/дараагийн цикл ердийнхөөрөө нэхэгдэнэ);
       · зөвхөн цонх дотор буусан буцаалт (`start < ed < d_to`);
-      · хоног нь цонхонд багтана (`min(хоног, цонхны үлдсэн урт)`) — нэг мөр
-        өөрийн циклийн уртаас ИЛҮҮГ хэзээ ч нэхэхгүй.
+      · хоног нь ПАДАНГИЙН цонхонд багтана (`override_cap`) — нэг мөр тэр
+        падан циклдээ орсноос хойшхи хоногоос ИЛҮҮГ хэзээ ч нэхэхгүй.
     """
     start = max(lot["date"], d_from)
     if start >= d_to:
@@ -300,7 +417,10 @@ def _lot_segments(lot: dict, d_from: date, d_to: date) -> list[dict]:
             walk.append((ed, eq))
             continue
         q -= eq                                  # алхалтаас САЛНА
-        days = min(ov[0], (d_to - start).days)
+        # `min` нь ХАМГААЛАЛТ, амьд зам БИШ: роутер `max_billed_days`-ээр яг
+        # энэ `override_cap`-аар татгалзсан тул API-гаар ирсэн тоо ХУМИГДАХГҮЙ
+        # (`return_attribution`-тай нэг илэрхийлэл — зөрөх нь боломжгүй).
+        days = min(ov[0], override_cap(lot["date"], (d_from, d_to)))
         if eq > 0 and days > 0:
             out.append({"seg_from": start, "seg_to": ed, "qty": eq,
                         "days": days, "override": True})
