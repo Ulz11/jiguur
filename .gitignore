@@ -34,3 +34,15 @@ desktop.ini
 
 # Claude Code-ийн түр worktree (бүтэн репогийн хуулбар + .secret агуулдаг)
 .claude/worktrees/
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+
+# E2E (Playwright)
+/test-results/
+/playwright-report/

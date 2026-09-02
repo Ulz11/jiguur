@@ -1,0 +1,25 @@
+{
+  "name": "jiguur",
+  "version": "1.0.0",
+  "description": "Барилгын материалын **түрээс, худалдаа, тооцоо, санхүү**-г нэг дор хөтөлдөг систем. Messenger чат, гар падан, Numbers файлын оронд.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ulz11/jiguur.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Ulz11/jiguur/issues"
+  },
+  "homepage": "https://github.com/Ulz11/jiguur#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^26.4.0"
+  }
+}
