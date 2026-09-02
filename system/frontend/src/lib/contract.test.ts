@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { endDateLabel, CYCLE_MODES, cycleModeLabel, cycleModeHint } from "./contract";
+import { endDateLabel, CYCLE_MODES, cycleModeLabel, cycleModeHint, cycleModeBadge } from "./contract";
 
 // Гэрээний дуусах огноо нь ХООСОН байх нь хэвийн (компани түүнийг тавьдаггүй).
 // Тэр хоосон утга дэлгэц дээр «None», «null», хоосон зай болж гарвал Отгоо
@@ -83,5 +83,27 @@ describe("cycleModeHint", () => {
       expect(out).not.toContain("undefined");
       expect(out).not.toContain("NaN");
     }
+  });
+});
+
+// ЖАГСААЛТЫН тэмдэг: календарь горимд Л гарна. Анхны «30 хоног» нь гэрээний
+// 95% — түүнд тэмдэг зүүвэл жагсаалт бүхэлдээ тэмдэгтэй болж, ЯЛГАА нь алга
+// болно (Отгоо дэлгэц дээр болж буйг анзаардаггүй — ялгарах зүйл ЦӨӨН байх
+// тусам харагдана).
+
+describe("cycleModeBadge — зөвхөн ОНЦГОЙ горим тэмдэглэгдэнэ", () => {
+  it("календарь сарын гэрээ толины ҮГЭЭРЭЭ тэмдэглэгдэнэ", () => {
+    expect(cycleModeBadge("month")).toBe("Календарь сар");
+    expect(cycleModeBadge("month")).toBe(cycleModeLabel("month"));
+  });
+
+  it("анхны «30 хоног» горимд тэмдэг ГАРАХГҮЙ", () => {
+    for (const v of [null, undefined, "", "  ", "days"]) {
+      expect(cycleModeBadge(v)).toBe("");
+    }
+  });
+
+  it("танихгүй утга ч тэмдэг үүсгэхгүй — шуугиан нэмэхгүй", () => {
+    expect(cycleModeBadge("quarter")).toBe("");
   });
 });

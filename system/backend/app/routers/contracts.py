@@ -159,8 +159,9 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
     gmap, mmap = _maps(db)
     live = _live_items(db, c, today, gmap, mmap)
     out = {**serializers.contract_row(c, today),
+           # `cycle_mode` нь `contract_row`-оос ирнэ (жагсаалт ба дэлгэрэнгүй
+           # НЭГ эх сурвалжтай) — энд дахин бичихгүй.
            "vat_percent": c.vat_percent, "cycle_days": c.cycle_days,
-           "cycle_mode": billing.cycle_mode(c),
            "items": live,
            # Материалын мөр бүрийн доор задардаг хөдөлгөөний дэвтэр (зөвхөн унших)
            "material_lines": serializers.material_lines(c, gmap, mmap, today),

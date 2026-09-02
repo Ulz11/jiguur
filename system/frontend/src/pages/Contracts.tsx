@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, money, sayaFmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Empty, Refreshing, useToast } from "../ui";
 import { cycleShortLabel } from "../lib/cycle";
+import { cycleModeBadge, cycleModeHint } from "../lib/contract";
 import { rowClickProps } from "../lib/rowClick";
 import { contractFilterFrom, contractHref, type ContractFilter } from "../lib/links";
 import { UNCHARGED } from "../lib/penalty";
@@ -111,7 +112,21 @@ export default function Contracts() {
                       №{c.no} · {c.start_date}-с
                       {c.deposit > 0 && ` · барьцаа ${sayaFmt(c.deposit)}₮`}</span>
                   </td>
-                  <td className="td"><TypePill type={c.type} /></td>
+                  {/* ТООЦООНЫ МӨЧЛӨГ (R5 / H3) — «аль харилцагч календарь
+                      сараар тооцогддог вэ» гэдэг жагсаалтаас уншигдана.
+                      Анхны «30 хоног» нь гэрээнүүдийн бараг бүгд тул тэмдэг
+                      АВАХГҮЙ: бүгд тэмдэгтэй бол ялгаа нь алга болно. Өнгө нь
+                      саарал — энэ бол сануулга биш, гэрээний НӨХЦӨЛ. */}
+                  <td className="td">
+                    <div className="flex flex-col items-start gap-1">
+                      <TypePill type={c.type} />
+                      {cycleModeBadge(c.cycle_mode) && (
+                        <span className="pill-grey" title={cycleModeHint(c.start_date)}>
+                          {cycleModeBadge(c.cycle_mode)}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="td min-w-[150px]">
                     {c.cycle ? (
                       <>

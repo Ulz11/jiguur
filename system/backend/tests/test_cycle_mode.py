@@ -454,3 +454,21 @@ def test_only_the_manager_may_switch_the_cycle_mode(client, as_role):
                      json={"cycle_mode": "month"})
     assert r.status_code == 403
     assert client.get(f"/api/contracts/{cid}", headers=h).json()["cycle_mode"] == "days"
+
+
+def test_contract_list_rows_carry_the_cycle_mode(client, as_role):
+    """ЖАГСААЛТ дээр «аль харилцагч календарь сараар тооцогддог вэ» гэдэг харагдана.
+
+    Дэлгэрэнгүй хуудас `cycle_mode`-оо мэддэг байсан ч жагсаалт нь мэддэггүй
+    байв — Отгоо гэрээ бүрийг нээж үзэхээс өөр аргагүй болдог. Календарь горим
+    нь нэхэмжлэлийн ОГНОО, циклийн УРТЫГ (31 хоногийн сар) хоёуланг өөрчилдөг
+    тул жагсаалтаас ялгагдах ёстой.
+    """
+    h = as_role("otgoo")
+    monthly = _make_contract(client, as_role, 40, cycle_mode="month")
+    plain = _make_contract(client, as_role, 41)
+
+    rows = {r["id"]: r for r in client.get("/api/contracts", headers=h).json()}
+    assert rows[monthly]["cycle_mode"] == "month"
+    # Анхны горим нь ЧИМЭЭГҮЙ дутуу байж болохгүй — талбар нь ҮРГЭЛЖ ирнэ
+    assert rows[plain]["cycle_mode"] == "days"

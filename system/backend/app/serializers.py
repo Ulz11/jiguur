@@ -242,6 +242,11 @@ def contract_row(c: models.Contract, today: date):
             "deposit_returned": c.deposit_returned,
             "deposit_settled_date": str(c.deposit_settled_date) if c.deposit_settled_date else None,
             "state": state, "status": c.status,
+            # ТООЦООНЫ МӨЧЛӨГ (R5 / H3) — «days» эсвэл «month». ЖАГСААЛТАД ч
+            # хэрэгтэй: календарь горим нь нэхэмжлэлийн огноо, циклийн уртыг
+            # (31 хоногийн сар) хоёуланг өөрчилдөг тул «аль харилцагч сараар
+            # тооцогддог вэ» гэдэг гэрээ бүрийг НЭЭЛГҮЙГЭЭР харагдана.
+            "cycle_mode": billing.cycle_mode(c),
             # ХААСАН ӨДӨР (H7) — эцсийн тасархай циклийн төгсгөлийг тодорхойлно
             "closed_date": str(c.closed_date) if getattr(c, "closed_date", None) else None,
             "balance": round(b["outstanding"] + b["accruing"]),
