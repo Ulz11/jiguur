@@ -135,6 +135,17 @@ export type DataFactory = {
   addAkt(contractId: number, opts: { date: string; amount: number; note: string }): Promise<any>;
   bookPenalty(contractId: number, asOf?: string): Promise<any>;
   closePreview(contractId: number, closeDate?: string): Promise<any>;
+  /** Гэрээний талбар засах (барьцаа тавих гэх мэт). */
+  patchContract(contractId: number, body: Record<string, unknown>): Promise<any>;
+  /**
+   * Цалингийн бодолт — ӨӨРИЙН, ДАВТАГДАШГҮЙ үетэй.
+   *
+   * Сервер (period, half) хосыг ГАНЦ удаа хүлээж авдаг тул хуваалцсан үе
+   * дээр хоёр дахь гүйлт 400 буцаана (`--repeat-each` дээр баталгаатай).
+   * Тиймээс өнгөрсөн зууны санамсаргүй сар сонгоно: seed-ийн «Сүүлийн
+   * бодолт» (2026-08) эрэмбээрээ дээр хэвээр үлдэнэ.
+   */
+  createSalaryRun(): Promise<{ id: number; period: string; half: number }>;
 };
 
 /**
@@ -359,6 +370,26 @@ export function makeDataFactory(api: APIRequestContext): DataFactory {
       const q = closeDate ? `?close_date=${closeDate}` : '';
       return ok('хаалтын урьдчилсан тооцоо',
                 () => api.get(`/api/contracts/${contractId}/close-preview${q}`));
+    },
+
+    async patchContract(contractId, body) {
+      return ok('гэрээ засах', () => api.patch(`/api/contracts/${contractId}`, { data: body }));
+    },
+
+    async createSalaryRun() {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const period = `19${10 + Math.floor(Math.random() * 89)}-${pad(1 + Math.floor(Math.random() * 12))}`;
+        const half = 1 + Math.floor(Math.random() * 2);
+        const res = await send(() => api.post('/api/salary/runs',
+                                              { data: { period, half, daily_days: {} } }));
+        if (res.ok()) return { id: (await res.json()).id as number, period, half };
+        /* 400 = тэр үе аль хэдийн бодогдсон (өөр тест). Дараагийн үеийг оролдоно. */
+        if (res.status() !== 400) {
+          expect(res.ok(), `цалингийн бодолт — ${res.status()} ${await res.text()}`).toBeTruthy();
+        }
+      }
+      throw new Error('цалингийн бодолтод сул үе олдсонгүй');
     },
   };
   return factory;

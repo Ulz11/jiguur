@@ -61,16 +61,26 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
 
+  /* ХЭМЖҮҮРТЭЙ ХОЛБООТОЙ тестүүд нь ЗӨВХӨН өөрийн дэлгэцэн дээр утгатай.
+     `tests/e2e/her/fits-her-screen.spec.ts` нь 1366×768-ыг, `targets.spec.ts`
+     нь даргын планшетыг хэмждэг: өөр проект дээр гүйвэл хэмжүүр нь өөр болж,
+     «ногоон» нь юу ч гэрчлэхээ болино. Спек дотор `test.skip` тавьвал матриц
+     100 гаруй «алгасав» мөрөөр дүүрч, жинхэнэ тоо алга болно — тиймээс
+     хамрах хүрээг проект дээрээ, НЭГ мөрөөр зарлана. */
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] },
+      testIgnore: ['**/her/fits-her-screen.spec.ts', '**/her/targets.spec.ts'] },
     /* Отгоогийн ЖИНХЭНЭ дэлгэц. 1366×768 дээр л таслагддаг зүйлс (13 мөрт цэс,
        KPI-н мөр) энэ проектоор баригдана — «миний дээр болж байна» гэдэг
        хангалтгүй. */
-    { name: 'otgoo-1366', use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 768 } } },
+    { name: 'otgoo-1366', use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 768 } },
+      testIgnore: ['**/her/targets.spec.ts'] },
     /* Даргын планшет — touch, iPad (WebKit). */
-    { name: 'darga-tablet', use: { ...devices['iPad (gen 7)'] } },
+    { name: 'darga-tablet', use: { ...devices['iPad (gen 7)'] },
+      testIgnore: ['**/her/fits-her-screen.spec.ts'] },
     /* Safari/WebKit — Mac дээр ажиллана (`~/Library/Caches/ms-playwright/webkit-*`). */
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] },
+      testIgnore: ['**/her/fits-her-screen.spec.ts', '**/her/targets.spec.ts'] },
   ],
 
   webServer: {
