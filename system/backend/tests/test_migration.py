@@ -141,3 +141,48 @@ def test_loader_full_and_idempotent(db):
     assert r2["clients"] == 0 and r2["loans"] == 0 and r2["barter"] == 0
     assert db.query(models.Client).filter_by(name="Реал Констракшн").count() == 1
     assert db.query(models.BarterAsset).count() == 2
+
+
+def test_migrated_contracts_never_arm_penalty(db):
+    """P0-10 «алданги=0»: шилжүүлсэн гэрээ ХОЁУЛАА (OB ба идэвхтэй) алдангигүй
+    төрнө. Тэр амьдралдаа алданги нэхээгүй — хөшүүрэг нь зэвсэглээгүй байж,
+    зөвхөн ТЭР гараар асаана (H2)."""
+    from app.services import migration as M
+    from app.seed import seed_base
+
+    seed_base(db)
+    cl = models.Client(name="Алдангигүй Харилцагч")
+    db.add(cl)
+    db.commit()
+    as_of = date(2026, 8, 24)
+
+    M.create_opening_balance(db, cl, 10_000_000, as_of)
+    M.create_active_contract(db, cl, "26/01", as_of, items=[
+        {"material": "Хэв хашмал 6012", "grade": "А", "qty": 100, "daily_rate": 330},
+    ])
+
+    db.refresh(cl)
+    assert len(cl.contracts) == 2
+    for c in cl.contracts:
+        assert c.penalty_percent == 0, f"№{c.no} алданги зэвсэглэсэн: {c.penalty_percent}"
+
+
+def test_credit_client_keeps_her_deposit(db):
+    """Арвинбулагийн кейс: үлдэгдэл СӨРӨГ (илүү төлсөн) БОЛОВЧ 3 сая₮ барьцаа
+    байршуулсан. Кредит болгож хөрвүүлэхдээ барьцааг унагаавал бодит 3 сая₮
+    чимээгүй алга болно — барьцаа балансын ГАДНА (R21), тэмдгээс хамаарахгүй."""
+    from app.services import migration as M
+
+    cl = models.Client(name="Илүү Төлсөн Барьцаатай")
+    db.add(cl)
+    db.commit()
+    as_of = date(2026, 9, 1)
+    M.create_opening_balance(db, cl, -4_820_388, as_of, deposit=3_000_000)
+
+    db.refresh(cl)
+    assert sum(c.deposit for c in cl.contracts) == 3_000_000
+    pays = db.query(models.Payment).filter_by(client_id=cl.id).all()
+    assert len(pays) == 1 and pays[0].amount == 4_820_388   # кредит хэвээр
+    assert db.query(models.Invoice).count() == 0            # өр үүсээгүй
+    for c in cl.contracts:
+        assert c.penalty_percent == 0

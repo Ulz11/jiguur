@@ -12,6 +12,13 @@ system/backend/backups/
 system/backend/uploads/
 system/backend/.secret
 system/backend/migration/real_data.json
+# P0-10 шилжилтийн STAGING сан — бодит харилцагчийн нэр, үлдэгдэл, утас
+system/backend/jiguur-real.db
+system/backend/jiguur-real.db-wal
+system/backend/jiguur-real.db-shm
+# Тулгалтын тайлан — бодит харилцагч тус бүрийн ₮ агуулна
+docs/Тулгалтын тайлан.md
+docs/Тулгалтын тайлан.html
 
 # Node
 system/frontend/node_modules/

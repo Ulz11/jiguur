@@ -15,18 +15,27 @@ def create_opening_balance(db: Session, client: models.Client, amount: float,
                            as_of: date, deposit: float = 0):
     if abs(amount) < 0.5 and deposit <= 0:
         return None
+    credit = None
     if amount < 0:
-        p = models.Payment(client_id=client.id, date=as_of, amount=abs(amount),
-                           method="BANK", note="Эхний үлдэгдэл — илүү төлөлт (кредит)")
-        db.add(p)
-        db.commit()
-        return None
+        # Сөрөг үлдэгдэл = «илүү» (R18) → хуваарилагдаагүй кредит төлбөр.
+        credit = models.Payment(client_id=client.id, date=as_of, amount=abs(amount),
+                                method="BANK",
+                                note="Эхний үлдэгдэл — илүү төлөлт (кредит)")
+        db.add(credit)
+        if deposit <= 0:
+            db.commit()
+            return None
+        # Барьцаа нь балансын ГАДНА (R21) — үлдэгдэл сөрөг байсан ч
+        # байршуулсан барьцаа хэвээрээ. Гэрээг зөвхөн барьцааг АВЧ ЯВАХ
+        # зорилгоор нээнэ; нэхэмжлэл үүсэхгүй.
     # penalty 0: шилжүүлсэн хуучин үлдэгдэлд автомат алданги тооцохгүй
     # (шаардлагатай бол гэрээ дээр нь гараар асаана)
     c = models.Contract(no=f"OB-{client.id}", client_id=client.id, type="rent",
                         start_date=as_of, cycle_days=30, penalty_percent=0,
                         deposit=deposit, status="active",
-                        note="Үлдэгдэл шилжүүлэлт — хуучин системээс")
+                        note="Үлдэгдэл шилжүүлэлт — хуучин системээс"
+                             + (" (илүү төлөлттэй, барьцаа хадгалав)"
+                                if credit is not None else ""))
     db.add(c)
     db.flush()
     inv = None
@@ -52,8 +61,10 @@ def create_active_contract(db: Session, client: models.Client, no: str, as_of: d
     """
     if db.query(models.Contract).filter_by(no=no).first():
         return None
+    # penalty 0: тэр амьдралдаа алданги нэхээгүй — шилжүүлэлт хөшүүргийг
+    # ЗЭВСЭГЛЭХГҮЙ (P0-10 «алданги=0», H2). Гэрээ дээр нь гараар асаана.
     c = models.Contract(no=no, client_id=client.id, type="rent", start_date=as_of,
-                        cycle_days=30, penalty_percent=0.5, status="active",
+                        cycle_days=30, penalty_percent=0, status="active",
                         vat_percent=vat_percent,
                         note=note or "Идэвхтэй гэрээ — хуучин системээс шилжүүлэв")
     db.add(c)
