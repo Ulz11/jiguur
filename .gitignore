@@ -48,3 +48,6 @@ node_modules/
 /playwright-report/
 /playwright-results.xml
 /playwright-results.json
+
+# Vitest/Playwright түр гаралт
+system/frontend/test-results/
