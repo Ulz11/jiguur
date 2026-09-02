@@ -254,7 +254,7 @@ export default function Salary() {
               ? [{ label: "НДШ суутгал", value: "−" + money(payRun.total_ndsh), accent: "danger" as const }] : []),
           ]}
           total={{ label: "Гарт олгох нийт", value: money(payRun.total_net), accent: "money" }}
-          note="Олгосны дараа зардалд тусна."
+          note="Олгосны дараа зардалд тусна. Энэ үйлдлийг буцаах боломжгүй."
           confirmLabel="Олгох ✓" danger
           onClose={() => setPayRun(null)}
           onConfirm={async () => {

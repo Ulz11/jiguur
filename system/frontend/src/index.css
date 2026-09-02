@@ -497,9 +497,20 @@ body::before {
 .command-hero > * { position: relative; z-index: 1; }
 /* Navy hero дээр pattern давхарга (.19 screen) дэвсгэрийг гэрэлтүүлдэг —
    0.7-оос 0.82 болгож нөөц авав (navy дээр 7.67:1). */
-.command-hero [class~="text-white/80"] { color: rgba(255,255,255,.82); font: 12px var(--jz-mono); letter-spacing: .035em; }
+/* `:not(.pill)` — энэ дүрэм нь ХАЯГИЙН мөрд зориулагдсан. Pill дээр унахад
+   «алданги +X₮» нь mono/400, дэргэдэх «≈X₮ нэхэгдээгүй» нь sans/600 болж,
+   ХОСООРОО уншигдах ёстой хоёр тэмдэг өөр өөр бичгээр гардаг байв. Ялгаа нь
+   ЗӨВХӨН хүрээ, өнгөөр явна (доорх хоёр дүрэм). */
+.command-hero [class~="text-white/80"]:not(.pill) { color: rgba(255,255,255,.82); font: 12px var(--jz-mono); letter-spacing: .035em; }
 .command-hero [class~="text-[28px]"] { font: 700 34px/1.1 var(--jz-display); letter-spacing: -.045em; }
 .command-hero .pill { border: 1px solid rgba(255,255,255,.16); }
+/* ТООЦООЛОЛ ба ӨР — hero дээрх хоёр тэмдгийг ХҮРЭЭ нь ялгана (R25 / H2):
+   дүүрэн хүрээ = НЭХЭГДСЭН өр, тасархай = зөвхөн тооцоолол. Дээрх
+   `.command-hero .pill` (0,2,0) нь Tailwind-ийн `border-dashed` (0,1,0)
+   утилитыг дардаг тул тасархай хүрээ ХЭЗЭЭ Ч зурагдаж байгаагүй. Утилитаар
+   жин нэмж зодохын оронд НЭРЛЭСЭН анги: ижил давхарга, ижил жин, дараа нь
+   бичигдсэн тул хожино. */
+.command-hero .pill-estimate { border: 1px dashed rgba(255,255,255,.35); }
 .command-metric { padding: 21px; position: relative; overflow: hidden; border: 1px solid var(--color-line); background: rgba(255,255,255,.89); }
 .command-metric::before { content: ""; position: absolute; top: 0; left: 0; width: 27px; border-top: 2px solid var(--jz-orange); }
 /* KPI-ийн нэр — тухайн тоо ЮУ болохыг хэлдэг тул мэдээлэл. 11px байсныг

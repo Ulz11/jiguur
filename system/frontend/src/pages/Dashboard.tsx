@@ -196,6 +196,12 @@ export default function Dashboard() {
     </div>
   );
 
+  /* Ачилт баталгаажуулах бол НЭГ ЧИГИЙН хаалга: «хүлээгдэж буй» төлөв рүү
+     буцах зам байхгүй — зөвхөн менежерийн ЦУЦЛАЛТ (шалтгаантай, дэвтэрт
+     үлддэг) бий. Тиймээс үр дагаврынхаа хажууд үүнийг ил хэлнэ (`note`).
+     `danger` авахгүй: улаан бол «хэтэрсэн · акт · устгах»-ын өнгө
+     (UI-ЗАРЧИМ §4 «Өнгөний утга»), энэ бол даргын ӨДӨР ТУТМЫН хэвийн үйлдэл —
+     өдөрт олон удаа улаан товч дарвал улаан утгаа алдана. */
   const confirmDialog = ask && (
     <ConfirmModal
       title="Ачилт баталгаажуулах"
@@ -208,7 +214,7 @@ export default function Dashboard() {
       total={lines && lines.length > 0
         ? { label: "Ачих нийт", value: `${fmt(lines.reduce((s: number, l: any) => s + l.qty, 0))} ш` }
         : undefined}
-      note="Баталгаажуулмагц нөөц хөдөлж, тооцоо эхэлнэ."
+      note="Баталгаажуулмагц нөөц хөдөлж, тооцоо эхэлнэ. Энэ үйлдлийг буцаах боломжгүй."
       confirmLabel="Ачсан ✓"
       onClose={() => setAsk(null)}
       onConfirm={() => confirmShipment(ask.id)} />
@@ -278,14 +284,18 @@ export default function Dashboard() {
           {/* АЛДАНГИ ХОЁР ТЭМДЭГ (R25 / H2). Дүүрэн тэмдэг = НЭХЭГДСЭН, өр —
               «+». Тасархай хүрээтэй, ≈ угтвартай нь ТООЦООЛОЛ: Отгоо хэдийг
               өршөөж байгаагаа анх удаа харна. Нэг тэмдэг болгож нийлүүлбэл
-              «машин өр зохиов» гэж уншигдана. */}
+              «машин өр зохиов» гэж уншигдана.
+              ⚠ Тасархай хүрээг Tailwind-ийн `border-dashed` утилитаар өгч
+              байсан нь `index.css`-ийн `.command-hero .pill` дүрэмд дарагдаж
+              ХЭЗЭЭ Ч зурагдаагүй — хоёр тэмдэг ялгаагүй харагдана гэсэн үг.
+              Одоо нэрлэсэн `.pill-estimate` ангиар (ижил давхарга, ижил жин). */}
           <div className="mt-2 flex gap-1.5 flex-wrap">
             {k.penalty_booked > 0 && (
               <span className="pill bg-white/10 text-white/80"
                     title={money(k.penalty_booked)}>алданги +{sayaFmt(k.penalty_booked)}₮</span>
             )}
             {k.penalty_unbooked > 0 && (
-              <span className="pill border border-dashed border-white/35 text-white/70"
+              <span className="pill pill-estimate text-white/70"
                     title={`Тооцоолол — ${money(k.penalty_unbooked)} · нэхэгдээгүй`}>
                 ≈{sayaFmt(k.penalty_unbooked)}₮ {UNCHARGED}
               </span>

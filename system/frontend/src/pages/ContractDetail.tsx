@@ -2473,9 +2473,20 @@ function DepositModal({ d, onClose, onDone }: any) {
           Суутгах дүн өрөөс их байна — илүү нь кредит болж дараагийн нэхэмжлэлд автоматаар суусна.
         </p>
       )}
+      {/* НЭГ УДААГИЙН хаалга: сервер гэрээ бүрд `settle-deposit`-ыг ГАНЦ удаа
+          хүлээж авдаг (дараа нь «Барьцаа аль хэдийн тооцогдсон») бөгөөд суутгал
+          нь ЖИНХЭНЭ төлбөрийн бичилт болж авлагад суудаг. Тиймээс дүнгээ
+          буруу хуваасан ч засах зам БАЙХГҮЙ — дарахаас ӨМНӨ хэлнэ.
+          Цонх нь `FormModal` хэвээр: талбартай модал `dirty`-гүй байж
+          БОЛОХГҮЙ (UI-ЗАРЧИМ §4) — `ConfirmModal` нь энгийн `Modal` дээр
+          суудаг тул санамсаргүй гадна товшилт бичсэн дүнг чимээгүй устгана.
+          Харин ГҮЙЦЭТГЭХ товч нь гэрээ хаах wizard-тай ижил улаан жинтэй. */}
+      <p className="text-[12.5px] text-danger mt-2.5">
+        ⚠ Барьцааны тооцоо гэрээнд НЭГ л удаа хийгдэнэ. Энэ үйлдлийг буцаах боломжгүй.
+      </p>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={busy || over || (apply + ret) <= 0} onClick={async () => {
+        <button className="btn-primary !bg-danger" disabled={busy || over || (apply + ret) <= 0} onClick={async () => {
           setBusy(true);
           try {
             await api(`/api/contracts/${d.id}/settle-deposit`, { method: "POST",

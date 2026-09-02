@@ -89,11 +89,14 @@ export default function Clients() {
                         title={money(c.receivable)}>{sayaFmt(c.receivable)}₮</span>
                   {/* АВЛАГА = нэхэмжилсэн + одоогийн циклийн хуримтлал (H9b).
                       Энэ тоо дашбоард, профайл, Авлага цуглуулах дээр ЯГ ижил.
-                      Задаргаа нь доор — «үүнээс нэхэмжлэгдээгүй». */}
+                      Задаргаа нь доор — «үүнээс нэхэмжлэгдээгүй».
+                      Дэд мөр нь толгойтойгоо ИЖИЛ нягтралтай («сая»): бүтэн
+                      төгрөгөөр хэвлэвэл «12.3 сая₮» дээр «2,345,678₮» тогтож,
+                      нэг мөрөнд хоёр өөр хэмжүүр уншигдана. */}
                   {receivableSplit(c.receivable, c.receivable_invoiced).showUninvoiced && (
                     <span className="block text-[12px] text-t3"
                           title={`Одоогийн цикл — ${money(c.receivable_uninvoiced)}`}>
-                      {uninvoicedLine(c.receivable_uninvoiced)}</span>)}
+                      {uninvoicedLine(c.receivable_uninvoiced, sayaFmt)}</span>)}
                   {/* Нэхэгдсэн нь ӨР (улаан «+»); нэхэгдээгүй нь зөвхөн
                       тооцоолол (бүдэг «≈» + шошго) — нийлүүлж болохгүй (H2). */}
                   {c.penalty_booked > 0 && <span className="block text-[12px] text-danger"
