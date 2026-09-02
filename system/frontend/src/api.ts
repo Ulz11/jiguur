@@ -1,5 +1,5 @@
 import { errorMessage, FALLBACK_ERROR } from "./lib/errors";
-import { markSessionExpired } from "./lib/session";
+import { isSessionExpiry, markSessionExpired } from "./lib/session";
 
 export type User = { id: number; name: string; role: string; username: string };
 
@@ -25,7 +25,12 @@ export async function api(path: string, opts: RequestInit = {}): Promise<any> {
   const t = token();
   if (t) headers["Authorization"] = `Bearer ${t}`;
   const res = await fetch(path, { ...opts, headers });
-  if (res.status === 401) {
+  /* 401 нь ХОЁР өөр зүйл байж болно. Токентой хүсэлтийн 401 = хугацаа дууссан
+     (шидэгдэнэ, тайлбар үлдээнэ). НЭВТРЭХ хүсэлтийн 401 = нэр/нууц үг буруу —
+     энэ нь ердийн алдаа тул доорх `!res.ok` салбар нь серверийн ЯГ үгийг
+     дамжуулна. Ялгаагүй болгосноос болж нууц үгээ буруу бичсэн хүнд
+     «Нэвтрэлт дууссан» гэж ХУДАЛ хэлдэг байв. */
+  if (res.status === 401 && isSessionExpiry(path)) {
     clearAuth();
     if (!location.pathname.includes("login")) {
       // Хуудас руу шидэгдэхийн ӨМНӨ шалтгааныг үлдээнэ — эс бөгөөс Отгоо

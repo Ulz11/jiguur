@@ -19,6 +19,7 @@
 """
 import os
 import sys
+from calendar import monthrange
 from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -407,7 +408,12 @@ def test_switch_mode_on_an_invoiced_contract_previews_then_rebuilds(client, as_r
     for inv in after["invoices"]:
         cs = date.fromisoformat(inv["cycle_start"])
         ce = date.fromisoformat(inv["cycle_end"])
-        assert cs.day == min(start.day, 28) or cs.day == start.day or cs == start
+        # Цикл нь гэрээний ЭХЛЭХ ӨДРӨӨР зангидагдана, богино сард тухайн сарын
+        # сүүлийн өдөр хүртэл хумигдана (`billing.add_months` → `monthrange`).
+        # Өмнө нь «эсвэл 28» гэсэн таамаг байсан нь 5-р сарын 31-нд эхэлсэн
+        # гэрээ дээр унадаг: 6-р сарын цикл нь 30-нд эхэлнэ (28 ч биш, 31 ч биш).
+        assert cs.day == min(start.day, monthrange(cs.year, cs.month)[1]), \
+            f"{cs} нь {start.day}-ний зангилаанаас гарлаа"
         assert 28 <= (ce - cs).days <= 31, f"{cs} – {ce} нь сарын цонх биш"
         idx = (cs.year - start.year) * 12 + cs.month - start.month + 1
         assert inv["no"].endswith(f"-{idx}")

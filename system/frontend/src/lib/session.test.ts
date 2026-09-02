@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { markSessionExpired, takeSessionExpired } from "./session";
+import { isSessionExpiry, markSessionExpired, takeSessionExpired } from "./session";
 
 /* Отгоо гэрээ бөглөж байтал токен нь хүчингүй болж, нэвтрэх хуудас руу
    шидэгддэг. Тайлбар нь ЯГ НЭГ УДАА гарч ирээд арилах ёстой — эс бөгөөс
@@ -36,6 +36,23 @@ describe("session expiry flag", () => {
     markSessionExpired();
     takeSessionExpired();
     expect(g.sessionStorage.size).toBe(0);
+  });
+
+  /* РЕГРЕСС (E2E-ээр баригдсан): буруу нууц үг оруулахад дэлгэц дээр
+     «Нэвтрэлт дууссан» гэж гарч байв. Отгоо хэзээ ч нэвтрээгүй — тэр зүгээр л
+     нууц үгээ буруу дарсан. `api.ts` нь БҮХ 401-ийг «хугацаа дууссан» гэж
+     үзээд серверийн ЯГ үгийг («Нэвтрэх нэр эсвэл нууц үг буруу байна»)
+     залгидаг байлаа. */
+  it("нэвтрэх хүсэлтийн 401 нь «хугацаа дууссан» БИШ", () => {
+    expect(isSessionExpiry("/api/auth/login")).toBe(false);
+  });
+
+  it("бусад хүсэлтийн 401 нь хугацаа дууссаных", () => {
+    expect(isSessionExpiry("/api/clients")).toBe(true);
+    expect(isSessionExpiry("/api/contracts/1")).toBe(true);
+    expect(isSessionExpiry("/api/auth/me")).toBe(true);
+    // Нууц үг солих нь нэвтэрсэн хүний үйлдэл — түүний 401 бол хугацаа дууссан
+    expect(isSessionExpiry("/api/auth/change-password")).toBe(true);
   });
 
   it("санах ой хаалттай байсан ч нэвтрэлтийг зогсоохгүй", () => {
