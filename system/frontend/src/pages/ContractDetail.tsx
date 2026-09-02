@@ -19,7 +19,7 @@ import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { daysBetween, todayIso } from "../lib/schedule";
 import { isVoided, movementStockRows, voidRowClass, voidTitle } from "../lib/void";
 import { AKT_KINDS, AktKind, aktAmountText, aktCycle, aktCycleLabel, aktKind,
-         aktLandingText, aktSigned } from "../lib/akt";
+         aktLandingText, aktSigned, aktTotal } from "../lib/akt";
 import { EffKey, RATE_RESTATE_WARN, effectiveDate, effectiveOptions,
          rateChangeScope, rateChangeText } from "../lib/rate";
 import { ClosePreview, OutRow, Prefill, StepKey, applyPrefill, closeSteps,
@@ -130,6 +130,9 @@ export default function ContractDetail() {
      болсонгүй» гэсэн бүтэлгүй үйлдэл болно (Чадварын харьцуулалт H2). */
   const pen = penaltySplit(d.penalty, d.penalty_booked);
   const canCharge = canVoid && d.penalty_percent > 0 && pen.showUnbooked;
+  /* Актын Σ (R12 / H4) — «нийт актнаас 15% хасч тооцлоо» гэдэг ТҮҮНИЙ
+     дүрмийн суурь тоо. Хүчингүй мөр орохгүй. */
+  const aktSum = aktTotal(d.akt_entries);
   const sections = materialSections(d.items || [], d.material_lines || []);
   const pendingMv = d.movements.filter((m: any) => m.status === "pending").length;
   const showHist = histOpen ?? pendingMv > 0;
@@ -518,6 +521,26 @@ export default function ContractDetail() {
                     </tr>
                   ))}
                 </tbody>
+                {/* Σ — Отгоогийн ӨӨРИЙНХ нь дүрмийн СУУРЬ тоо: «нийт актнаас
+                    15% хасч тооцлоо». Тэр «нийт акт» гэдэг тоо энэ систем дээр
+                    хаана ч байгаагүй тул мөр бүрийг толгойдоо нэмэхээс өөр арга
+                    үлддэггүй байв. Нэмэгдэл ба хөнгөлөлт НЭГ тэмдэгт дүнд
+                    эвхэгдэнэ; ХҮЧИНГҮЙ мөр орохгүй (`aktTotal`). */}
+                <tfoot>
+                  <tr>
+                    <td className="td font-bold text-ink">Нийт акт</td>
+                    <td className="td text-right tabular-nums whitespace-nowrap">
+                      <b className={aktSum < 0 ? "text-money" : "text-ink"}>
+                        {aktAmountText(aktSum)}
+                      </b>
+                    </td>
+                    <td className="td text-[12.5px] text-t2" colSpan={3}>
+                      {d.akt_entries.some(isVoided)
+                        ? "хүчинтэй бичилтүүдийн нийлбэр (хүчингүй нь орсонгүй)"
+                        : "нэмэгдэл ба хөнгөлөлтийн нийлбэр"}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             )}
           </div>

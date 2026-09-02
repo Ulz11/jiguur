@@ -497,6 +497,41 @@ def test_act_pdf_rows_list_live_akt_entries_only(db):
     assert [r["amount"] for r in rows] == [1_730_000, -259_500]
     assert rows[0]["date"] == "2026-03-25"
 
+    # «НИЙТ АКТ» — Отгоо эгчийн ӨӨРИЙНХ нь дүрмийн СУУРЬ тоо («нийт актнаас
+    # 15% хасч тооцлоо»). Урьд нь цаасан дээр мөр бүр тус тусдаа хэвлэгдээд,
+    # нийлбэр нь ХААНА Ч байхгүй байв. Хүчингүй мөр Σ-д ОРОХГҮЙ.
+    assert pdfgen.akt_doc_total(rows) == 1_470_500
+    assert pdfgen.akt_doc_total([]) == 0
+
+
+def test_act_pdf_draws_the_akt_total_line(client, as_role):
+    """Тооцоо нийлсэн акт нь «Нийт акт» мөртэйгээ зурагдана (нэмэгдэл + хөнгөлөлт).
+
+    Отгоо эгч «нийт актнаас 15% хасч тооцлоо» гэж бичдэг — тэр СУУРЬ тоо
+    цаасан дээр байх ёстой. PDF-ээс текст задлах сан төсөлд байхгүй тул
+    нийлбэрийг цэвэр функцээр (`akt_doc_total`), зурагдсаныг %PDF-ээр шалгана.
+    """
+    from app.services import pdfgen
+
+    h = as_role("otgoo")
+    _, cid = _setup(client, as_role)
+    assert _akt(client, h, cid, date=iso(35), amount=1_730_000,
+                note="Тээвэр", confirm=True).status_code == 200
+    assert _akt(client, h, cid, date=iso(34), amount=-259_500,
+                note="Нийт актнаас 15% хасав", confirm=True).status_code == 200
+
+    # Цаасан дээр гарах мөрүүд = хүчинтэй актын бичилтүүд (`akt_doc_rows`-ийн
+    # хэлбэр). Тэдгээрийн Σ нь ЯГ энэ тоо байх ёстой.
+    rows = [{"date": a["date"], "note": a["note"], "amount": a["amount"]}
+            for a in _detail(client, h, cid)["akt_entries"] if not a["voided"]]
+    assert len(rows) == 2
+    assert pdfgen.akt_doc_total(rows) == 1_470_500
+
+    r = client.get(f"/api/contracts/{cid}/act-pdf", headers=h)
+    assert r.status_code == 200, r.text[:200]
+    assert r.content[:4] == b"%PDF"
+    assert len(r.content) > 1000
+
 
 def test_documents_render_with_an_akt_present(client, as_role):
     """Гурван баримт бүгд актын мөртэйгээ зурагдана (%PDF)."""

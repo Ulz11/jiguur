@@ -16,6 +16,7 @@ import { isoOf, parseIso } from "./calendar";
 import { cycleLabel } from "./cycle";
 import { fmt, parseMoney } from "./num";
 import { daysBetween } from "./schedule";
+import { isVoided, type Voidable } from "./void";
 
 export type AktKind = "charge" | "discount";
 
@@ -42,6 +43,18 @@ export function aktKind(amount: number): AktKind {
 export function aktAmountText(amount: number): string {
   const sign = amount < 0 ? "−" : "+";
   return `${sign}${fmt(Math.abs(amount))}₮`;
+}
+
+/** ХҮЧИНТЭЙ актын бичилтүүдийн Σ — нэмэгдэл ба хөнгөлөлт НЭГ тэмдэгт дүнд.
+ *
+ *  Отгоо эгчийн өөрийнх нь дүрэм («нийт актнаас 15% хасч тооцлоо ×0.85») энэ
+ *  тоог СУУРЬ болгодог. Тэр «нийт акт» гэсэн тоо дэлгэц дээр ч, цаасан дээр ч
+ *  байхгүй байсан тул мөр бүрийг нүдээрээ нэмэхээс өөр арга үлддэггүй байв.
+ *
+ *  ХҮЧИНГҮЙ мөр Σ-д ОРОХГҮЙ: цуцлалт бол устгал биш — мөр нь түүхэндээ
+ *  зурагдсан хэвээр үлдэж, зөвхөн ТООЦООНООС гарна (`lib/void.ts`-ийн дүрэм). */
+export function aktTotal(rows: (Voidable & { amount: number })[] | null | undefined): number {
+  return (rows || []).reduce((s, r) => (isVoided(r) ? s : s + (r.amount || 0)), 0);
 }
 
 /** Нэхэмжлэл, хавсралт, акт-PDF дээр гарах шошго — СЕРВЕРИЙНХТЭЙ ижил үг

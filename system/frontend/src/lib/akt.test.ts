@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AKT_KINDS, aktAmountText, aktCycle, aktCycleLabel, aktKind,
-         aktLabel, aktLandingText, aktSigned } from "./akt";
+         aktLabel, aktLandingText, aktSigned, aktTotal } from "./akt";
 
 describe("актын тэмдэг — Нэмэгдэл / Хөнгөлөлт", () => {
   it("хоёр л сонголт байна, нэмэгдэл нь эхэнд", () => {
@@ -85,5 +85,38 @@ describe("акт АЛЬ циклд унах вэ", () => {
     expect(aktLandingText(c30, "2026-07-21"))
       .toBe("Огноо гэрээний эхлэлээс өмнө байна — цикл олдохгүй");
     expect(aktLandingText(c30, "")).toBe("");
+  });
+});
+
+/* АКТЫН Σ (R12 / H4) — Отгоогийн ӨӨРИЙНХ нь дүрмийн СУУРЬ тоо.
+   Түүний Excel дээр «нийт актнаас 15% хасч тооцлоо ×0.85» гэсэн бичилт бий.
+   Тэр «нийт акт» гэдэг тоо дэлгэц дээр ч, цаасан дээр ч байхгүй байсан тул
+   дүрмээ хэрэглэхийн тулд толгойдоо нэмэх л үлддэг байв. Нэмэгдэл ба
+   хөнгөлөлт хоёулаа НЭГ тэмдэгт нийлбэрт орно; ХҮЧИНГҮЙ мөр огт орохгүй. */
+
+describe("aktTotal — хүчинтэй бичилтүүдийн НЭГ тэмдэгт нийлбэр", () => {
+  it("нэмэгдэл ба хөнгөлөлт нэг дүнд эвхэгдэнэ", () => {
+    expect(aktTotal([{ amount: 1_206_500 }, { amount: 450_000 }, { amount: -259_500 }]))
+      .toBe(1_397_000);
+  });
+
+  it("ХҮЧИНГҮЙ мөр тоологдохгүй — цуцлалт бол устгал биш, тооцооноос гарах нь", () => {
+    expect(aktTotal([{ amount: 1_000_000 },
+                     { amount: 500_000, voided: true },
+                     { amount: -200_000 }])).toBe(800_000);
+  });
+
+  it("бүх мөр хүчингүй бол тэг", () => {
+    expect(aktTotal([{ amount: 900_000, voided: true }])).toBe(0);
+  });
+
+  it("хоосон / дутуу жагсаалт уначихгүй", () => {
+    expect(aktTotal([])).toBe(0);
+    expect(aktTotal(null)).toBe(0);
+    expect(aktTotal(undefined)).toBe(0);
+  });
+
+  it("нийлбэр нь СӨРӨГ ч байж болно — цэвэр хөнгөлөлттэй цикл бодит тохиолдол", () => {
+    expect(aktTotal([{ amount: 300_000 }, { amount: -500_000 }])).toBe(-200_000);
   });
 });

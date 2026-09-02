@@ -385,6 +385,17 @@ def akt_doc_rows(c: models.Contract) -> list[dict]:
             for a in billing.akt_entries_of(c)]
 
 
+def akt_doc_total(rows: list[dict]) -> float:
+    """Актын мөрүүдийн Σ — нэмэгдэл ба хөнгөлөлт НЭГ тэмдэгт дүнд.
+
+    Отгоо эгчийн өөрийнх нь дүрэм («нийт актнаас 15% хасч тооцлоо ×0.85») энэ
+    тоог СУУРЬ болгодог; урьд нь цаасан дээр мөр бүр тус тусдаа хэвлэгдээд
+    нийлбэр нь хаана ч байхгүй байв. `akt_doc_rows` аль хэдийн ХҮЧИНГҮЙ мөрийг
+    хассан тул энд бүх мөр тоологдоно.
+    """
+    return sum(r["amount"] for r in rows)
+
+
 def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
     """Тооцоо нийлсэн акт — хоёр тал гарын үсэг зурдаг хуудас (бодит форматыг дуурайв)."""
     today = date.today()
@@ -460,6 +471,14 @@ def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
             # Хөнгөлөлт нь тэмдгээрээ л ялгарна — «−259,500₮» гэж уншигдана
             p.cell(aw[2], 7, _money(r["amount"]), border=1, align="R")
             p.ln()
+        # «НИЙТ АКТ» — Отгоо эгчийн дүрмийн СУУРЬ тоо («нийт актнаас 15% хасч
+        # тооцлоо»). Мөр бүр тус тусдаа хэвлэгдээд нийлбэр нь хаана ч байхгүй
+        # бол тэр дүрмээ хэрэглэхийн тулд цаасан дээрээ гараар нэмэх л үлднэ.
+        # Нэхэмжлэлийн «Нийт» мөртэй ижил жинтэй (бүдүүн, 10 pt).
+        p.set_font("dejavu", "B", 10)
+        p.cell(aw[0] + aw[1], 8, "Нийт акт", border=1)
+        p.cell(aw[2], 8, _money(akt_doc_total(akt)), border=1, align="R")
+        p.ln()
         p.ln(6)
 
     p.set_font("dejavu", "", 9)
