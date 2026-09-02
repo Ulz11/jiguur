@@ -173,6 +173,52 @@ def test_nothing_accrues_after_the_close_date(db):
     assert all(s["cycle_start"] < date(2026, 5, 4) for s in _specs(c))
 
 
+def test_closed_contract_has_no_live_cycle_left(db):
+    """ХААГДСАН гэрээнд «явагдаж буй цикл» БАЙХГҮЙ — эцсийн тасархай цонх нь
+    аль хэдийн ЖИНХЭНЭ нэхэмжлэл болсон.
+
+    РЕГРЕСС (E2E-ээр баригдсан): `current_cycle_accrual` нь хаалтыг үл ойшоон
+    ЯГ ТЭР цонхны түрээсийг «амьд хуримтлал» гэж дахин буцаадаг байв. Авлага
+    нь ГАНЦ тодорхойлолттой (H9b: нэхэмжилсэн үлдэгдэл + хуримтлал) тул
+    гэрээний «Нийт үлдэгдэл», харилцагчийн авлага, дашбоардын KPI, Авлага
+    цуглуулах ДӨРВҮҮЛЭЭ хаагдсан гэрээ тутамд эцсийн циклийн дүнгээр
+    хөөрөгддөг байсан: 1,452,000₮-ийн оронд 1,914,000₮.
+    """
+    c, m, ga, gb = _issued(db)
+    mv(db, c, "RETURN", date(2026, 5, 3),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100, return_grade_id=gb.id)])
+    _closed(db, c, date(2026, 5, 3))
+    today = date(2026, 5, 3)                   # хаасан ӨДРӨӨРӨӨ харж байна
+    billing.ensure_invoices(db, c, today)
+
+    assert billing.current_cycle_accrual(c, today) is None
+    b = billing.contract_balance(c, today)
+    assert b["accruing"] == 0
+    outstanding = sum(billing.invoice_outstanding(i) for i in c.invoices)
+    # [3.20, 4.19) 30 хоног + [4.19, 5.04) 14 хоног
+    assert outstanding == pytest.approx(100 * 330 * (30 + 14))
+    assert billing.contract_receivable(c, today)["total"] == pytest.approx(outstanding)
+    assert billing.contract_receivable(c, today)["uninvoiced"] == 0
+
+
+def test_active_contract_still_accrues_its_running_cycle(db):
+    """Хаалтын засвар нь АМЬД гэрээг хөндөхгүй — хуримтлал хэвээр гүйнэ."""
+    c, m, ga, gb = _issued(db)
+    cur = billing.current_cycle_accrual(c, date(2026, 5, 3))
+    assert cur is not None
+    assert cur["accrued"] == pytest.approx(100 * 330 * 15)      # 4.19 → 5.03
+
+
+def test_legacy_closed_contract_keeps_its_old_accrual_behaviour(db):
+    """Огноогүй (хуучин) хаалт нь зан төлөвөө ОГТ өөрчлөхгүй — stub төрдөггүй
+    тул тэнд давхар тоолол ч байхгүй."""
+    c, m, ga, gb = _issued(db)
+    c.status = "closed"
+    db.commit()
+    db.refresh(c)
+    assert billing.current_cycle_accrual(c, date(2026, 5, 3)) is not None
+
+
 # ---------- 2. Дахин бодолт нь ЯГ ТҮҮНИЙГ дахин гаргана ----------
 
 def test_specs_are_stable_across_two_rebuilds(db):

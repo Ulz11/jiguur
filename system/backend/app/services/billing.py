@@ -16,6 +16,7 @@
   Нэхэгдсэн (`penalty_booked`) нь мөнгө; нэхэгдээгүй нь зөвхөн харагдац.
 """
 import json
+import threading
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
@@ -897,35 +898,86 @@ def spec_key(contract: models.Contract, cycle_start: date, cycle_end: date, no: 
     return no if contract.type == "sale" else (cycle_start, cycle_end)
 
 
+# ---------- ЗЭРЭГЦЭЭ ХҮСЭЛТИЙН ХААЛГА ----------
+# Гэрээ бүрд НЭГ түгжээ. `ensure_invoices` нь бараг БҮХ GET замаас дуудагддаг
+# (`/api/clients` идэвхтэй гэрээ бүрд, гэрээний дэлгэрэнгүй, дашбоард, авлага
+# цуглуулах, хаалтын урьдчилсан тооцоо, өдөр тутмын cron…). FastAPI-ийн sync
+# endpoint-ууд threadpool дээр ЗЭРЭГ гүйдэг тул хоёр хүсэлт нэг гэрээ дээр
+# амархан давхацна: хоёул «нэхэмжлэл алга» гэж уншаад, хоёул үүсгэнэ.
+# Үр дагавар нь ЗҮГЭЭР давхардсан мөр биш — тэр циклийн АВЛАГА ХОЁР ДАХИН
+# нэмэгдэнэ (нэхэмжлэл бол авлагын суурь, H9b «нэг тоо»).
+_INVOICE_LOCKS: dict[int, threading.Lock] = {}
+_INVOICE_LOCKS_GUARD = threading.Lock()
+
+
+def _contract_invoice_lock(contract_id: int) -> threading.Lock:
+    with _INVOICE_LOCKS_GUARD:
+        lock = _INVOICE_LOCKS.get(contract_id)
+        if lock is None:
+            lock = _INVOICE_LOCKS[contract_id] = threading.Lock()
+        return lock
+
+
+def _existing_invoice_keys(db: Session, contract: models.Contract) -> set:
+    """Гэрээн дээр ОДООГООР байгаа нэхэмжлэлийн түлхүүрүүд — DB-ЭЭС уншина.
+
+    `contract.invoices` цуглуулга нь ХУУЧИРСАН байж болно: энэ session гэрээгээ
+    уншсаны ДАРАА өөр хүсэлт нэхэмжлэл үүсгэчихсэн байх нь энгийн. Тэр хуучин
+    зурган дээр тулгуурлан шийдвэл ЯГ тэр циклийг дахин үүсгэнэ.
+    """
+    rows = (db.query(models.Invoice.cycle_start, models.Invoice.cycle_end, models.Invoice.no)
+            .filter(models.Invoice.contract_id == contract.id).all())
+    return {spec_key(contract, cs, ce, no) for cs, ce, no in rows}
+
+
 def ensure_invoices(db: Session, contract: models.Contract, today: date | None = None):
     """Дууссан цикл бүрд нэхэмжлэл автоматаар үүсгэнэ (байхгүй бол).
 
     ⚠ ЗӨВХӨН НЭМНЭ (append-only) — байгаа нэхэмжлэлд хэзээ ч хүрэхгүй, тул
     олон GET зам дээр давтан дуудагдахад аюулгүй. Дахин бодолт (устгаад дахин
     үүсгэх) нь `services/rebuild.py`-ийн ажил, зөвхөн засварын endpoint-оос.
+
+    ⚠ ЗЭРЭГЦЭЭ ХҮСЭЛТЭД ч аюулгүй: гэрээний түгжээний дор «байгааг УНШ →
+    дутууг БИЧ» хоёр алхам ХУВААГДАХГҮЙ. Түгжээ нь процессын дотор — систем
+    нэг uvicorn ажилчинтай ажилладаг (`run.sh` / `run.bat`), тиймээс энэ нь
+    бүрэн хаалт. Хэрэв хожим олон ажилчинтай болвол DB түвшний өвөрмөц
+    индекс (contract_id, cycle_start, cycle_end) нэмэх ёстой.
     """
     today = today or date.today()
     created = []
-    existing = {spec_key(contract, i.cycle_start, i.cycle_end, i.no) for i in contract.invoices}
-    for sp in derivable_invoice_specs(contract, today):
-        if spec_key(contract, sp["cycle_start"], sp["cycle_end"], sp["no"]) in existing:
-            continue
-        # relationship-д нэмнэ — эс бөгөөс тухайн session дотор ачаалагдсан
-        # contract.invoices цуглуулга хуучирч, авлага буруу тооцогдоно.
-        inv = models.Invoice(contract_id=contract.id, **sp)
-        contract.invoices.append(inv)
-        created.append(inv)
-    if created or contract.type == "sale":
-        db.commit()
+    with _contract_invoice_lock(contract.id):
+        existing = _existing_invoice_keys(db, contract)
+        for sp in derivable_invoice_specs(contract, today):
+            if spec_key(contract, sp["cycle_start"], sp["cycle_end"], sp["no"]) in existing:
+                continue
+            # relationship-д нэмнэ — эс бөгөөс тухайн session дотор ачаалагдсан
+            # contract.invoices цуглуулга хуучирч, авлага буруу тооцогдоно.
+            inv = models.Invoice(contract_id=contract.id, **sp)
+            contract.invoices.append(inv)
+            created.append(inv)
+        if created or contract.type == "sale":
+            db.commit()
     if created:
         apply_client_credit(db, contract.client_id)
     return created
 
 
 def current_cycle_accrual(contract: models.Contract, today: date | None = None):
-    """Одоогийн (дуусаагүй) циклийн хуримтлал — UI-д амьд харуулна."""
+    """Одоогийн (дуусаагүй) циклийн хуримтлал — UI-д амьд харуулна.
+
+    ⚠ ХААГДСАН ГЭРЭЭНД АМЬД ЦИКЛ БАЙХГҮЙ (H7). Хаалт нь эцсийн ТАСАРХАЙ
+    цонхыг ([циклийн эхлэл, хаасан өдөр + 1)) ЖИНХЭНЭ нэхэмжлэл болгодог
+    (`derivable_invoice_specs(..., close_date=)`). Хэрэв тэр цонхыг дээрээс нь
+    дахин «амьд хуримтлал» гэж тооцвол ЯГ ТЭР МӨНГӨ ХОЁР УДАА тоологдоно:
+    авлага = нэхэмжилсэн үлдэгдэл + хуримтлал гэсэн ГАНЦ тодорхойлолт (H9b)
+    тул гэрээний «Нийт үлдэгдэл», харилцагчийн авлага, дашбоардын KPI,
+    Авлага цуглуулах ДӨРВҮҮЛЭЭ хаагдсан гэрээ тутамд эцсийн циклийн дүнгээр
+    хөөрөгдөж байв. «Тоолуур ҮНЭХЭЭР зогсоно» гэдэг нь энэ.
+    """
     today = today or date.today()
     if contract.type != "rent":
+        return None
+    if close_day(contract) is not None:
         return None
     cycles = cycles_of(contract, today)
     if not cycles:

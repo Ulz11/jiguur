@@ -670,3 +670,55 @@ def test_upcoming_payment_none_when_nothing_is_out(db):
     c, m, ga, gb = setup_contract(db, start=start)
 
     assert billing.upcoming_payment(c, date.today()) is None
+
+
+# ---------- ЗЭРЭГЦЭЭ ХҮСЭЛТ: нэхэмжлэл ДАВХАРДАХГҮЙ ----------
+
+def test_two_stale_sessions_do_not_duplicate_invoices(tmp_path):
+    """ХОЁР зэрэг хүсэлт нэг гэрээний нэхэмжлэлийг ДАВХАР үүсгэж болохгүй.
+
+    РЕГРЕСС (E2E `--repeat-each` дээр баригдсан): `ensure_invoices` нь GET
+    зам БҮРЭЭС дуудагддаг (`/api/clients` идэвхтэй гэрээ бүрд, гэрээний
+    дэлгэрэнгүй, дашбоард, хаалтын урьдчилсан тооцоо, cron…). FastAPI-ийн
+    sync endpoint-ууд threadpool дээр ЗЭРЭГ гүйдэг тул хоёр хүсэлт нэг
+    гэрээ дээр давхацна: хоёул «нэхэмжлэл алга» гэж уншаад, хоёул үүсгэнэ.
+
+    Үр дагавар нь ЗҮГЭЭР давхардсан мөр биш — АВЛАГА ХОЁР ДАХИН нэмэгдэнэ
+    (нэхэмжлэл бол авлагын суурь, H9b «нэг тоо»). Отгоо эгчийн хувьд энэ нь
+    «машин өр зохиов» — тэр яг үүнээс болж Excel рүү буцна.
+
+    Энд тэр давхцлыг ТОДОРХОЙ хэлбэрээр дахин үүсгэнэ: хоёр session хоёулаа
+    гэрээгээ (ба хоосон нэхэмжлэлийн цуглуулгыг нь) НЭГ нь бичихээс ӨМНӨ
+    уншсан байна.
+    """
+    path = tmp_path / "race.db"
+    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+
+    with Session() as s0:
+        c, m, ga, gb = setup_contract(s0)
+        mv(s0, c, "ISSUE", date(2026, 3, 20),
+           [dict(material_id=m.id, grade_id=ga.id, qty=100)])
+        cid = c.id
+    today = date(2026, 5, 25)                      # 2 бүтэн цикл
+
+    s1, s2 = Session(), Session()
+    try:
+        c1 = s1.get(models.Contract, cid)
+        c2 = s2.get(models.Contract, cid)
+        assert list(c1.invoices) == [] and list(c2.invoices) == []   # хоёул ХООСОН харав
+
+        assert len(billing.ensure_invoices(s1, c1, today)) == 2      # эхнийх нь бичив
+        # Хоёр дахь нь ХУУЧИРСАН зурагтайгаа ирлээ — ДАХИН үүсгэх ЁСГҮЙ
+        assert billing.ensure_invoices(s2, c2, today) == []
+    finally:
+        s1.close()
+        s2.close()
+
+    with Session() as s3:
+        rows = s3.query(models.Invoice).filter_by(contract_id=cid).all()
+        assert len(rows) == 2, [f"{i.no} {i.cycle_start}" for i in rows]
+        assert len({(i.cycle_start, i.cycle_end) for i in rows}) == 2
+        # Авлага нь ХОЁР ДАХИН биш — яг хоёр циклийн дүн
+        assert sum(i.total for i in rows) == pytest.approx(2 * 100 * 330 * 30)
