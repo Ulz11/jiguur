@@ -246,11 +246,19 @@ def test_client_and_collections_split_penalty(client, as_role):
     assert col["penalty_unbooked"] == 0
 
 
-def test_factory_never_sees_penalty_split(client, as_role):
-    """Мөнгөний хана: шинэ талбарууд ч даргын хариунд ОРОХГҮЙ."""
+def test_factory_reads_the_penalty_split_too(client, as_role):
+    """Алдангийн ХОЁР НҮҮР даргад ч ирнэ — тэр асуухад хариулна.
+
+    ⚠ Урьд нь эсрэгээрээ («шинэ талбарууд ч даргын хариунд ОРОХГҮЙ»). Эзний
+    шийдвэрээр хана унав; НЭХЭХ эрх нь хэвээр хаалттай (fin — `book-penalty`).
+    Хоёр нүүр нь даргын дэлгэц дээр ч НИЙЛЭХГҮЙ: «нэхэгдсэн» нь өр, «тооцоо»
+    нь хөшүүрэг (H2) — тэдгээр нь тусдаа талбар хэвээр ирнэ.
+    """
     h, cl_id, cid = _overdue(client, as_role)
+    client.post(f"/api/contracts/{cid}/book-penalty", headers=h, json={"as_of": iso(0)})
     d = client.get(f"/api/contracts/{cid}", headers=as_role("darga")).json()
-    assert "penalty_booked" not in d and "penalty_unbooked" not in d
+    assert d["penalty_booked"] == 49_500 and d["penalty_unbooked"] == 0
+    assert d["penalty_booked"] + d["penalty_unbooked"] == d["penalty"]
 
 
 # ---------- 5. Анхны утга нь тохиргооноос ----------

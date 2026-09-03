@@ -197,10 +197,16 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
                             "next_start": str(billing.next_cycle_start(c, today))},
            "payments": [serializers.payment(p) for p in
                         db.query(models.Payment).filter_by(contract_id=c.id).order_by(models.Payment.date.desc()).all()]}
-    # Үйлдвэрийн дарга — тоо, зэрэглэл, огнооны хүн. Мөнгө нь дэлгэц дээр
-    # нуугдаад зогсохгүй, түүний ТОКЕН руу огт явахгүй (serializers-ийн тайлбар).
-    if user.role == "factory":
-        return serializers.factory_contract_detail(out)
+    # ⚠ ЭЗЭНИЙ ШИЙДВЭР (2026-09): үйлдвэрийн даргад мөнгө харуулахгүй байх нь
+    # НУУЦЛАЛЫН асуудал БИШ — ЭМХ ЦЭГЦНИЙХ. Дарга нь харилцагчийн, гэрээний
+    # мөнгөний талаар асуухад хариулж чаддаг байх ЁСТОЙ; зүгээр л ажлынх нь
+    # дэлгэц (ачилт, буцаалт, нөөц, механизм) мөнгөөр бөглөрөх ЁСГҮЙ.
+    #
+    # Тиймээс энд байсан `serializers.factory_contract_detail`-ийн ЗУРААС
+    # УСТСАН: хариу нь бүх рольд ИЖИЛ. Эмх цэгц нь frontend-ийн ажил —
+    # даргын дэлгэц дээр мөнгө нь НЭГ хэлбэрийн, ХУМИГДСАН «Санхүү»
+    # задаргаа дотор, ажлынх нь агуулгын ХОЙНО зогсоно (`ui.tsx`
+    # `FinanceDisclosure`; tests/e2e/money/money-wall.spec.ts).
     return out
 
 

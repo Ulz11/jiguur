@@ -219,8 +219,14 @@ def test_manager_may_void_and_it_is_audited(client, as_role):
     assert "Андуурч нэхсэн" in hit[0]["detail"]
 
 
-def test_factory_may_not_void_and_never_sees_the_charges(client, as_role):
-    """Алданги бол МӨНГӨ — үйлдвэрийн даргын токен руу огт явахгүй."""
+def test_factory_may_not_void_but_reads_the_charges(client, as_role):
+    """Дарга нэхэлтийг УНШИНА — цуцлахгүй.
+
+    ⚠ Урьд нь энэ тест «даргын токен руу огт явахгүй» гэдгийг барьдаг байв.
+    Эзний шийдвэрээр (2026-09) хана унав: «хэдэн төгрөгийн алданги нэхэгдсэн
+    бэ» гэдэг нь тэр хариулах ёстой асуулт. ЦУЦЛАХ нь мөнгөний засвар тул
+    403 ХЭВЭЭР — уншиж чадах бүхнээ хөдөлгөж чадна гэсэн үг биш.
+    """
     h, cl_id, cid = _overdue(client, as_role)
     _charge(client, h, cid)
     chid = _charges(client, h, cid)[0]["id"]
@@ -228,8 +234,9 @@ def test_factory_may_not_void_and_never_sees_the_charges(client, as_role):
 
     assert _void(client, darga, chid, confirm=True).status_code == 403
     d = _detail(client, darga, cid)
-    assert "penalty_charges" not in d, "даргад алдангийн нэхэлтийн түүх явжээ"
-    assert 49_500.0 not in _numbers(d), "нэхэгдсэн алдангийн тоо даргад үлджээ"
+    assert "penalty_charges" in d, "даргад алдангийн нэхэлтийн түүх ирсэнгүй"
+    assert 49_500.0 in _numbers(d), "нэхэгдсэн алдангийн тоо даргад ирсэнгүй"
+    assert [c["id"] for c in d["penalty_charges"]] == [c["id"] for c in _charges(client, h, cid)]
 
 
 def _numbers(x) -> set:

@@ -427,9 +427,15 @@ def test_finance_can_write_akt_but_factory_cannot(client, as_role):
     assert r.status_code == 403
 
 
-def test_factory_contract_detail_carries_no_akt_money(client, as_role):
-    """Даргын хариунд актын бүлэг ч, дүн ч ОГТ БАЙХГҮЙ."""
-    from tests.test_money_wall import numbers
+def test_factory_reads_the_akt_money_but_may_not_write_it(client, as_role):
+    """Дарга актын бичилтийг УНШИНА — бичихгүй (эрх ба харагдац тусдаа).
+
+    ⚠ Урьд нь энэ тест эсрэгийг барьдаг байв: «даргын хариунд актын бүлэг ч,
+    дүн ч ОГТ БАЙХГҮЙ». Эзний шийдвэрээр (2026-09) хана унав — тэр «энэ
+    гэрээнд ямар акт бичигдэв» гэж асуухад хариулах ёстой. Бичих эрх нь
+    дээрх `test_finance_can_write_akt_but_factory_cannot`-д ХЭВЭЭР хаалттай.
+    """
+    from tests.test_money_tidy import numbers
 
     h = as_role("otgoo")
     _, cid = _setup(client, as_role)
@@ -438,8 +444,10 @@ def test_factory_contract_detail_carries_no_akt_money(client, as_role):
     assert 1_234_567 in numbers(_detail(client, h, cid))       # менежерт БАЙНА
 
     payload = _detail(client, as_role("darga"), cid)
-    assert "akt_entries" not in payload
-    assert 1_234_567 not in numbers(payload)
+    assert "akt_entries" in payload, "даргад актын бүлэг ирсэнгүй"
+    assert 1_234_567 in numbers(payload), "даргад актын дүн ирсэнгүй"
+    assert [(a["date"], a["amount"], a["note"]) for a in payload["akt_entries"]] \
+        == [(a["date"], a["amount"], a["note"]) for a in _detail(client, h, cid)["akt_entries"]]
 
 
 # ---------- 5. БАРИМТ: хавсралт, нэхэмжлэл, акт-PDF ----------

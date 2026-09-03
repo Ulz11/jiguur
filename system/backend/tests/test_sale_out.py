@@ -366,10 +366,16 @@ def test_final_invoice_carries_the_sale_amount(client, as_role):
     assert fi["total"] == 330_000 + 100 * SALE_PRICE
 
 
-# ---------- 7. МӨНГӨНИЙ ХАНА — дарга бичнэ, дүнг нь ХАРАХГҮЙ ----------
+# ---------- 7. ДАРГА бичнэ, дүнг нь ч УНШИНА — хаалт нь хэвээр хаалттай ----
 
-def test_factory_may_record_a_sale_but_never_sees_the_money(client, as_role):
-    """Дарга бодит явдлыг бүртгэнэ; худалдааны ДҮН түүний токен руу явахгүй."""
+def test_factory_records_the_sale_and_can_read_its_amount(client, as_role):
+    """Дарга бодит явдлыг бүртгээд, «хэдийн худалдав» гэдэгт хариулж чадна.
+
+    ⚠ Урьд нь энэ тест «худалдааны ДҮН түүний токен руу явахгүй» гэдгийг
+    барьдаг байв (58000 гэсэн тоо JSON-д хаана ч байхгүй). Эзний шийдвэрээр
+    (2026-09) хана унав — эмх цэгц нь дэлгэц дээр, датанд биш.
+    ГЭХДЭЭ хаалтын тооцоо нь ҮЙЛДЭЛ тул 403 ХЭВЭЭР.
+    """
     hf = as_role("darga")
     cid, m, st = _sale_setup(client, as_role, qty=100)
     assert _sell(client, hf, cid, m, st, 40).status_code == 200
@@ -377,12 +383,12 @@ def test_factory_may_record_a_sale_but_never_sees_the_money(client, as_role):
     d = client.get(f"/api/contracts/{cid}", headers=hf).json()
     mv = next(x for x in d["movements"] if x["type"] == "SALE")
     assert mv["lines"][0]["qty"] == 40                  # ТОО нь түүний ажил
-    assert "sale_fee" not in mv["lines"][0]             # ДҮН нь биш
+    assert mv["lines"][0]["sale_fee"] == 40 * SALE_PRICE   # ДҮН нь ч ирнэ
     blob = json.dumps(d, ensure_ascii=False)
-    assert "58000" not in blob and str(40 * SALE_PRICE) not in blob
-    # Гэрээний мөрөнд ч худалдах үнэ гарахгүй
-    assert all("sale_price" not in it for it in d["items"])
-    # Хаалтын тооцоо бол мөнгө — даргад хаалттай хэвээр
+    assert str(SALE_PRICE) in blob and str(40 * SALE_PRICE) in blob
+    # Гэрээний мөрөнд каталогийн худалдах үнэ ч ирнэ
+    assert all("sale_price" in it for it in d["items"])
+    # Хаалтын тооцоо бол ҮЙЛДЭЛ — даргад хаалттай ХЭВЭЭР
     assert client.get(f"/api/contracts/{cid}/close-preview", headers=hf).status_code == 403
 
 

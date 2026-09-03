@@ -499,63 +499,21 @@ def attachment(a: models.Attachment):
             "entity_type": a.entity_type, "entity_id": a.entity_id}
 
 
-# ---------- Мөнгөний хана: гэрээний дэлгэрэнгүй → ҮЙЛДВЭРИЙН ДАРГА ----------
+# ---------- Мөнгөний хана: УСТСАН (2026-09, эзэний шийдвэр) ----------
 #
-# «Системийн зураглал» §4-т даргын хүрээ нь тодорхой: ТООЛНО, ЗЭРЭГЛЭЛ
-# ТОГТООНО. Үнэ, авлага, нэхэмжлэл нь Отгоо, санхүүчийнх.
+# Энд `factory_contract_detail` гэдэг шүүлтүүр байсан: гэрээний дэлгэрэнгүйн
+# хариунаас үйлдвэрийн даргын хувьд үлдэгдэл, алданги, барьцаа, НӨАТ,
+# нэхэмжлэл, төлбөр, тариф, өдрийн дүн БҮГДИЙГ хасдаг байв.
 #
-# Зөвхөн дэлгэц дээр нуух нь (ContractDetail `seesMoney`) НУУСАН БОЛОВ гэсэн үг
-# биш байв: тариф, өдрийн дүн, хуримтлал, нэхэмжлэл бүгд даргын ТОКЕН руу
-# явсаар байсан. Тиймээс зураас нь ЭНД — серверийн хариунд — татагдана.
+# ЭЗЭН: «энэ бол ЭМХ ЦЭГЦНИЙ асуудал, нууцлалынх биш. Дарга санхүүгийн
+# талаар асуухад хариулж чаддаг байх ЁСТОЙ — зүгээр цэгцтэй байг».
 #
-# Талбарыг 0 болгохгүй, БҮРМӨСӨН хасна: «0₮-ийн гэрээ» гэж уншигдах эрсдэлгүй,
-# мөн нэмэгдэх шинэ талбар өөрөө нэвтрэхгүй (жагсаалтад орох хүртэл).
-_F_TOP = ("balance", "penalty", "penalty_booked", "penalty_unbooked",
-          "penalty_percent", "day_amount", "deposit",
-          "deposit_status", "deposit_applied", "deposit_returned",
-          "deposit_settled_date", "vat_percent")
-# Актын бичилт нь МӨНГӨ (±дүн) — бүхэл бүлгээрээ санхүүгийнх.
-# Тарифын өөрчлөлт нь ТАРИФ — даргад тариф ХЭЗЭЭ Ч харагдахгүй (Мөнгөний хана).
-# Алдангийн нэхэлт нь МӨНГӨ ҮҮСГЭХ ШИЙДВЭР — хамгийн сүүлд орох ёстой блок.
-_F_BLOCKS = ("invoices", "payments", "akt_entries", "rate_changes", "penalty_charges")
-_F_ITEM = ("daily_rate", "unit_price", "orig_rate", "day_amount",
-           "repair_fee", "writeoff_price", "sale_price")
-# Хөдөлгөөний/дэвтрийн мөр: падангийн ТАРИФ, засвар/акт/ХУДАЛДААНЫ ДҮН явахгүй.
-# `repair_qty`, `writeoff_qty` нь ТОО — тэр бол даргын ажил, үлдэнэ. Худалдаанд
-# дэд тоо байхгүй (мөрийн БҮХ тоо зарагдсан) тул зөвхөн дүн нь татагдана.
-_F_LINE = ("rate", "repair_fee", "writeoff_fee", "sale_fee")
-_F_CYCLE = ("accrued", "day_amount")
-
-
-def _without(d: dict, keys) -> dict:
-    return {k: v for k, v in d.items() if k not in keys}
-
-
-def factory_contract_detail(payload: dict) -> dict:
-    """`contract_detail`-ийн хариунаас мөнгө агуулсан БҮХ талбарыг хасна.
-
-    Үлдэх нь: тоо ширхэг, зэрэглэл, огноо, төлөв, хөдөлгөөний түүх, материал
-    бүрийн дэвтэр (аль падангаас хэд буцсан нь ХАМААРАЛ — тоо, дугаар нь
-    даргын ажил, тариф нь биш) ба циклийн хугацааны явц.
-    """
-    out = _without(payload, _F_TOP + _F_BLOCKS)
-
-    if isinstance(out.get("cycle"), dict):
-        out["cycle"] = _without(out["cycle"], _F_CYCLE)
-
-    out["items"] = [_without(it, _F_ITEM) for it in payload.get("items") or []]
-
-    out["movements"] = [{**mv, "lines": [_without(l, _F_LINE) for l in mv["lines"]]}
-                        for mv in payload.get("movements") or []]
-
-    groups = []
-    for g in payload.get("material_lines") or []:
-        lines = []
-        for ln in g["lines"]:
-            row = _without(ln, _F_LINE)
-            if row.get("sources"):
-                row["sources"] = [_without(s, _F_LINE) for s in row["sources"]]
-            lines.append(row)
-        groups.append({**g, "lines": lines})
-    out["material_lines"] = groups
-    return out
+# Хана нь ЯГ ТҮҮНИЙГ болиулж байсан: даргаас асуухад тэр хариулах ЮМГҮЙ
+# байв. Тиймээс сервер нь бүх рольд ИЖИЛ хариу өгнө; эмх цэгц нь
+# ХАРАГДАЦЫН ажил болов — даргын дэлгэц дээр мөнгө нь ажлынх нь агуулгын
+# ХОЙНО, НЭГ хэлбэрийн, ХУМИГДСАН «Санхүү» задаргаа дотор зогсоно
+# (`ui.tsx` `FinanceDisclosure`).
+#
+# ⚠ Дахин хана босгох бол ЭНД биш: эрх (үйлдэл) ба харагдац (эмх цэгц) хоёр
+# өөр асуулт. Одоогийн эрхийн зураас нь router-үүдийн `require_roles` дээр
+# хэвээр — дарга мөнгө ХӨДӨЛГӨХГҮЙ (төлбөр, акт, алданги, нэхэмжлэл).
