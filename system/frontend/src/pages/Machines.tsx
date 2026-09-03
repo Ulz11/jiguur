@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { api, money, sayaFmt, user } from "../api";
-import { Spinner, Spin, FormModal, SubmitButton, useToast, Empty, InlineEdit, ConfirmModal, Receipt } from "../ui";
+import { Spinner, Spin, FormModal, SubmitButton, useToast, Empty, InlineEdit, ConfirmModal, Receipt,
+         FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
@@ -32,18 +33,18 @@ export default function Machines() {
   const pdf = usePdf();
   const u = user();
   const isManager = u?.role === "manager";
-  /* Үйлдвэрийн дарга нь МЕХАНИЗМЫН хүн — компанийн МӨНГӨНИЙ хүн биш.
-     Гэрээний дэлгэрэнгүй дээр энэ зураас аль хэдийн татагдсан (ContractDetail
-     `seesMoney`) байхад Механизмын хуудас нээлттэй үлдсэн байв: машин бүрийн
-     орлого/зарлага/цэвэр ашиг, бичилт бүрийн дүн («Жолоочийн цалин −1,500,000₮»
-     хүртэл), нэхэмжлэлүүд бүгд харагдана.
+  /* ЭМХ ЦЭГЦИЙН зураас (эзний шийдвэр 2026-09) — НУУЦЛАЛЫНХ БИШ.
+     Дарга нь МЕХАНИЗМЫН хүн: түүний нүд энэ хуудсан дээр «хэн, хэзээ, ямар
+     ажил хийв» гэдгийг хайдаг. Тиймээс мөрөн дэх ДҮНГИЙН багана, картын
+     P&L нь МӨРНӨӨС гарч, доорх НЭГ «Санхүү» задаргаанд хумигдана — асуулт
+     ирэхэд тэр нээж хариулна (хуудас бүр дээр ИЖИЛ хэлбэр).
 
-     ЗААГ: ӨӨРИЙН ажлыг бүртгэх (огноо, ажлын төрөл, харилцагч, ДҮН) нь
-     МЭДЭЭЛЭЛ ОРУУЛАХ үйлдэл — дарга ажлынхаа үнийг бодит амьдрал дээр өөрөө
-     бичдэг тул нэмэх цонхны дүнгийн талбар ХЭВЭЭР. Харин ХУРИМТЛАГДСАН тоо
-     (P&L, түүхэн бичилтийн дүн, нэхэмжлэл) нь компанийн санхүү — түүнд
-     харагдахгүй. Сервер ч мөн адил: log БИЧИХ нээлттэй, засах/устгах/
-     нэхэмжлэх нь менежер+санхүүчийнх (routers/machines.py `money_guard`). */
+     ⚠ ЭРХ нь ӨӨР асуулт бөгөөд ХЭВЭЭР: ӨӨРИЙН ажлаа бүртгэх (огноо, төрөл,
+     харилцагч, ДҮН) нь нээлттэй — тэр ажлынхаа үнийг талбай дээр өөрөө
+     бичдэг. Харин түүхэн бичилт ЗАСАХ/УСТГАХ, нэхэмжлэл гаргах нь
+     менежер+санхүүчийнх (routers/machines.py `money_guard` — сервер 403).
+     Тиймээс тэдгээр товч задаргаа дотор ч ГАРАХГҮЙ: үргэлж унадаг товч
+     харуулах нь худал амлалт. */
   const seesMoney = u?.role !== "factory";
 
   const load = async () => {
@@ -371,6 +372,65 @@ export default function Machines() {
             </table>
           )}
         </div>
+      )}
+
+      {/* САНХҮҮ — зөвхөн даргад, ажлынх нь бичилтүүдийн ХОЙНО. Хураангуй тоо
+          нь БҮХ машины «Цэвэр ашиг»: механизмын талаар «мөнгө нь юу болов»
+          гэсэн асуултын ганц хариу. Дотор нь машин бүрийн задаргаа, сонгосон
+          машины бичилтийн дүн ба нэхэмжлэлүүд. */}
+      {!seesMoney && d.machines.length > 0 && (
+        <FinanceDisclosure name="machines"
+          summary={money(d.machines.reduce((n: number, m: any) => n + (m.net || 0), 0))}
+          summaryLabel="Цэвэр ашиг"
+          hint="Машин бүрийн орлого, зарлага, бичилтийн дүн, нэхэмжлэл — дарж дэлгэнэ.">
+          <FinanceBlock title="Машин бүрээр">
+            <table className="w-full">
+              <thead><tr>
+                <th className="th">Машин</th><th className="th text-right">Орлого</th>
+                <th className="th text-right">Зарлага</th><th className="th text-right">Цэвэр</th>
+              </tr></thead>
+              <tbody>
+                {d.machines.map((m: any) => (
+                  <tr key={m.id}>
+                    <td className="td"><b className="text-ink">{m.name}</b>
+                      {/* Дотоод ажил ОРЛОГОД ОРООГҮЙ — алга болох ёсгүй */}
+                      {m.internal_count > 0 && (
+                        <span className="block text-[12px] text-t3">
+                          Дотоод ажил {m.internal_count}ш · {money(m.internal)} — орлогод ороогүй
+                        </span>)}
+                    </td>
+                    <td className="td text-right tabular-nums text-money">{money(m.income)}</td>
+                    <td className="td text-right tabular-nums text-danger">{money(m.expense)}</td>
+                    <td className={`td text-right tabular-nums font-bold ${
+                      m.net >= 0 ? "text-ink" : "text-danger"}`}>{money(m.net)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </FinanceBlock>
+
+          {sel && sel.logs.length > 0 && (
+            <FinanceBlock title={`${sel.name} — бичилтийн дүн`}>
+              {sel.logs.map((l: any) => (
+                <FinanceRow key={l.id}
+                            label={`${l.date} · ${l.label || (l.entry === "job" ? "Ажил" : "Зарлага")}`}
+                            sub={l.client || undefined}
+                            value={(l.entry === "job" ? "+" : "−") + money(l.amount)}
+                            tone={l.entry === "job" ? "money" : "danger"} />
+              ))}
+            </FinanceBlock>
+          )}
+
+          {sel && sel.invoices.length > 0 && (
+            <FinanceBlock title={`${sel.name} — нэхэмжлэлүүд`}>
+              {sel.invoices.map((inv: any) => (
+                <FinanceRow key={inv.id} label={`№${inv.no} · ${inv.client}`}
+                            sub={`${inv.d_from} – ${inv.d_to}`}
+                            value={money(inv.grand_total)} />
+              ))}
+            </FinanceBlock>
+          )}
+        </FinanceDisclosure>
       )}
 
       {(modal?.kind === "job" || modal?.kind === "expense") && (

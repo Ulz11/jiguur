@@ -2,7 +2,8 @@ import { Fragment, ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { api, money, fmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, useToast,
-         InlineEdit, Receipt, ConfirmModal, Chevron, DisclosureCell, DisclosureHead } from "../ui";
+         InlineEdit, Receipt, ConfirmModal, Chevron, DisclosureCell, DisclosureHead,
+         FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
 import { panelId, disclosureProps } from "../lib/disclosure";
 import { allocationPreview } from "../lib/alloc";
 import { CYCLE_MODES, cycleModeHint, cycleModeLabel, endDateLabel } from "../lib/contract";
@@ -938,6 +939,11 @@ export default function ContractDetail() {
         </div>
       </div>
 
+      {/* САНХҮҮ — ЗӨВХӨН үйлдвэрийн даргад, ажлынх нь агуулгын ХОЙНО.
+          Отгоо, санхүүчид эдгээр тоо дээрээ, өөрийн хэсэгтээ хэвээр байна;
+          дарга нь асуулт ирэхэд ЭНДЭЭС уншина (`ui.tsx` FinanceDisclosure). */}
+      {!seesMoney && <ContractFinance d={d} cyc={cyc} pen={pen} aktSum={aktSum} />}
+
       {/* Буцаалт, нэмэлт олголт нь ДАРГЫН ажил (`canManage`) — цонх нь түүнд
           нээгддэг тул мөнгөний зураас цонх дотор ч үргэлжилнэ. */}
       {modal === "return" && <ReturnModal d={d} grades={grades} seesMoney={seesMoney}
@@ -985,6 +991,179 @@ export default function ContractDetail() {
                                       onDone={() => { setVoidCharge(null); load(); }}
                                       onRebuild={(p) => { setVoidCharge(null); setPending(p); }} />}
     </div>
+  );
+}
+
+/* ---------- САНХҮҮ — гэрээний мөнгө, даргын дэлгэц дээр ----------
+ *
+ * ЭЗЭНИЙ ШИЙДВЭР: дарга гэрээний мөнгөний талаар асуухад ХАРИУЛЖ чаддаг байх
+ * ёстой. Урьд нь сервер өөрөө талбаруудыг хасдаг байсан тул тэр хариулах
+ * ЮМГҮЙ байв. Одоо дата бүтэн ирнэ — эмх цэгц нь ЭНД: ажлынх нь хүснэгтүүд
+ * (материал, хөдөлгөөн) мөнгөгүй хэвээр, мөнгө нь бүхэлдээ ЭНЭ хумигдсан
+ * задаргаа дотор.
+ *
+ * ХУРААНГУЙ ТОО = «Нийт үлдэгдэл». Гэрээний талаар «мөнгө нь юу болов»
+ * гэсэн асуултын ГАНЦ хариу нь тэр (H9 — «НЭГ тоо»); бусад нь задаргаа.
+ * Бүтэн төгрөгөөр — ганц баримтын дүн дугуйлагдахгүй (UI-ЗАРЧИМ §4).
+ *
+ * УНШИХ хэсэг: цуцлах, засах, PDF товч энд БАЙХГҮЙ — тэдгээр нь мөнгө
+ * хөдөлгөх ЭРХ (сервер ч 403 буцаана), эмх цэгцийн асуудал биш.
+ */
+function ContractFinance({ d, cyc, pen, aktSum }: {
+  d: any; cyc: any; pen: { booked: number; unbooked: number; showUnbooked: boolean };
+  aktSum: number;
+}) {
+  const rent = d.type === "rent";
+  const rates = (d.items || []).filter((it: any) => it.qty > 0);
+  return (
+    <FinanceDisclosure name={`contract-${d.id}`}
+      summary={money(d.balance)} summaryLabel="Нийт үлдэгдэл"
+      hint="Тариф, хуримтлал, нэхэмжлэл, төлбөр, барьцаа — дарж дэлгэнэ.">
+      <FinanceBlock title="Хураангуй">
+        {rent && <FinanceRow label="Өдрийн дүн" value={money(d.day_amount)} />}
+        {rent && cyc && (
+          <FinanceRow label="Энэ циклд хуримтлагдсан" value={money(cyc.accrued)}
+                      sub={cycleLabel(cyc.cycle_start, cyc.cycle_end)} />
+        )}
+        <FinanceRow label="Нийт үлдэгдэл" value={money(d.balance)}
+                    tone={d.state === "overdue" ? "danger" : undefined} />
+        {pen.booked > 0 && (
+          <FinanceRow label="Нэхэгдсэн алданги" value={money(pen.booked)} tone="danger" />
+        )}
+        {/* Нэхэгдээгүй нь ӨР БИШ — ≈ угтвар, бүдэг, дэргэдээ ҮГТЭЙ (H2) */}
+        {pen.showUnbooked && (
+          <FinanceRow label="Алдангийн тооцоолол" value={"≈" + money(pen.unbooked)}
+                      sub={UNCHARGED} tone="dim" />
+        )}
+        {d.penalty_percent > 0 && (
+          <FinanceRow label="Алдангийн хувь" value={`${fmt(d.penalty_percent)}%/хоног`} tone="dim" />
+        )}
+        {d.vat_percent > 0 && (
+          <FinanceRow label="НӨАТ" value={`${fmt(d.vat_percent)}%`} tone="dim" />
+        )}
+        {d.deposit > 0 && (
+          <FinanceRow label="Барьцаа" value={money(d.deposit)}
+                      sub={d.deposit_status === "settled"
+                        ? `${d.deposit_settled_date}-нд тооцоо хийгдсэн` : "тооцоо хийгдээгүй"} />
+        )}
+      </FinanceBlock>
+
+      {rates.length > 0 && (
+        <FinanceBlock title={rent ? "Тариф" : "Нэгж үнэ"}>
+          <table className="w-full">
+            <thead><tr>
+              <th className="th">Материал</th><th className="th">Зэрэглэл</th>
+              <th className="th text-right">Тоо</th>
+              <th className="th text-right">{rent ? "Тариф ₮/ш/хоног" : "Нэгж үнэ"}</th>
+              <th className="th text-right">{rent ? "Өдрийн дүн" : "Нийт"}</th>
+            </tr></thead>
+            <tbody>
+              {rates.map((it: any, i: number) => (
+                <tr key={i}>
+                  <td className="td font-bold text-ink">{it.material}</td>
+                  <td className="td"><span className="pill-blue">{it.grade}</span></td>
+                  <td className="td text-right tabular-nums">{fmt(it.qty)}</td>
+                  <td className="td text-right tabular-nums">
+                    {fmt(rent ? it.daily_rate : it.unit_price)}</td>
+                  <td className="td text-right tabular-nums font-bold text-ink">
+                    {money(rent ? it.day_amount : it.qty * it.unit_price)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </FinanceBlock>
+      )}
+
+      <FinanceBlock title="Нэхэмжлэлүүд">
+        {d.invoices.length === 0 ? (
+          <p className="text-t3 text-[13px]">Нэхэмжлэл үүсээгүй байна.</p>
+        ) : (
+          <table className="w-full">
+            <thead><tr>
+              <th className="th">{rent ? "Үе" : "Нэхэмжлэл"}</th>
+              <th className="th text-right">Дүн</th><th className="th text-right">Төлсөн</th>
+              <th className="th text-right">Үлдэгдэл</th><th className="th">Төлөв</th>
+            </tr></thead>
+            <tbody>
+              {d.invoices.map((inv: any) => {
+                const lb = invoiceLabel(inv);
+                return (
+                  <tr key={inv.id}>
+                    <td className="td">
+                      <span className="font-semibold text-ink whitespace-nowrap">{lb.title}</span>
+                      {lb.sub && <span className="block text-[12px] text-t3">{lb.sub}</span>}
+                    </td>
+                    <td className="td text-right tabular-nums">{money(inv.total)}</td>
+                    <td className="td text-right tabular-nums">{money(inv.paid)}</td>
+                    <td className={`td text-right tabular-nums font-bold ${
+                          inv.outstanding > 0 && inv.status === "overdue" ? "text-danger"
+                          : inv.outstanding > 0 ? "text-ink" : "text-t3"}`}>
+                      {inv.outstanding > 0 ? money(inv.outstanding) : "—"}
+                    </td>
+                    <td className="td"><StatePill state={inv.status} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </FinanceBlock>
+
+      <FinanceBlock title="Төлбөрүүд">
+        {d.payments.length === 0 ? (
+          <p className="text-t3 text-[13px]">Төлбөр бүртгэгдээгүй.</p>
+        ) : d.payments.map((p: any) => (
+          /* Цуцлагдсан бичилт УСТДАГГҮЙ — зурагдаж, «ХҮЧИНГҮЙ» ҮГТЭЙГЭЭ
+             үлдэнэ (`lib/void.ts`), Отгоогийн дэлгэцтэй ижил дүрэм. */
+          <div key={p.id} className="flex items-center gap-3 py-2 border-b border-sunken last:border-0 flex-wrap">
+            <div className={voidRowClass(p)} title={voidTitle(p)}>
+              <b className="text-[13.5px] tabular-nums text-ink">{money(p.amount)}</b>
+              <span className="block text-[12px] text-t3">{p.date}</span>
+            </div>
+            {isVoided(p) && <span className="pill-red">ХҮЧИНГҮЙ</span>}
+            <span className={`ml-auto ${voidRowClass(p)} ${
+              p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green" : "pill-blue"}`}>
+              {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн" : "Данс"}
+            </span>
+          </div>
+        ))}
+      </FinanceBlock>
+
+      {(d.akt_entries || []).length > 0 && (
+        <FinanceBlock title="Акт бичилтүүд">
+          {d.akt_entries.map((a: any) => (
+            <FinanceRow key={a.id} label={`${a.date} · ${a.note}`}
+                        sub={isVoided(a) ? "ХҮЧИНГҮЙ" : undefined}
+                        value={aktAmountText(a.amount)}
+                        tone={isVoided(a) ? "dim" : a.amount < 0 ? "money" : undefined} />
+          ))}
+          <FinanceRow label="Нийт акт" value={aktAmountText(aktSum)}
+                      tone={aktSum < 0 ? "money" : undefined} />
+        </FinanceBlock>
+      )}
+
+      {(d.rate_changes || []).length > 0 && (
+        <FinanceBlock title="Тарифын өөрчлөлт">
+          {d.rate_changes.map((rc: any) => (
+            <FinanceRow key={rc.id}
+                        label={`${rc.material}${rc.grade ? ` (${rc.grade})` : ""}`}
+                        sub={isVoided(rc) ? "ХҮЧИНГҮЙ" : rc.note || undefined}
+                        value={rateChangeText(rc)} tone={isVoided(rc) ? "dim" : undefined} />
+          ))}
+        </FinanceBlock>
+      )}
+
+      {(d.penalty_charges || []).length > 0 && (
+        <FinanceBlock title="Алдангийн нэхэлт">
+          {d.penalty_charges.map((ch: any) => (
+            <FinanceRow key={ch.id} label={`${ch.as_of} өдрөөр`}
+                        sub={isVoided(ch) ? "ХҮЧИНГҮЙ" : ch.user_name || undefined}
+                        value={money(ch.amount)} tone={isVoided(ch) ? "dim" : "danger"} />
+          ))}
+          <FinanceRow label="Нийт нэхсэн" value={money(chargedTotal(d.penalty_charges))} />
+        </FinanceBlock>
+      )}
+    </FinanceDisclosure>
   );
 }
 

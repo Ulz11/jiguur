@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, money, sayaFmt, user } from "../api";
-import { Spinner, StatePill, TypePill, Prog, Empty, Refreshing, useToast } from "../ui";
+import { Spinner, StatePill, TypePill, Prog, Empty, Refreshing, useToast,
+         FinanceDisclosure, FinanceBlock } from "../ui";
 import { cycleShortLabel } from "../lib/cycle";
 import { cycleModeBadge, cycleModeHint } from "../lib/contract";
 import { rowClickProps } from "../lib/rowClick";
@@ -22,6 +23,10 @@ export default function Contracts() {
   const nav = useNavigate();
   const toast = useToast();
   const u = user();
+  /* Үйлдвэрийн даргын ажил нь энэ жагсаалт дээр «аль гэрээ идэвхтэй, хаана
+     нь хэдэн хоног үлдэв» — мөнгө нь ХОЙНО, «Санхүү» задаргаа дотор
+     (эзэний шийдвэр: нууц биш, ЦЭГЦ). */
+  const seesMoney = u?.role !== "factory";
 
   /* Түрээс/Худалдаа солиход жагсаалтыг null болгож хуудсыг хоослодог байв.
      Одоо өмнөх жагсаалт байрандаа үлдэж, зөвхөн бүдгэрнэ. Татаж чадаагүй бол
@@ -93,10 +98,14 @@ export default function Contracts() {
       )}
 
       <div className="card overflow-x-auto">
-        <table className="w-full border-collapse min-w-[760px]">
+        {/* Даргад ҮНИЙН хоёр багана огт БАЙХГҮЙ — хоосон нүд үлдээвэл «энд
+            ямар нэг тоо байгаа» гэж заана (ContractDetail-ийн журам). */}
+        <table className={`w-full border-collapse ${seesMoney ? "min-w-[760px]" : "min-w-[560px]"}`}>
           <thead><tr>
             <th className="th">Гэрээ / Харилцагч</th><th className="th">Төрөл</th><th className="th">Явц</th>
-            <th className="th text-right">Өдрийн дүн</th><th className="th text-right">Үлдэгдэл</th>
+            {seesMoney && (<>
+              <th className="th text-right">Өдрийн дүн</th><th className="th text-right">Үлдэгдэл</th>
+            </>)}
             <th className="th">Төлөв</th><th className="th"></th>
           </tr></thead>
           <tbody>
@@ -108,9 +117,10 @@ export default function Contracts() {
                                       `Гэрээ №${c.no} · ${c.client} — нээх`, "row")}>
                   <td className="td">
                     <span className="font-bold text-ink">{c.client}</span>
-                    <span className="block text-xs text-t3 mt-0.5" title={c.deposit > 0 ? `Барьцаа ${money(c.deposit)}` : undefined}>
+                    <span className="block text-xs text-t3 mt-0.5"
+                          title={seesMoney && c.deposit > 0 ? `Барьцаа ${money(c.deposit)}` : undefined}>
                       №{c.no} · {c.start_date}-с
-                      {c.deposit > 0 && ` · барьцаа ${sayaFmt(c.deposit)}₮`}</span>
+                      {seesMoney && c.deposit > 0 && ` · барьцаа ${sayaFmt(c.deposit)}₮`}</span>
                   </td>
                   {/* ТООЦООНЫ МӨЧЛӨГ (R5 / H3) — «аль харилцагч календарь
                       сараар тооцогддог вэ» гэдэг жагсаалтаас уншигдана.
@@ -143,6 +153,7 @@ export default function Contracts() {
                       </>
                     ) : <span className="text-xs text-t3">{c.type === "sale" ? "Худалдаа" : "—"}</span>}
                   </td>
+                  {seesMoney && (<>
                   <td className="td text-right tabular-nums font-bold text-ink">
                     {c.day_amount ? money(c.day_amount) : "—"}
                   </td>
@@ -160,6 +171,7 @@ export default function Contracts() {
                                             title={`Тооцоолол — ${money(c.penalty_unbooked)} · ${UNCHARGED}`}>
                       ≈{sayaFmt(c.penalty_unbooked)}₮ {UNCHARGED}</span>}
                   </td>
+                  </>)}
                   <td className="td"><StatePill state={c.state} /></td>
                   {/* Мөр дарагддаг гэдгийг ЗӨВХӨН хулгана дээр нь ирэхэд хэлдэг
                       байсан — планшет дээр огт харагдахгүй. Тайван боловч ил. */}
@@ -177,6 +189,50 @@ export default function Contracts() {
                    : undefined} />
         )}
       </div>
+
+      {/* САНХҮҮ — зөвхөн даргад, жагсаалтынх нь ХОЙНО. Хураангуй тоо нь
+          ХАРАГДАЖ БУЙ гэрээнүүдийн «Нийт үлдэгдэл»: шүүлтүүрээ сольвол
+          дотор нь байгаа мөрүүдтэйгээ хамт хөдөлнө (нэг тоо — нэг эх). */}
+      {!seesMoney && shown.length > 0 && (
+        <FinanceDisclosure name="contracts"
+          summary={money(shown.reduce((s: number, c: any) => s + (c.balance || 0), 0))}
+          summaryLabel="Нийт үлдэгдэл"
+          hint="Гэрээ бүрийн үлдэгдэл, алданги, барьцаа — дарж дэлгэнэ.">
+          <FinanceBlock title="Гэрээ бүрээр">
+            <table className="w-full">
+              <thead><tr>
+                <th className="th">Гэрээ / Харилцагч</th>
+                <th className="th text-right">Өдрийн дүн</th>
+                <th className="th text-right">Үлдэгдэл</th>
+                <th className="th text-right">Барьцаа</th>
+              </tr></thead>
+              <tbody>
+                {shown.map((c) => (
+                  <tr key={c.id}>
+                    <td className="td"><span className="font-bold text-ink">{c.client}</span>
+                      <span className="block text-xs text-t3">№{c.no}</span></td>
+                    <td className="td text-right tabular-nums">
+                      {c.day_amount ? money(c.day_amount) : "—"}</td>
+                    <td className="td text-right tabular-nums">
+                      <b className={c.state === "overdue" ? "text-danger" : "text-ink"}>
+                        {money(c.balance)}</b>
+                      {/* Нэхэгдсэн нь ӨР; нэхэгдээгүй нь зөвхөн тооцоолол (H2) */}
+                      {c.penalty_booked > 0 && (
+                        <span className="block text-[12px] text-danger">
+                          + алданги {money(c.penalty_booked)}</span>)}
+                      {c.penalty_unbooked > 0 && (
+                        <span className="block text-[12px] text-t3">
+                          ≈{money(c.penalty_unbooked)} {UNCHARGED}</span>)}
+                    </td>
+                    <td className="td text-right tabular-nums">
+                      {c.deposit > 0 ? money(c.deposit) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </FinanceBlock>
+        </FinanceDisclosure>
+      )}
     </Refreshing>
   );
 }

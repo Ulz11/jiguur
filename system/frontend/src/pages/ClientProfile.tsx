@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, fmt, money, sayaFmt, user } from "../api";
-import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit } from "../ui";
+import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit,
+         FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
 import { PayModal } from "./ContractDetail";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 import { isVoided, voidRowClass, voidTitle } from "../lib/void";
@@ -12,6 +13,7 @@ import { contractHref } from "../lib/links";
 import { dueLabel, todayIso } from "../lib/schedule";
 import { penaltySplit, UNCHARGED } from "../lib/penalty";
 import { uninvoicedLine } from "../lib/receivable";
+import { withoutMoney } from "../lib/timeline";
 import {
   buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth, dayCellLabel,
   parseIso, isoOf, WEEKDAYS_MN, monthLabelMN, type TLEvent, type YearMonth,
@@ -36,6 +38,10 @@ export default function ClientProfile() {
   const today = todayIso();
   /* Төлбөр цуцлах нь мөнгөний засвар — менежер, санхүүчийнх (сервер ч тэгнэ). */
   const canVoid = u?.role === "manager" || u?.role === "finance";
+  /* Даргын хувьд энэ хуудас нь «энэ харилцагчид юу гарсан, юу буцсан» —
+     авлага, нэхэмжлэл, төлбөр нь ХОЙНО, «Санхүү» задаргаа дотор нэг дор
+     (эзэний шийдвэр: нууц биш, ЦЭГЦ). */
+  const seesMoney = u?.role !== "factory";
 
   /* InlineEdit-ийн хадгалалт: алдааг toast-оор гаргаад ДАХИН шиднэ (H10).
      Урьд нь энд try/catch байгаагүй тул `api`-ийн шидсэн алдааг InlineEdit
@@ -52,14 +58,19 @@ export default function ClientProfile() {
     } catch (e: any) { toast(e.message, "err"); throw e; }
   }
 
-  const TABS = [
+  /* Даргад мөнгөний ГУРВАН таб байхгүй — тэдгээрийн хүснэгт нь «Санхүү»
+     задаргаа дотор, доор нэг дор зогсоно. Табын мөр нь түүний АЖЛЫН зам:
+     тойм, гэрээ, хавсралт. */
+  const TABS = ([
     ["overview", "Тойм"],
     ["contracts", `Гэрээ`, d.contracts.length],
-    ["invoices", "Нэхэмжлэл", d.invoices.length],
-    ["payments", "Төлбөр", d.payments.length],
-    ["barter", "Бартер", d.barter?.length || 0],
+    ...(seesMoney ? [
+      ["invoices", "Нэхэмжлэл", d.invoices.length],
+      ["payments", "Төлбөр", d.payments.length],
+      ["barter", "Бартер", d.barter?.length || 0],
+    ] : []),
     ["files", "Хавсралт", d.files.length],
-  ] as any[];
+  ]) as any[];
 
   async function upload(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -109,7 +120,8 @@ export default function ClientProfile() {
           {/* Дөрвөн үзүүлэлт нэг мөрөнд багтах ёстой тул гол тоо нь «сая»-гаараа
               үлдэнэ — гэхдээ АВЛАГА ярихад «12.3 сая» гэдэг хангалтгүй: залгаж
               нэхэх, тулгах дүн нь доор нь бүтнээрээ зогсоно. */}
-          <div className="grid grid-cols-4 gap-6 max-sm:grid-cols-2">
+          <div className={`grid gap-6 ${seesMoney ? "grid-cols-4 max-sm:grid-cols-2" : "grid-cols-1"}`}>
+            {seesMoney && (<>
             {/* АВЛАГА = нэхэмжилсэн + одоогийн циклийн хуримтлал (H9b) — энэ
                 тоо жагсаалт, дашбоард, Авлага цуглуулах дээр ЯГ ИЖИЛ. Дундах
                 хуримтлалыг доор нь нэрлэнэ: нуувал «тоо зөрж байна» болно. */}
@@ -134,6 +146,7 @@ export default function ClientProfile() {
             })()}
             <Stat label="Барьцаа" val={d.deposit > 0 ? sayaFmt(d.deposit) + "₮" : "—"}
                   exact={d.deposit > 0 ? money(d.deposit) : undefined} />
+            </>)}
             <Stat label="Гэрээ" val={String(d.contracts.length)} />
           </div>
         </div>
@@ -155,13 +168,18 @@ export default function ClientProfile() {
         </div>
 
         {tab === "overview" && (
-          <div className="grid grid-cols-[1.6fr_1fr] gap-6 max-lg:grid-cols-1">
+          /* Даргад баруун багана нь бүхэлдээ МӨНГӨ (хүлээгдэж буй төлбөр,
+             нэхэмжлэлийн байдал) — тэр нь доорх «Санхүү» задаргаанд нүүсэн
+             тул түүний тойм НЭГ баганаар, түүхээрээ дүүрч зогсоно. */
+          <div className={`grid gap-6 max-lg:grid-cols-1 ${
+            seesMoney ? "grid-cols-[1.6fr_1fr]" : "grid-cols-1"}`}>
             <div>
               <h2 className="font-bold text-[14.5px] mb-3.5">Сүүлийн үйл явдлууд</h2>
               {d.timeline.length === 0
                 ? <p className="text-t3 text-sm">Түүх хоосон байна.</p>
-                : <TimelineCalendar events={d.timeline} />}
+                : <TimelineCalendar events={d.timeline} money={seesMoney} />}
             </div>
+            {seesMoney && (
             <div>
               {/* Хүлээгдэж буй төлбөр — энэ харилцагчийн идэвхтэй түрээсийн
                   гэрээнүүдийн одоогийн циклийн ТӨСӨӨЛӨЛ. Мөнгөний блок тул
@@ -224,14 +242,16 @@ export default function ClientProfile() {
               ))}
               {d.invoices.length === 0 && <Empty title="Нэхэмжлэл алга" />}
             </div>
+            )}
           </div>
         )}
 
         {tab === "contracts" && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[600px]">
+            <table className={`w-full ${seesMoney ? "min-w-[600px]" : "min-w-[460px]"}`}>
               <thead><tr><th className="th">Гэрээ</th><th className="th">Төрөл</th><th className="th">Явц</th>
-                <th className="th text-right">Үлдэгдэл</th><th className="th">Төлөв</th></tr></thead>
+                {seesMoney && <th className="th text-right">Үлдэгдэл</th>}
+                <th className="th">Төлөв</th></tr></thead>
               <tbody>
                 {d.contracts.map((c: any) => (
                   <tr key={c.id} className="cursor-pointer hover:bg-canvas group"
@@ -244,7 +264,9 @@ export default function ClientProfile() {
                       {c.cycle ? <><div className="text-xs text-t2 mb-1">{c.cycle.days_done}/{c.cycle.days_total} хоног</div>
                         <Prog pct={(c.cycle.days_done / c.cycle.days_total) * 100} /></> : <span className="text-xs text-t3">—</span>}
                     </td>
-                    <td className="td text-right tabular-nums font-bold" title={money(c.balance)}>{sayaFmt(c.balance)}₮</td>
+                    {seesMoney && (
+                      <td className="td text-right tabular-nums font-bold" title={money(c.balance)}>{sayaFmt(c.balance)}₮</td>
+                    )}
                     <td className="td"><StatePill state={c.state} /></td>
                   </tr>
                 ))}
@@ -412,10 +434,95 @@ export default function ClientProfile() {
         )}
       </div>
 
+      {/* САНХҮҮ — зөвхөн даргад, түүхийнх нь ХОЙНО. Хураангуй нь §3-ын бүтэн
+          нэрээрээ «Авлагын үлдэгдэл»: харилцагчийн тухай «мөнгө нь юу болов»
+          гэсэн асуултын ГАНЦ хариу (H9 — нэг тоо, хаа сайгүй ижил). */}
+      {!seesMoney && <ClientFinance d={d} />}
+
       {pay && <PayModal client_id={d.id} d={null} invoices={d.invoices} onClose={() => setPay(false)} onDone={() => { setPay(false); load(); }} />}
       {voidPay && <VoidPaymentModal payment={voidPay} onClose={() => setVoidPay(null)}
                                     onDone={() => { setVoidPay(null); load(); }} />}
     </div>
+  );
+}
+
+/* ---------- САНХҮҮ — харилцагчийн мөнгө, даргын дэлгэц дээр ----------
+ *
+ * Толгойн үзүүлэлт, тойм баганын нэхэмжлэл, гурван таб (Нэхэмжлэл, Төлбөр,
+ * Бартер) нь ЭНД цугларна: даргын хуудсан дээр мөнгө НЭГ газарт, ХУМИГДСАН
+ * байна. Тэр асуулт ирэхэд нээж уншина, бусад үедээ ажлаа хийнэ.
+ */
+function ClientFinance({ d }: { d: any }) {
+  const pen = penaltySplit(d.penalty, d.penalty_booked);
+  const barter = d.barter || [];
+  return (
+    <FinanceDisclosure name={`client-${d.id}`}
+      summary={money(d.receivable)} summaryLabel="Авлагын үлдэгдэл"
+      hint="Авлага, алданги, барьцаа, нэхэмжлэл, төлбөр — дарж дэлгэнэ.">
+      <FinanceBlock title="Хураангуй">
+        <FinanceRow label="Авлагын үлдэгдэл" value={money(d.receivable)}
+                    sub={uninvoicedLine(d.receivable_uninvoiced) || undefined}
+                    tone={d.overdue ? "danger" : undefined} />
+        {pen.booked > 0 && (
+          <FinanceRow label="Нэхэгдсэн алданги" value={money(pen.booked)} tone="danger" />
+        )}
+        {pen.showUnbooked && (
+          <FinanceRow label="Алдангийн тооцоолол" value={"≈" + money(pen.unbooked)}
+                      sub={UNCHARGED} tone="dim" />
+        )}
+        <FinanceRow label="Барьцаа" value={d.deposit > 0 ? money(d.deposit) : "—"} />
+      </FinanceBlock>
+
+      <FinanceBlock title="Нэхэмжлэл">
+        {d.invoices.length === 0 ? (
+          <p className="text-t3 text-[13px]">Нэхэмжлэл алга.</p>
+        ) : (
+          <table className="w-full">
+            <thead><tr>
+              <th className="th">Нэхэмжлэл</th><th className="th text-right">Дүн</th>
+              <th className="th text-right">Төлсөн</th><th className="th text-right">Үлдэгдэл</th>
+              <th className="th">Төлөв</th>
+            </tr></thead>
+            <tbody>
+              {d.invoices.map((inv: any) => (
+                <tr key={inv.id}>
+                  <td className="td"><b className="text-ink">{invoiceLabel(inv).title}</b>
+                    <span className="block text-xs text-t3">Гэрээ №{inv.contract_no}</span></td>
+                  <td className="td text-right tabular-nums">{money(inv.total)}</td>
+                  <td className="td text-right tabular-nums">{money(inv.paid)}</td>
+                  <td className={`td text-right tabular-nums font-bold ${
+                        inv.outstanding > 0 && inv.status === "overdue" ? "text-danger"
+                        : inv.outstanding > 0 ? "text-ink" : "text-t3"}`}>
+                    {inv.outstanding > 0 ? money(inv.outstanding) : "—"}</td>
+                  <td className="td"><StatePill state={inv.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </FinanceBlock>
+
+      <FinanceBlock title="Төлбөр">
+        {d.payments.length === 0 ? (
+          <p className="text-t3 text-[13px]">Төлбөр алга.</p>
+        ) : d.payments.map((p: any) => (
+          <FinanceRow key={p.id} label={`${p.date} · ${
+            p.method === "BARTER" ? `Бартер · ${p.barter_desc}`
+            : p.method === "CASH" ? "Бэлэн" : "Данс"}`}
+            sub={isVoided(p) ? "ХҮЧИНГҮЙ" : p.contract_no ? `Гэрээ №${p.contract_no}` : undefined}
+            value={money(p.amount)} tone={isVoided(p) ? "dim" : undefined} />
+        ))}
+      </FinanceBlock>
+
+      {barter.length > 0 && (
+        <FinanceBlock title="Бартер">
+          {barter.map((a: any) => (
+            <FinanceRow key={a.id} label={a.name} sub={`${a.type} · ${a.date_in}`}
+                        value={money(a.value_in)} />
+          ))}
+        </FinanceBlock>
+      )}
+    </FinanceDisclosure>
   );
 }
 
@@ -457,7 +564,10 @@ const KIND_ORDER = ["contract", "issue", "return", "writeoff", "sale", "payment"
 const LEGEND = ["payment", "issue", "return", "writeoff", "contract"];
 const dotCls = (k: string) => KIND_DOT[k] || "bg-brand";
 
-function TimelineCalendar({ events }: { events: TLEvent[] }) {
+/** `money=false` (үйлдвэрийн дарга): хэлхээ нь ЯВДЛЫГ хэлнэ, ДҮНГ нь биш —
+ *  дүн нь хуудасны доод талын «Санхүү» задаргаанд бүтнээрээ зогсоно
+ *  (`lib/timeline.ts` — эзний шийдвэр 2026-09: хана биш, ЭМХ ЦЭГЦ). */
+function TimelineCalendar({ events, money = true }: { events: TLEvent[]; money?: boolean }) {
   const now = new Date();
   const todayIso = isoOf(now.getFullYear(), now.getMonth() + 1, now.getDate());
   const [view, setView] = useState<YearMonth>(
@@ -551,8 +661,10 @@ function TimelineCalendar({ events }: { events: TLEvent[] }) {
               <div key={i} className="flex gap-2.5 pb-3 last:pb-0">
                 <i className={`mt-1.5 w-2.5 h-2.5 rounded-full shrink-0 ${dotCls(e.kind)}`} />
                 <div className="min-w-0">
-                  <b className="block text-[13.5px] text-ink font-semibold">{e.title}</b>
-                  <span className="text-[12.5px] text-t2">{e.sub}</span>
+                  <b className="block text-[13.5px] text-ink font-semibold">
+                    {money ? e.title : withoutMoney(e.title)}</b>
+                  <span className="text-[12.5px] text-t2">
+                    {money ? e.sub : withoutMoney(e.sub)}</span>
                 </div>
               </div>
             ))}

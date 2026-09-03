@@ -1,7 +1,8 @@
 import { useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, fmt, money, sayaFmt, user } from "../api";
-import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt,
+         FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { clientHref } from "../lib/links";
@@ -24,6 +25,14 @@ export default function Barter() {
 
   const s = d.summary;
   const canSell = u?.role === "manager" || u?.role === "finance";
+  /* ⚠ ЭНЭ ХУУДАС ӨМНӨ НЬ «ШИЙДВЭР ХҮЛЭЭЖ» БАЙВ (money-wall.spec-ийн ПИН):
+     үйлдвэрийн дарга компанийн бартер хөрөнгийн НИЙТ ҮНЭ, зарсан дүн, олсон
+     ашгийг планшет дээрээ бүтнээр хардаг байсан. Эзний шийдвэр гарлаа —
+     нуухгүй, ЦЭГЦЛЭНЭ: түүний ажил (юу орж ирэв, хэдэн хоног хэвтэв, аль нь
+     агуулахад орох вэ) мөрөндөө ил зогсоно; үнэ, ашиг нь доорх «Санхүү»
+     задаргаанд, хумигдсан байдлаар. Худалдах эрх нь ХЭВЭЭР хаалттай
+     (`canSell` — сервер ч мөн адил). */
+  const seesMoney = u?.role !== "factory";
 
   return (
     <div>
@@ -32,7 +41,9 @@ export default function Barter() {
           <div className="dashboard-kicker">БАРТЕР <span>•</span> {d.assets.length} ХӨРӨНГӨ</div>
           <h1 className="dashboard-title">Бартер</h1>
           <p className="dashboard-subtitle">
-            Төлбөрт орж ирсэн хөрөнгө — орж ирсэн үнэ ↔ зарсан үнийн зөрүү тайланд шууд харагдана.
+            {seesMoney
+              ? "Төлбөрт орж ирсэн хөрөнгө — орж ирсэн үнэ ↔ зарсан үнийн зөрүү тайланд шууд харагдана."
+              : "Төлбөрт орж ирсэн хөрөнгө — хэд хоног хэвтэж байна, аль нь агуулахад орох вэ."}
           </p>
         </div>
         {canSell && (
@@ -41,6 +52,7 @@ export default function Barter() {
         )}
       </div>
 
+      {seesMoney && (
       <div className="command-metrics mb-4">
         <div className="command-hero">
           <div className="text-white/80 text-[12.5px] font-medium mb-2">Хадгалагдаж буй хөрөнгө</div>
@@ -75,8 +87,9 @@ export default function Barter() {
           </div>
         </div>
       </div>
+      )}
 
-      {s.aging?.length > 0 && (
+      {seesMoney && s.aging?.length > 0 && (
         <div className="card p-4 mb-4 flex gap-6 flex-wrap items-center">
           <b className="text-[13px] text-ink">Хэвтэж буй хугацаагаар:</b>
           {s.aging.map((b: any) => (
@@ -90,12 +103,16 @@ export default function Barter() {
       )}
 
       <div className="card overflow-x-auto">
-        <table className="w-full min-w-[860px]">
+        <table className={`w-full ${seesMoney ? "min-w-[860px]" : "min-w-[600px]"}`}>
           <thead><tr>
             <th className="th">Хөрөнгө</th><th className="th">Хэнээс</th>
-            <th className="th text-right">Орж ирсэн үнэ</th><th className="th text-right">Санал үнэ</th>
+            {seesMoney && (<>
+              <th className="th text-right">Орж ирсэн үнэ</th><th className="th text-right">Санал үнэ</th>
+            </>)}
             <th className="th">Хэвтсэн хугацаа</th>
-            <th className="th">Төлөв</th><th className="th text-right">Зарсан / Ашиг·Алдагдал</th><th className="th"></th>
+            <th className="th">Төлөв</th>
+            {seesMoney && <th className="th text-right">Зарсан / Ашиг·Алдагдал</th>}
+            <th className="th"></th>
           </tr></thead>
           <tbody>
             {d.assets.map((a: any) => (
@@ -114,8 +131,10 @@ export default function Barter() {
                     ? <Link to={clientHref(a.client_id)} className="text-ink hover:underline">{a.client}</Link>
                     : a.client || "—"}
                 </td>
-                <td className="td text-right tabular-nums font-bold">{money(a.value_in)}</td>
-                <td className="td text-right tabular-nums">{a.asking_price ? money(a.asking_price) : "—"}</td>
+                {seesMoney && (<>
+                  <td className="td text-right tabular-nums font-bold">{money(a.value_in)}</td>
+                  <td className="td text-right tabular-nums">{a.asking_price ? money(a.asking_price) : "—"}</td>
+                </>)}
                 <td className="td">
                   {a.status === "held" ? (
                     <span className={a.days_held >= 365 ? "pill-red" : a.days_held >= 180 ? "pill-amber" : "pill-grey"}>
@@ -132,6 +151,7 @@ export default function Barter() {
                    a.status === "voided" ? <span className="pill-red">ХҮЧИНГҮЙ</span> :
                    <span className="pill-green">Нөөцөд орсон</span>}
                 </td>
+                {seesMoney && (
                 <td className="td text-right tabular-nums">
                   {a.status === "sold" ? (
                     <>
@@ -142,6 +162,7 @@ export default function Barter() {
                     </>
                   ) : "—"}
                 </td>
+                )}
                 <td className="td">
                   {a.status === "held" && canSell && (
                     <div className="flex gap-1">
@@ -165,6 +186,60 @@ export default function Barter() {
                  sub="Бартер төлбөр бүртгэгдэхэд хөрөнгө энд автоматаар орж ирнэ." />
         )}
       </div>
+
+      {/* САНХҮҮ — зөвхөн даргад, хөрөнгийн жагсаалтынх нь ХОЙНО. Хураангуй
+          тоо нь «Хадгалагдаж буй хөрөнгө»: бартерын тухай асуултын гол хариу
+          (хэдэн төгрөг зарагдалгүй хэвтэж байна вэ). */}
+      {!seesMoney && (
+        <FinanceDisclosure name="barter"
+          summary={money(s.held_value)} summaryLabel="Хадгалагдаж буй хөрөнгө"
+          hint="Хөрөнгө бүрийн орж ирсэн үнэ, зарсан дүн, ашиг/алдагдал — дарж дэлгэнэ.">
+          <FinanceBlock title="Хураангуй">
+            <FinanceRow label="Хадгалагдаж буй хөрөнгө" value={money(s.held_value)}
+                        sub={`${s.held_count} хөрөнгө · дунджаар ${s.avg_days_held} хоног`} />
+            <FinanceRow label="Зогсонги (180+ хоног)" value={money(s.stale_value)}
+                        sub={s.stale_count ? `${s.stale_count} хөрөнгө удаан хэвтэж байна`
+                                           : "зогсонги хөрөнгө алга"}
+                        tone={s.stale_count ? "danger" : "money"} />
+            <FinanceRow label="Зарагдсан нийт" value={money(s.sold_value)}
+                        sub={`${s.sold_count} хөрөнгө`} />
+            <FinanceRow label="Хэрэгжсэн ашиг / алдагдал"
+                        value={(s.realized > 0 ? "+" : "") + money(s.realized)}
+                        tone={s.realized < 0 ? "danger" : "money"} />
+          </FinanceBlock>
+          {d.assets.length > 0 && (
+            <FinanceBlock title="Хөрөнгө бүрээр">
+              <table className="w-full">
+                <thead><tr>
+                  <th className="th">Хөрөнгө</th>
+                  <th className="th text-right">Орж ирсэн үнэ</th>
+                  <th className="th text-right">Санал үнэ</th>
+                  <th className="th text-right">Зарсан / Ашиг·Алдагдал</th>
+                </tr></thead>
+                <tbody>
+                  {d.assets.map((a: any) => (
+                    <tr key={a.id}>
+                      <td className="td"><b className="text-ink">{a.name}</b>
+                        <span className="block text-xs text-t3">{a.type} · {a.date_in}</span></td>
+                      <td className="td text-right tabular-nums font-bold">{money(a.value_in)}</td>
+                      <td className="td text-right tabular-nums">
+                        {a.asking_price ? money(a.asking_price) : "—"}</td>
+                      <td className="td text-right tabular-nums">
+                        {a.status === "sold" ? (<>
+                          <span className="font-bold text-ink">{money(a.sold_amount)}</span>
+                          <span className={`block text-[12px] font-bold ${
+                            a.gain < 0 ? "text-danger" : "text-money"}`}>
+                            {a.gain > 0 ? "+" : ""}{money(a.gain)}</span>
+                        </>) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </FinanceBlock>
+          )}
+        </FinanceDisclosure>
+      )}
 
       {modal?.kind === "sell" && <SellModal a={modal.asset} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
       {modal?.kind === "stock" && <StockModal a={modal.asset} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}

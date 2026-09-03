@@ -1,7 +1,8 @@
 import { useEffect, useId, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, fmt, user } from "../api";
-import { Spinner, FormModal, SubmitButton, useToast, Prog, Receipt, Empty } from "../ui";
+import { api, fmt, money, user } from "../api";
+import { Spinner, FormModal, SubmitButton, useToast, Prog, Receipt, Empty,
+         FinanceDisclosure, FinanceBlock } from "../ui";
 import { parseMoney } from "../lib/num";
 import { rowClickProps } from "../lib/rowClick";
 import { materialHref } from "../lib/links";
@@ -24,6 +25,11 @@ export default function Warehouse() {
      залруулга» гэсэн тайлбартай зогсдог байв — 40 орчим ХУДАЛ товч. Түүнд
      эдгээр нь зүгээр л тоо. */
   const canAdjust = u?.role !== "finance";
+  /* Агуулах бол ДАРГЫН өдөр тутмын дэлгэц: мөр бүрийн дэд мөрөнд «тариф
+     330₮ · засвар 15,000₮/ш» гэж хоёр дүн зогсдог байв. Тэдгээр нь тоологч
+     хүний ажилд ХЭРЭГГҮЙ ч, асуулт ирэхэд ХЭРЭГТЭЙ — тиймээс доорх
+     «Санхүү» задаргаанд бүтнээрээ нүүнэ (эзэний шийдвэр: нууц биш, ЦЭГЦ). */
+  const seesMoney = u?.role !== "factory";
   const shown = d.rows.filter((m: any) => !q || m.name.toLowerCase().includes(q.toLowerCase())
                                             || (m.category || "").toLowerCase().includes(q.toLowerCase()));
 
@@ -72,7 +78,8 @@ export default function Warehouse() {
                       `${m.name} — агуулахад ${fmt(hand)}ш, түрээсэнд ${fmt(rent)}ш, дэлгэрэнгүй нээх`,
                       "row")}>
                   <td className="td"><b className="text-ink">{m.name}</b>
-                    <span className="block text-xs text-t3">{m.category} · тариф {fmt(m.base_rate)}₮ · засвар {fmt(m.repair_fee)}₮/ш</span></td>
+                    <span className="block text-xs text-t3">{m.category}
+                      {seesMoney && <> · тариф {fmt(m.base_rate)}₮ · засвар {fmt(m.repair_fee)}₮/ш</>}</span></td>
                   <td className="td" onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-1.5 flex-wrap">
                       {(m.stock || []).map((s: any) => (canAdjust ? (
@@ -126,6 +133,35 @@ export default function Warehouse() {
                    action={{ label: "Хайлт цэвэрлэх", onClick: () => setQ("") }} />
           : <Empty title="Материал бүртгэгдээгүй" sub="Тохиргооноос материал нэмнэ." />)}
       </div>
+
+      {/* САНХҮҮ — зөвхөн даргад, нөөцийнх нь ХОЙНО. ХУРААНГУЙ ТОО ЭНД
+          БАЙХГҮЙ: агуулахын мөнгө нь НЭГ дүн болж нийлдэггүй (нөөцийн
+          үнэлгээ гэдэг тоо систем дээр байхгүй) — байхгүй тоог зохиохоос
+          нэрлэсэн хаалга нь дээр (UI-ЗАРЧИМ §4: тоо нь утгатай байх ёстой). */}
+      {!seesMoney && shown.length > 0 && (
+        <FinanceDisclosure name="warehouse"
+          hint="Материал бүрийн суурь тариф, засварын хураамж — дарж дэлгэнэ.">
+          <FinanceBlock title="Материал бүрийн үнэ">
+            <table className="w-full">
+              <thead><tr>
+                <th className="th">Материал</th>
+                <th className="th text-right">Суурь тариф ₮/ш/хоног</th>
+                <th className="th text-right">Засвар ₮/ш</th>
+              </tr></thead>
+              <tbody>
+                {shown.map((m: any) => (
+                  <tr key={m.id}>
+                    <td className="td"><b className="text-ink">{m.name}</b>
+                      <span className="block text-xs text-t3">{m.category}</span></td>
+                    <td className="td text-right tabular-nums">{money(m.base_rate)}</td>
+                    <td className="td text-right tabular-nums">{money(m.repair_fee)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </FinanceBlock>
+        </FinanceDisclosure>
+      )}
 
       {adjust && (
         <AdjustModal m={adjust.m} s={adjust.s} onClose={() => setAdjust(null)}

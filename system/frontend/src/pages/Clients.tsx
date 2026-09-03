@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, money, sayaFmt, user } from "../api";
-import { Spinner, FormModal, SubmitButton, useToast, Empty } from "../ui";
+import { Spinner, FormModal, SubmitButton, useToast, Empty,
+         FinanceDisclosure, FinanceBlock } from "../ui";
 import { formDirty } from "../lib/dirty";
 import { useDownload } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
@@ -18,6 +19,9 @@ export default function Clients() {
   const fileRef = useRef<HTMLInputElement>(null);
   const dl = useDownload();
   const u = user();
+  /* Даргын хувьд энэ жагсаалт нь «хэн, хэдэн гэрээтэй» — авлага нь ХОЙНО,
+     «Санхүү» задаргаа дотор (эзэний шийдвэр: нууц биш, ЦЭГЦ). */
+  const seesMoney = u?.role !== "factory";
 
   const load = () => api("/api/clients").then(setRows);
   useEffect(() => { load(); }, []);
@@ -66,10 +70,14 @@ export default function Clients() {
       <input className="inp max-w-[300px] mb-4" placeholder="Хайх…" aria-label="Харилцагч хайх"
              value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="card overflow-x-auto">
-        <table className="w-full min-w-[680px]">
+        {/* Даргад мөнгөний хоёр багана огт БАЙХГҮЙ — хоосон нүд үлдээвэл
+            «энд ямар нэг тоо байгаа» гэж заана. */}
+        <table className={`w-full ${seesMoney ? "min-w-[680px]" : "min-w-[480px]"}`}>
           <thead><tr>
             <th className="th">Харилцагч</th><th className="th text-right">Идэвхтэй гэрээ</th>
-            <th className="th text-right">Авлагын үлдэгдэл</th><th className="th text-right">Барьцаа</th>
+            {seesMoney && (<>
+              <th className="th text-right">Авлагын үлдэгдэл</th><th className="th text-right">Барьцаа</th>
+            </>)}
             <th className="th">Төлөв</th><th className="th"></th>
           </tr></thead>
           <tbody>
@@ -84,6 +92,7 @@ export default function Clients() {
                   <span className="block text-xs text-t3">{c.person}{c.phone && ` · ${c.phone}`}</span>
                 </td>
                 <td className="td text-right tabular-nums">{c.active_contracts}</td>
+                {seesMoney && (<>
                 <td className="td text-right tabular-nums">
                   <span className={`font-bold ${c.overdue ? "text-danger" : "text-ink"}`}
                         title={money(c.receivable)}>{sayaFmt(c.receivable)}₮</span>
@@ -107,6 +116,7 @@ export default function Clients() {
                 </td>
                 <td className="td text-right tabular-nums" title={c.deposit > 0 ? money(c.deposit) : undefined}>
                   {c.deposit > 0 ? sayaFmt(c.deposit) + "₮" : "—"}</td>
+                </>)}
                 <td className="td">
                   {c.overdue ? <span className="pill-red">Хэтэрсэн өртэй</span> :
                    c.receivable > 0 ? <span className="pill-amber">Үлдэгдэлтэй</span> :
@@ -119,6 +129,47 @@ export default function Clients() {
         </table>
         {shown.length === 0 && <Empty title="Харилцагч алга" />}
       </div>
+
+      {/* САНХҮҮ — зөвхөн даргад, жагсаалтын ХОЙНО. Хураангуй нь §3-ын бүтэн
+          нэрээрээ: «Авлагын үлдэгдэл» (харилцагчийн түвшний тоо). */}
+      {!seesMoney && shown.length > 0 && (
+        <FinanceDisclosure name="clients"
+          summary={money(shown.reduce((s: number, c: any) => s + (c.receivable || 0), 0))}
+          summaryLabel="Авлагын үлдэгдэл"
+          hint="Харилцагч бүрийн авлага, алданги, барьцаа — дарж дэлгэнэ.">
+          <FinanceBlock title="Харилцагч бүрээр">
+            <table className="w-full">
+              <thead><tr>
+                <th className="th">Харилцагч</th>
+                <th className="th text-right">Авлагын үлдэгдэл</th>
+                <th className="th text-right">Барьцаа</th>
+              </tr></thead>
+              <tbody>
+                {shown.map((c) => (
+                  <tr key={c.id}>
+                    <td className="td font-bold text-ink">{c.name}</td>
+                    <td className="td text-right tabular-nums">
+                      <b className={c.overdue ? "text-danger" : "text-ink"}>{money(c.receivable)}</b>
+                      {receivableSplit(c.receivable, c.receivable_invoiced).showUninvoiced && (
+                        <span className="block text-[12px] text-t3">
+                          {uninvoicedLine(c.receivable_uninvoiced)}</span>)}
+                      {c.penalty_booked > 0 && (
+                        <span className="block text-[12px] text-danger">
+                          + алданги {money(c.penalty_booked)}</span>)}
+                      {c.penalty_unbooked > 0 && (
+                        <span className="block text-[12px] text-t3">
+                          ≈{money(c.penalty_unbooked)} {UNCHARGED}</span>)}
+                    </td>
+                    <td className="td text-right tabular-nums">
+                      {c.deposit > 0 ? money(c.deposit) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </FinanceBlock>
+        </FinanceDisclosure>
+      )}
+
       {show && <NewClientModal onClose={() => setShow(false)} onDone={() => { setShow(false); load(); }} />}
     </div>
   );

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, fmt, user } from "../api";
-import { Spinner, Empty } from "../ui";
+import { api, fmt, money, user } from "../api";
+import { Spinner, Empty, FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
 import { rowClickProps } from "../lib/rowClick";
 import { clientHref, contractHref } from "../lib/links";
 import { holdingSections, rateLabel, daysLabel } from "../lib/material";
@@ -14,10 +14,11 @@ import { mvName } from "../lib/movement";
  * агуулахад хэд, гадаа хэд, гадаа байгаа нь ХЭНД (харилцагч, гэрээ, зэрэглэл,
  * тариф, хэзээнээс) байгааг нэг дэлгэцээс уншина.
  *
- * ЭРХ: тариф бүх ролид харагдана. Агуулах бол ҮЙЛДВЭРИЙН ДАРГЫН талбай —
- * гэрээний дэлгэрэнгүйн материалын хүснэгт ч түүнд тарифаа харуулдаг
- * (`seesMoney` нь нэхэмжлэл, төлбөр, барьцаа, авлагыг л нуудаг). Энэ хуудсанд
- * нэхэмжлэл, төлбөр, авлагын аль нь ч байхгүй тул нуух юм ч алга.
+ * ЭРХ: тариф ХЭНД Ч хаалттай биш. Гэхдээ Агуулах бол ҮЙЛДВЭРИЙН ДАРГЫН
+ * талбай: түүний нүд энэ хуудсан дээр «хэнд хэд байна» гэдгийг хайдаг тул
+ * ҮНЭ нь мөрөнд нь хутгалдахгүй, доорх «Санхүү» задаргаанд хумигдана
+ * (эзэний шийдвэр 2026-09: нууцлал биш, ЭМХ ЦЭГЦ). Отгоо, санхүүчид
+ * бүх тариф байрандаа хэвээр.
  */
 export default function MaterialDetail() {
   const { id } = useParams();
@@ -52,6 +53,7 @@ export default function MaterialDetail() {
   const unit = d.unit || "ш";
   const many = sections.length > 1;
   const canCount = u?.role !== "finance";
+  const seesMoney = u?.role !== "factory";
 
   return (
     <div>
@@ -67,8 +69,10 @@ export default function MaterialDetail() {
             </h1>
             <div className="text-[13px] text-t2 mt-1.5 flex gap-x-4 gap-y-1.5 flex-wrap">
               <span>Хэмжих нэгж: <b className="text-t1">{unit}</b></span>
-              <span>Суурь тариф: <b className="text-t1 tabular-nums">{fmt(d.base_rate)}₮/{unit}/хоног</b></span>
-              <span>Засвар: <b className="text-t1 tabular-nums">{fmt(d.repair_fee)}₮/{unit}</b></span>
+              {seesMoney && (<>
+                <span>Суурь тариф: <b className="text-t1 tabular-nums">{fmt(d.base_rate)}₮/{unit}/хоног</b></span>
+                <span>Засвар: <b className="text-t1 tabular-nums">{fmt(d.repair_fee)}₮/{unit}</b></span>
+              </>)}
             </div>
           </div>
           {/* НИЙТ ЭЗЭМШИЛ = Агуулахад + Түрээсэнд + Засварт. Дөрвөн тоо нэг
@@ -112,7 +116,11 @@ export default function MaterialDetail() {
           <thead><tr>
             <th className="th">Харилцагч</th><th className="th">Гэрээ №</th>
             <th className="th">Зэрэглэл</th><th className="th text-right">Түрээсэнд {unit}</th>
-            <th className="th text-right">Тариф</th><th className="th">Хэзээнээс</th>
+            {/* Даргад ТАРИФЫН оронд ПАДАН — багана нь алга болохгүй (доорх
+                бүлгийн нийлбэр мөр нь colSpan-аараа тоолж байгаа), утга нь
+                түүний ажлын тоо болж солигдоно. */}
+            <th className="th text-right">{seesMoney ? "Тариф" : "Падан"}</th>
+            <th className="th">Хэзээнээс</th>
             <th className="th"></th>
           </tr></thead>
           <tbody>
@@ -151,11 +159,19 @@ export default function MaterialDetail() {
                         </span>
                       )}
                     </td>
-                    <td className="td text-right tabular-nums">
-                      {rateLabel(h.rates, fmt)}
-                      {/* Хоёроос дээш падан = дундуур нь нэмэлт олголт явсан */}
-                      {h.lots > 1 && <span className="block text-[12px] text-t3">{fmt(h.lots)} падан</span>}
-                    </td>
+                    {seesMoney ? (
+                      <td className="td text-right tabular-nums">
+                        {rateLabel(h.rates, fmt)}
+                        {/* Хоёроос дээш падан = дундуур нь нэмэлт олголт явсан */}
+                        {h.lots > 1 && <span className="block text-[12px] text-t3">{fmt(h.lots)} падан</span>}
+                      </td>
+                    ) : (
+                      /* Тариф нь нүүсэн ч «хэдэн падангаар гарсан» нь ТОО —
+                         даргын ажил. Тэр багана дээрээ үлдэнэ. */
+                      <td className="td text-right tabular-nums text-t2">
+                        {h.lots > 1 ? `${fmt(h.lots)} падан` : "—"}
+                      </td>
+                    )}
                     <td className="td whitespace-nowrap">
                       <span className="tabular-nums text-t1">{h.since}</span>
                       {/* Падангүй мөрийн огноо нь «хэзээнээс гадаа» БИШ —
@@ -313,6 +329,42 @@ export default function MaterialDetail() {
                  sub="Энэ материал хараахан ямар ч гэрээгээр гараагүй байна." />
         )}
       </div>
+
+      {/* САНХҮҮ — зөвхөн даргад, түүхийнх нь ХОЙНО. Хураангуй тоо нь ЭНД
+          «Суурь тариф»: энэ материалын тухай мөнгөний асуултын ГАНЦ хариу
+          (гэрээ бүрийн тариф үүнээс хазайж болно — тэдгээр нь дотор). */}
+      {!seesMoney && (
+        <FinanceDisclosure name={`material-${d.id}`}
+          summary={`${money(d.base_rate)}/${unit}/хоног`} summaryLabel="Суурь тариф"
+          hint="Суурь тариф, засварын хураамж, гэрээ бүрийн тариф — дарж дэлгэнэ.">
+          <FinanceBlock title="Каталогийн үнэ">
+            <FinanceRow label={`Суурь тариф ₮/${unit}/хоног`} value={money(d.base_rate)} />
+            <FinanceRow label={`Засварын хураамж ₮/${unit}`} value={money(d.repair_fee)} />
+          </FinanceBlock>
+          {sections.length > 0 && (
+            <FinanceBlock title="Гэрээ бүрийн тариф">
+              <table className="w-full">
+                <thead><tr>
+                  <th className="th">Харилцагч / Гэрээ</th><th className="th">Зэрэглэл</th>
+                  <th className="th text-right">Түрээсэнд {unit}</th>
+                  <th className="th text-right">Тариф</th>
+                </tr></thead>
+                <tbody>
+                  {sections.map((sec) => sec.rows.map((h: any) => (
+                    <tr key={`${h.contract_id}-${h.grade_id}`}>
+                      <td className="td"><b className="text-ink">{h.client}</b>
+                        <span className="block text-xs text-t3">№{h.contract_no}</span></td>
+                      <td className="td"><span className="pill-blue">{h.grade}</span></td>
+                      <td className="td text-right tabular-nums">{h.qty > 0 ? fmt(h.qty) : "—"}</td>
+                      <td className="td text-right tabular-nums">{rateLabel(h.rates, fmt)}</td>
+                    </tr>
+                  )))}
+                </tbody>
+              </table>
+            </FinanceBlock>
+          )}
+        </FinanceDisclosure>
+      )}
     </div>
   );
 }

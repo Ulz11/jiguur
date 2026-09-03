@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useLayoutEffect, useRef, useId } from "react";
 import { tabbablesIn, trapNext } from "./lib/focus";
+import { disclosureProps, panelId } from "./lib/disclosure";
 import { editKeyAction } from "./lib/edit";
 import { saysIrreversible } from "./lib/danger";
 import { inlineErrorText, saveErrorOf, unsavedToast } from "./lib/saveError";
@@ -324,6 +325,89 @@ export function DisclosureCell({ open }: { open: boolean }) {
 /** Түүний толгой — нэргүй багана (сумны нэрийг мөр өөрөө үүрнэ) */
 export function DisclosureHead() {
   return <th className="th chev-cell" />;
+}
+
+/* ---------- САНХҮҮ — үйлдвэрийн даргын дэлгэц дээрх НЭГ хэлбэр ----------
+ *
+ * ЭЗЭНИЙ ШИЙДВЭР (2026-09): дарга компанийн мөнгө харах нь НУУЦЛАЛЫН
+ * асуудал БИШ — ЭМХ ЦЭГЦНИЙХ. Түүнээс харилцагч, гэрээний мөнгөний талаар
+ * асуухад тэр хариулж чаддаг байх ЁСТОЙ; зүгээр л ажлынх нь дэлгэц (ачилт,
+ * буцаалт, нөөц, механизм) мөнгөөр бөглөрөх ЁСГҮЙ. Өмнө нь сервер өөрөө
+ * талбарыг хасдаг байсныг (`serializers.factory_contract_detail`) БОЛИВ.
+ *
+ * ДҮРЭМ, зургаан дэлгэц дээр ИЖИЛ:
+ *   1. ажил нь ЭХЭЛНЭ — энэ задаргаа хуудасны агуулгын ХОЙНО зогсоно;
+ *   2. анхнаасаа ХУМИГДСАН, нэр нь ҮРГЭЛЖ «Санхүү»;
+ *   3. хумигдсан үед ХАМГИЙН ИХДЭЭ НЭГ хураангуй тоо (утгатай газарт нь) —
+ *      хүснэгтүүд нь (нэхэмжлэл, төлбөр, хуваарилалт) дотор нь амьдарна;
+ *   4. хэлбэр нь гэрийнхээ загвараар: `Chevron` + `aria-expanded` +
+ *      нээлттэй үедээ л `aria-controls` (`lib/disclosure.ts`).
+ *
+ * Хүрэх талбай нь `--target-lg` (52px): энэ бол даргын ПЛАНШЕТ дээрх
+ * зогсоол — §4-ийн доод шат (36px) биш, дээд шатанд нь явна.
+ */
+export function FinanceDisclosure({ name, summary, summaryLabel, hint, children }: {
+  /** Самбарын түлхүүр — `fin-panel-<name>` (хуудас бүр өөрийн нэртэй) */
+  name: string;
+  /** ХУМИГДСАН үед харагдах ГАНЦ тоо. Утгатай тоо байхгүй бол огт өгөхгүй. */
+  summary?: string;
+  /** Тэр тооны нэр — өнгө биш, ҮГ утгыг зөөнө (UI-ЗАРЧИМ §4). */
+  summaryLabel?: string;
+  /** Хумигдсан үед дотор нь юу байгааг НЭГ мөрөөр хэлнэ. */
+  hint?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const pid = panelId("fin", name);
+  return (
+    <section className="card p-5 mt-4">
+      {/* Гарчиг нь ТОВЧИЙГ агуулна (button дотор heading биш) — уншигчаар
+          ажилладаг хүн гарчгаар нь үсэрч, тэндээсээ задална. */}
+      <h2 className="text-[15.5px]">
+        <button type="button" {...disclosureProps(open, pid)}
+                className="tap-lg flex items-center gap-2.5 w-full text-left font-bold text-ink"
+                onClick={() => setOpen(!open)}>
+          <Chevron open={open} />
+          Санхүү
+          {summary && (
+            <span className="ml-auto text-right">
+              <b className="tabular-nums text-ink">{summary}</b>
+              {summaryLabel && (
+                <span className="block text-[12px] text-t3 font-medium">{summaryLabel}</span>
+              )}
+            </span>
+          )}
+        </button>
+      </h2>
+      {!open && hint && <p className="text-[12.5px] text-t3 mt-2">{hint}</p>}
+      {open && <div id={pid} className="mt-3.5 space-y-4">{children}</div>}
+    </section>
+  );
+}
+
+/** Задаргаа доторх нэрлэсэн блок — гарчиг нь h3 (хуудасны h2-ын дор). */
+export function FinanceBlock({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <h3 className="text-[12px] text-t3 font-semibold uppercase tracking-wider mb-2">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+/** Задаргаа доторх «нэр — дүн» мөр. Дүн нь `tabular-nums`, баруун тийш. */
+export function FinanceRow({ label, value, tone, sub }: {
+  label: string; value: string; tone?: "danger" | "money" | "dim"; sub?: string;
+}) {
+  const cls = tone === "danger" ? "text-danger" : tone === "money" ? "text-money"
+            : tone === "dim" ? "text-t3" : "text-ink";
+  return (
+    <div className="flex justify-between items-baseline gap-4 py-1.5 border-b border-sunken last:border-0">
+      <span className="text-[13px] text-t2">{label}
+        {sub && <span className="block text-[12px] text-t3">{sub}</span>}</span>
+      <b className={`tabular-nums text-[13.5px] ${cls}`}>{value}</b>
+    </div>
+  );
 }
 
 /* ---------- Жижиг туслахууд ---------- */
