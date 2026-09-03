@@ -8,6 +8,9 @@
 """
 import os
 import sys
+import tempfile
+import threading
+import time
 from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -439,3 +442,102 @@ def test_charge_replay_only_touches_own_contract(db):
     db.expire_all()
     assert all((i.penalty_booked or 0) == 0 and i.penalty_booked_until is None
                for i in other.invoices), "хөрш гэрээний алданги хөндөгдөв"
+
+
+# ---------- ДАВХАРДСАН НЭХЭМЖЛЭЛ: rebuild ↔ ensure_invoices ----------
+
+@pytest.fixture()
+def session_factory():
+    """ФАЙЛ дээрх SQLite — ХОЁР холболт нэг датаг харна.
+
+    `sqlite://` (санах ой) нь холболт бүрд ӨӨР DB өгдөг тул зэрэгцээ
+    урсгалын тест тэнд утгагүй болно.
+    """
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    engine = create_engine("sqlite:///" + path, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    yield sessionmaker(bind=engine, expire_on_commit=False)
+    engine.dispose()
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def test_rebuild_never_duplicates_an_invoice_under_a_concurrent_read(session_factory):
+    """ДАХИН БОДОЛТЫН ЦОНХОНД буусан GET нэхэмжлэлийг ДАВХАРДУУЛАХГҮЙ.
+
+    ЖИНХЭНЭ УНАЛТ (E2E, 2026-09): «нэхсэн алдангийг хүчингүй болгоход…» тест
+    гэрээ дээр 198,000₮ гэж амлаад 396,000₮ үлдээв. Дэлгэцний зурган дээр ЯГ
+    ИЖИЛ дугаартай (`№R-…-2`), ижил циклтэй, тус бүр 99,000₮-ийн ХОЁР мөр
+    зогсож байв.
+
+    МЕХАНИЗМ: `rebuild_contract_invoices` нь нэхэмжлэлүүдийг УСТГААД
+    `commit()` хийж, дараа нь шинээр үүсгээд `commit()` хийдэг. Тэр хоёрын
+    ХООРОНД гэрээ нь DB дээр нэхэмжлэлГҮЙ харагдана. FastAPI-ийн sync
+    endpoint-ууд threadpool дээр ЗЭРЭГ гүйдэг тул тэр агшинд өөр урсгалын
+    ямар ч GET (`/api/contracts/:id`, `/api/clients`, дашбоард…)
+    `ensure_invoices`-оо дуудаж, «цикл алга» гэж уншаад ДАХИН үүсгэдэг байв —
+    дараа нь rebuild өөрөө бас үүсгэнэ.
+
+    Түгжээ нь `ensure_invoices` дээр БАЙСАН ч `rebuild` тэрийг БАРЬДАГГҮЙ
+    байсан тул хамгаалалт нээлттэй байв. Энэ тест тэр цонхыг ГАРААР олж,
+    яг тэнд зэрэгцээ уншилт оруулна.
+    """
+    from app.services import rebuild
+
+    main = session_factory()
+    c, m, g_a, _ = setup_contract(main, start=date(2026, 3, 20))
+    mv(main, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=g_a.id, qty=10)])
+    today = date(2026, 6, 1)
+    billing.ensure_invoices(main, c, today)
+    assert main.query(models.Invoice).filter_by(contract_id=c.id).count() >= 2, \
+        "тест нэхэмжлэлгүй гэрээ дээр гүйж байна — давхардах юм алга"
+
+    contract_id = c.id
+    reached = threading.Event()
+
+    def concurrent_get():
+        """Дэлгэц нээхтэй ЯГ ижил зам — өөрийн session, өөрийн холболт."""
+        other = session_factory()
+        try:
+            oc = other.get(models.Contract, contract_id)
+            reached.set()
+            billing.ensure_invoices(other, oc, today)
+        finally:
+            other.close()
+
+    # `expire_all()` нь УСТГАСНЫ дараах `commit()`-ийн ЯГ дараа дуудагдана —
+    # өөрөө тэр аюултай цонх. Зөвхөн ЭНЭ session дээр дэгээ тавина.
+    threads: list[threading.Thread] = []
+    real_expire = main.expire_all
+
+    def hooked_expire():
+        real_expire()
+        if threads:
+            return
+        t = threading.Thread(target=concurrent_get, daemon=True)
+        threads.append(t)
+        t.start()
+        reached.wait(5)
+        # Түгжээгүй бол энэ хугацаанд давхардуулж амжина; түгжээтэй бол
+        # тэр урсгал `ensure_invoices`-ийн үүдэнд ЗОГСОНО.
+        time.sleep(0.25)
+
+    main.expire_all = hooked_expire
+    try:
+        rebuild.rebuild_contract_invoices(main, c, today)
+    finally:
+        main.expire_all = real_expire
+    for t in threads:
+        t.join(10)
+
+    main.expire_all()
+    rows = (main.query(models.Invoice.no, models.Invoice.cycle_start,
+                       models.Invoice.cycle_end)
+            .filter(models.Invoice.contract_id == contract_id).all())
+    assert len(rows) == len(set(rows)), (
+        "нэхэмжлэл ДАВХАРДЛАА — тэр циклийн авлага хоёр дахин нэмэгдэнэ: "
+        f"{sorted(str(r) for r in rows)}")

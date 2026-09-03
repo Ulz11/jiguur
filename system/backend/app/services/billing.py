@@ -1015,16 +1015,33 @@ def spec_key(contract: models.Contract, cycle_start: date, cycle_end: date, no: 
 # амархан давхацна: хоёул «нэхэмжлэл алга» гэж уншаад, хоёул үүсгэнэ.
 # Үр дагавар нь ЗҮГЭЭР давхардсан мөр биш — тэр циклийн АВЛАГА ХОЁР ДАХИН
 # нэмэгдэнэ (нэхэмжлэл бол авлагын суурь, H9b «нэг тоо»).
-_INVOICE_LOCKS: dict[int, threading.Lock] = {}
+#
+# ⚠ ЭНЭ ТҮГЖЭЭГ `ensure_invoices` ГАНЦААРАА барьж байсан нь ХАНГАЛТГҮЙ байв.
+# `rebuild_contract_invoices` нь ЯГ ТЭР нэхэмжлэлүүдийг УСТГААД ДАХИН
+# үүсгэдэг: устгаад `commit()` хийсэн ба шинээр `add()` хийж `commit()`
+# хийхийн ХООРООНД гэрээ нь нэхэмжлэлГҮЙ байдалтай ХАРАГДАНА. Тэр цонхонд
+# зэрэгцээ GET (`/api/contracts/:id`, `/api/clients`, дашбоард …) `ensure`-ээ
+# дуудвал түгжээг СУЛ олж аваад «цикл алга» гэж уншаад ДАХИН үүсгэнэ —
+# дараа нь rebuild өөрөө бас үүсгэж, ЯГ ИЖИЛ дугаартай ХОЁР мөр үлдэнэ
+# (E2E дээр 396,000₮ = 2 × 198,000₮ болж баригдав). Тиймээс rebuild ч мөн
+# ЭНЭ түгжээг барина (`services/rebuild.py`).
+#
+# `RLock` — нэг урсгал доторх давхар барилт (rebuild → ensure) гацахгүй.
+_INVOICE_LOCKS: dict[int, threading.RLock] = {}
 _INVOICE_LOCKS_GUARD = threading.Lock()
 
 
-def _contract_invoice_lock(contract_id: int) -> threading.Lock:
+def contract_invoice_lock(contract_id: int) -> threading.RLock:
+    """Гэрээний нэхэмжлэлийн түгжээ — `ensure` ба `rebuild` ХОЁУЛАА барина."""
     with _INVOICE_LOCKS_GUARD:
         lock = _INVOICE_LOCKS.get(contract_id)
         if lock is None:
-            lock = _INVOICE_LOCKS[contract_id] = threading.Lock()
+            lock = _INVOICE_LOCKS[contract_id] = threading.RLock()
         return lock
+
+
+# Хуучин дотоод нэр — дуудагчид эвдрэхгүй.
+_contract_invoice_lock = contract_invoice_lock
 
 
 def _existing_invoice_keys(db: Session, contract: models.Contract) -> set:
@@ -1051,6 +1068,11 @@ def ensure_invoices(db: Session, contract: models.Contract, today: date | None =
     нэг uvicorn ажилчинтай ажилладаг (`run.sh` / `run.bat`), тиймээс энэ нь
     бүрэн хаалт. Хэрэв хожим олон ажилчинтай болвол DB түвшний өвөрмөц
     индекс (contract_id, cycle_start, cycle_end) нэмэх ёстой.
+
+    ⚠ Түгжээг ЗӨВХӨН энэ функц барих нь ХАНГАЛТГҮЙ: нэхэмжлэлийг устгадаг
+    цорын ганц зам (`rebuild_contract_invoices`) ч мөн барих ёстой — эс
+    бөгөөс түүний «устгасан ба дахин үүсгэсний ХООРОНД» гэсэн цонхонд энэ
+    функц орж, ижил циклийг ХОЁР удаа төрүүлнэ.
     """
     today = today or date.today()
     created = []

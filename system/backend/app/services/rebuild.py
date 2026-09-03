@@ -66,6 +66,27 @@ def rebuild_contract_invoices(db: Session, contract: models.Contract,
         raise ValueError("Үлдэгдэл шилжүүлэлтийн (OB) гэрээг дахин бодох боломжгүй — "
                          "энэ нэхэмжлэл хуучин системээс гараар шилжсэн")
 
+    # ⚠ ЯАГААД ТҮГЖЭЭ ЭНД БАЙХ ЁСТОЙ ВЭ — ДАВХАРДСАН НЭХЭМЖЛЭЛ.
+    #
+    # Доорх 2-р алхам нэхэмжлэлүүдийг УСТГААД `commit()` хийнэ, 3-р алхам
+    # шинээр үүсгээд `commit()` хийнэ. Тэр ХОЁР commit-ийн хооронд гэрээ нь
+    # DB дээр нэхэмжлэлГҮЙ харагдана. FastAPI-ийн sync endpoint-ууд
+    # threadpool дээр ЗЭРЭГ гүйдэг тул яг тэр агшинд өөр урсгал дээрх ямар ч
+    # GET (`/api/contracts/:id`, `/api/clients`, дашбоард, авлага цуглуулах…)
+    # `billing.ensure_invoices`-оо дуудна: тэр нь түгжээг СУЛ олж авч, «энэ
+    # цикл алга» гэж УНШААД дахин үүсгэнэ. Дараа нь 3-р алхам бас үүсгэж, ЯГ
+    # ИЖИЛ дугаартай, ижил циклтэй ХОЁР мөр үлдэнэ — тэр циклийн АВЛАГА ХОЁР
+    # ДАХИН нэмэгдэнэ (E2E: 198,000₮ гэж амласан гэрээ 396,000₮ болов).
+    #
+    # Иймд «устга → дахин үүсгэ» нь `ensure_invoices`-ийн «унш → бич»-тэй ЯГ
+    # ижил түгжээний дор, ХУВААГДАШГҮЙ явна. Дахин бодолт нь Отгоогийн ГАРААР
+    # хийдэг ховор засвар тул түгжээг бүтэн ажлын турш барих нь хямд.
+    with billing.contract_invoice_lock(contract.id):
+        return _rebuild_locked(db, contract, today)
+
+
+def _rebuild_locked(db: Session, contract: models.Contract, today: date) -> dict:
+    """`rebuild_contract_invoices`-ийн их бие — гэрээний түгжээний ДОТОР."""
     specs = billing.derivable_invoice_specs(contract, today)
     spec_keys = {_key(contract, s["cycle_start"], s["cycle_end"], s["no"]) for s in specs}
 
