@@ -252,6 +252,9 @@ class MovementLinePatch(_BM):
     # бусад талбарын «0 = цэвэрлэх» дүрэм энд ажиллахгүй. Цэвэрлэх нь ИЛЭРХИЙ
     # `null` — `model_fields_set`-ээр «явуулаагүй»-гээс ялгагдана.
     billed_days_override: int | None = None
+    # «Хоёр тоог хараад ЭНЭ тоог сонголоо» — цонхонд багтахгүй хоногийг
+    # бүртгүүлэх ГАНЦ түлхүүр. Ирээгүй бол анхааруулга буцаж, юу ч бичигдэхгүй.
+    days_confirm: bool = False
     confirm: bool = False
 
 
@@ -520,25 +523,41 @@ def _check_pin(db: Session, c: models.Contract, mv_date: date, material_id: int,
 
 
 # ГАР ХОНОГ (H5/R8): «Хоёр тал 12 хоног гэж гарын үсэг зурсан бол 12 нь
-# хэлцлийн баримт». Тэгвэл бичсэн тоо нь ЯГ тэрээрээ нэхэгдэх, эс бөгөөс
-# ЧАНГА татгалзах хоёрын нэг л байх ёстой — гуравдахь зам (чимээгүй багасгах)
-# нь яг H5-ийн урьдчилан сэргийлэх гэсэн зөрчил өөрөө.
+# хэлцлийн баримт». Машин тоолж, санал болгож, АНХААРУУЛЖ болно — түүний
+# тоог ЧИМЭЭГҮЙ ӨӨРЧЛӨХ эрхгүй.
+#
+# Урьд нь энэ хаалга 400 буцаадаг байв: цонхонд багтахгүй тоо нь ОГТ
+# бүртгэгдэхгүй. Гэвч хоногийг эзэмшдэг нь Отгоо эгч — хэлцэл нь цонхны
+# арифметикаас өмнө байдаг (урьдчилж тохирсон, тээвэр хоцорсон, өршөөсөн…).
+# Тиймээс одооноос ХОЁР ТООГ нэрлээд БАТЛУУЛНА: `days_confirm` ирвэл тоо нь
+# `days_confirmed` тамгатай хадгалагдаж, хөдөлгүүр түүнийг хэзээ ч хумихгүй.
+#
+# ҮЛДСЭН ХАТУУ ТАТГАЛЗАЛ ХОЁР Л: сөрөг хоног (утгагүй тоо, хэлцэл биш) ба
+# буцаалт бус мөрөнд гар хоног (падан циклээ бүтнээр эзэлдэг тул тэр тоо
+# хаана ч нэхэгдэхгүй — чимээгүй алга болно).
 #
 # Хязгаарыг хөдөлгүүр ӨӨРӨӨ хэлнэ (`billing.max_billed_days` → `override_cap`):
-# буцаалт хасагдах падангуудын хамгийн жижиг цонх. Циклийн уртаар шалгадаг
-# байсан нь дунд циклд гарсан падангийн үед ЗӨРДӨГ — зөвшөөрөгдсөн 12 нь
-# хавсралт дээр 10 болж хэвлэгддэг байв.
+# буцаалт хасагдах падангуудын хамгийн жижиг цонх.
 def _check_billed_days(c: models.Contract, day: date, material_id: int, grade_id: int,
                        qty: float, days: int, *, pin: int | None = None,
-                       line_id: int | None = None, prior: list[dict] = ()):
+                       line_id: int | None = None, prior: list[dict] = (),
+                       name: str = "") -> dict | None:
+    """Гар хоногийн шалгалт. Буцна: анхааруулга (эсвэл `None` — зөрчилгүй)."""
     if days < 0:
         raise HTTPException(400, "Хоног сөрөг байж болохгүй")
     cap = billing.max_billed_days(c, day, material_id, grade_id, qty,
                                   pin=pin, line_id=line_id, prior=prior)
-    if cap is not None and days > cap:
-        raise HTTPException(400, f"Гар хоног {cap} хоногоос их байж болохгүй — "
-                                 f"тэр падангаас буцсан хэсэг энэ циклд ихдээ "
-                                 f"{cap} хоног гадаа байсан")
+    if cap is None or days <= cap:
+        return None
+    return {"line_id": line_id, "material": name, "days": days, "window_days": cap,
+            "text": f"Та {days} хоног гэж бичлээ · системээр {cap} хоног багтана"
+                    f" — {name + ' ' if name else ''}тэр падангаас буцсан хэсэг "
+                    f"энэ циклд {cap} хоног гадаа байсан"}
+
+
+# Анхааруулга нь ХАРАГДААГҮЙ бол шийдвэр биш: `days_confirm` ирээгүй үед юу ч
+# бичихгүй, хоёр тоог нэрлээд буцна (200 — татгалзал БИШ, асуулт).
+DAYS_WARN_HINT = "Тоо нь тань — баталгаажуулбал ЯГ тэрээрээ нэхэгдэнэ."
 
 
 @router.patch("/movement-lines/{lid}")
@@ -600,8 +619,16 @@ def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends
         ov_days = ln.billed_days_override if mv.type == "RETURN" else None
     if ov_days is not None:
         new_pin = detail["issue_line_id"] if "issue_line_id" in detail else ln.issue_line_id
-        _check_billed_days(c, mv.date, ln.material_id, ln.grade_id, new_qty,
-                           ov_days, pin=new_pin, line_id=ln.id)
+        warn = _check_billed_days(c, mv.date, ln.material_id, ln.grade_id, new_qty,
+                                  ov_days, pin=new_pin, line_id=ln.id,
+                                  name=ln.material.name if ln.material else "")
+        # Анхааруулгыг ХАРААГҮЙ бол юу ч хөдлөхгүй; баталсан бол тоо нь тамга
+        # авч, хөдөлгүүр түүнийг дахин хумихгүй.
+        if warn and not body.days_confirm:
+            return {"days_warning": [warn], "hint": DAYS_WARN_HINT}
+        detail["days_confirmed"] = 1 if (warn and body.days_confirm) else 0
+    elif "billed_days_override" in detail:
+        detail["days_confirmed"] = 0          # тоог нь цэвэрлэвэл тамга ч арилна
     if mv.status == "done" and body.qty is not None:
         if not _timeline_ok(c, {(ln.material_id, ln.grade_id)}, line_qty={ln.id: new_qty}):
             raise HTTPException(400, TIMELINE_ERR)
@@ -1120,6 +1147,7 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
     # хөдөлгөнө. Тиймээс нягтлал нь БҮХЭЛДЭЭ DB-д хүрэхээс өмнө болно.
     if body.type in ("RETURN", "SALE"):
         prior: list[dict] = []
+        warns: list[dict] = []
         for ln in body.lines:
             out = billing.qty_on(c, ln.material_id, ln.grade_id, body.date)
             if ln.qty > out + 0.001:
@@ -1132,11 +1160,18 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
                 _check_pin(db, c, body.date, ln.material_id, ln.grade_id, None,
                            ln.issue_line_id)
             if ln.billed_days_override is not None and body.type == "RETURN":
-                _check_billed_days(c, body.date, ln.material_id, ln.grade_id, ln.qty,
-                                   ln.billed_days_override, pin=ln.issue_line_id,
-                                   prior=prior)
+                m0 = db.get(models.Material, ln.material_id)
+                w = _check_billed_days(c, body.date, ln.material_id, ln.grade_id, ln.qty,
+                                       ln.billed_days_override, pin=ln.issue_line_id,
+                                       prior=prior, name=m0.name if m0 else "")
+                # Анхааруулгыг ХАРААГҮЙ мөр нь бүх хөдөлгөөнийг зогсооно —
+                # хагас бүртгэгдсэн буцаалт үлдэхээс өмнө асуулт нь гарна.
+                if w and not ln.days_confirm:
+                    warns.append(w)
             prior.append(billing.draft_line(body.date, ln.material_id, ln.grade_id,
                                             ln.qty, ln.issue_line_id))
+        if warns:
+            return {"days_warning": warns, "hint": DAYS_WARN_HINT}
     mv = models.Movement(contract_id=cid, type=body.type, date=body.date,
                          note=body.note, status=status)
     db.add(mv)
@@ -1162,7 +1197,8 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
             # тохирсон АГШИНДАА audit-д буух ёстой, зөвхөн хожмын засвартаа биш.
             name = m.name if m else f"#{ln.material_id}"
             if ln.billed_days_override is not None:
-                marks.append(f"{name}: гар хоног {ln.billed_days_override}")
+                marks.append(f"{name}: гар хоног {ln.billed_days_override}"
+                             + (" (ТЭР баталсан)" if ln.days_confirm else ""))
             if ln.issue_line_id:
                 marks.append(f"{name}: падан #{ln.issue_line_id}")
         if body.type == "WRITEOFF":
@@ -1182,6 +1218,9 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
                                    return_grade_id=ln.return_grade_id,
                                    billed_days_override=(ln.billed_days_override
                                                          if body.type == "RETURN" else None),
+                                   days_confirmed=(1 if body.type == "RETURN"
+                                                   and ln.billed_days_override is not None
+                                                   and ln.days_confirm else 0),
                                    repair_qty=ln.repair_qty, repair_fee=repair_fee,
                                    writeoff_qty=ln.writeoff_qty, writeoff_fee=writeoff_fee,
                                    sale_fee=sale_fee))
@@ -1237,9 +1276,23 @@ def extend(cid: int, body: schemas.ExtendIn, db: Session = Depends(get_db),
 # «хаав» гэж бич. Урьд нь систем нь зөвхөн СҮҮЛЧИЙН товчийг мэддэг байсан:
 # эцсийн хагас цикл нэхэмжлэл болдоггүй, ёслолыг чиглүүлэх юу ч байхгүй.
 
+class DayChoice(_BM):
+    """«Энэ мөрөнд ЭНЭ хоногийг нэх» — хаалтын мөчид гарсан ТҮҮНИЙ шийдвэр.
+
+    Нэг мөрөнд нэг тоо. Хадгалагдахдаа `days_confirmed` тамгаа авна тул
+    хөдөлгүүр түүнийг дахин ХЭЗЭЭ Ч хумихгүй.
+    """
+    line_id: int
+    days: int
+
+
 class CloseIn(_BM):
     """`close_date` заагаагүй бол ӨНӨӨДӨР — хуучин нэг товчийн зам хэвээр."""
     close_date: _date_t | None = None
+    # Тасархай цонхтой зөрчилдсөн гар хоногууд дээрх сонголтууд. Заагаагүй
+    # мөр нь ӨӨРИЙНХӨӨРӨӨ (тохирсон тоогоороо) нэхэгдэнэ — «гарын үсэг зурсан
+    # тоо нь өгөгдмөл» гэдэг нь энэ бүх ажлын гол дүрэм.
+    day_choices: list[DayChoice] | None = None
 
 
 CLOSE_GOODS_ERR = "Түрээсэнд бараа байсаар байна — эхлээд буцаалт бүртгэнэ үү"
@@ -1292,23 +1345,53 @@ def _close_date_error(c: models.Contract, cd: date, today: date) -> str | None:
     return None
 
 
-@router.get("/contracts/{cid}/close-preview")
-def close_preview(cid: int, close_date: _date_t | None = None,
-                  db: Session = Depends(get_db),
-                  user=Depends(auth.require_roles("manager", "finance"))):
-    """Хаалтын wizard-ийн ГУРВАН асуултын хариу — DB-д юу ч бичихгүй.
+def _pick_map(c: models.Contract, db: Session,
+              picks: list[DayChoice] | None) -> dict[int, int]:
+    """Илэрхий сонголтууд → `{мөрийн id: хоног}`, нягтлагдсан.
 
-    (a) гадаа юу үлдэв, (b) эцсийн тасархай нэхэмжлэл хэд болох ба юу
-    төлөгдөөгүй үлдэх, (c) барьцаа цэвэрлэгдсэн үү.
+    ХАТУУ ТАТГАЛЗАЛ хэвээр: сөрөг хоног (утгагүй тоо) ба өөр гэрээний / буцаалт
+    бус мөр (тэр тоо хаана ч нэхэгдэхгүй тул чимээгүй алга болно).
+    """
+    out: dict[int, int] = {}
+    for p in picks or []:
+        if p.days < 0:
+            raise HTTPException(400, "Хоног сөрөг байж болохгүй")
+        ln = db.get(models.MovementLine, p.line_id)
+        if not ln or ln.movement.contract_id != c.id or ln.movement.type != "RETURN":
+            raise HTTPException(400, "Гар хоногийн сонголт буцаалтын мөр дээр л тавигдана")
+        out[p.line_id] = p.days
+    return out
+
+
+def _close_days(c: models.Contract, cd: date, today: date,
+                picks: dict[int, int]) -> dict[int, int]:
+    """Хаалтын мөчид мөр бүр ХЭДЭН хоногоор нэхэгдэх вэ — ГАНЦ эх сурвалж.
+
+    ӨГӨГДМӨЛ нь ТҮҮНИЙ ТОХИРСОН ТОО: зөрчил бүр өөрийнхөө тоогоор үлдэнэ,
+    учир нь гарын үсэг зурсан нь тэр. Илэрхий сонголт дээрээс нь бичнэ.
+
+    Урьдчилсан тооцоо ба жинхэнэ хаалт ХОЁУЛАА эндээс уншдаг тул wizard-ийн
+    амлалт ба хэвлэгдсэн цаас зөрөх боломжгүй.
+    """
+    out = {r["line_id"]: r["agreed_days"]
+           for r in billing.close_day_conflicts(c, cd, today)}
+    out.update(picks)
+    return out
+
+
+def _close_preview_payload(db: Session, c: models.Contract, close_date: _date_t | None,
+                           picks: dict[int, int]) -> dict:
+    """Хаалтын wizard-ийн ДӨРВӨН асуултын хариу — DB-д юу ч бичихгүй.
+
+    (a) гадаа юу үлдэв, (b) тохирсон хоног хаалтын цонхтой зөрчилдөж байна уу,
+    (c) эцсийн тасархай нэхэмжлэл хэд болох ба юу төлөгдөөгүй үлдэх,
+    (d) барьцаа цэвэрлэгдсэн үү.
 
     ЭЦСИЙН ДҮНГИЙН МЕХАНИЗМ: `derivable_invoice_specs(..., close_date=)` —
     жинхэнэ хаалт ЯГ ТЭР функцээр нэхэмжлэлээ гаргадаг тул урьдчилсан тоо ба
     хаасны дараах цаас ХОЁР ӨӨР кодоос гарах боломжгүй. Гэрээнд хүрэхгүй:
-    функц нь цэвэр (pure), `close_date` нь зөвхөн параметр.
+    функц нь цэвэр (pure), `close_date` ба сонголтууд нь зөвхөн параметр.
     """
-    c = db.get(models.Contract, cid)
-    if not c:
-        raise HTTPException(404, "Гэрээ олдсонгүй")
     today = date.today()
     billing.ensure_invoices(db, c, today)
     db.refresh(c)
@@ -1317,10 +1400,22 @@ def close_preview(cid: int, close_date: _date_t | None = None,
     err = _close_date_error(c, cd, today)
     out_rows = _outstanding_rows(db, c, today, gmap, mmap) if c.type == "rent" else []
 
+    # ГАР ХОНОГИЙН ЗӨРЧИЛ: сонгогдсон мөр нь шийдэгдсэн тул жагсаалтаас гарна.
+    conflicts = [{**r, "material": mmap.get(r["material_id"], "?"),
+                  "grade": gmap.get(r["grade_id"], ""),
+                  "agreed_amount": round(r["agreed_amount"]),
+                  "window_amount": round(r["window_amount"]),
+                  "day_amount": round(r["day_amount"]),
+                  "diff_amount": round(r["diff_amount"])}
+                 for r in (billing.close_day_conflicts(c, cd, today) if err is None else [])
+                 if r["line_id"] not in picks]
+    days = _close_days(c, cd, today, picks) if err is None else {}
+
     have = {billing.spec_key(c, i.cycle_start, i.cycle_end, i.no) for i in c.invoices}
     finals = []
     if c.type == "rent" and err is None:
-        for sp in billing.derivable_invoice_specs(c, today, close_date=cd):
+        for sp in billing.derivable_invoice_specs(c, today, close_date=cd,
+                                                  day_choices=days):
             if billing.spec_key(c, sp["cycle_start"], sp["cycle_end"], sp["no"]) in have:
                 continue
             finals.append({"no": sp["no"], "cycle_start": str(sp["cycle_start"]),
@@ -1337,6 +1432,7 @@ def close_preview(cid: int, close_date: _date_t | None = None,
             "last_movement": (str(billing.last_movement_day(c))
                               if billing.last_movement_day(c) else None),
             "outstanding": out_rows,
+            "day_conflicts": conflicts,
             "final_invoices": finals,
             # Нэхэмжлэгдсэн ба хуримтлагдсан — гэрээний мөрийн `balance`-тай НЭГ тоо
             "unpaid": round(b["outstanding"]),
@@ -1346,6 +1442,34 @@ def close_preview(cid: int, close_date: _date_t | None = None,
             "deposit": {"amount": c.deposit, "status": c.deposit_status,
                         "settled": c.deposit_status == "settled",
                         "applied": c.deposit_applied, "returned": c.deposit_returned}}
+
+
+@router.get("/contracts/{cid}/close-preview")
+def close_preview(cid: int, close_date: _date_t | None = None,
+                  db: Session = Depends(get_db),
+                  user=Depends(auth.require_roles("manager", "finance"))):
+    """Wizard нээгдэх агшны хариу — сонголт хараахан гараагүй."""
+    c = db.get(models.Contract, cid)
+    if not c:
+        raise HTTPException(404, "Гэрээ олдсонгүй")
+    return _close_preview_payload(db, c, close_date, {})
+
+
+@router.post("/contracts/{cid}/close-preview")
+def close_preview_with_choices(cid: int, body: CloseIn | None = None,
+                               db: Session = Depends(get_db),
+                               user=Depends(auth.require_roles("manager", "finance"))):
+    """ЯГ ижил хариу, ГЭХДЭЭ түүний сонгосон хоногуудаар бодогдсон.
+
+    Уншдаг зам POST байх нь: сонголтууд нь хаягт багтахааргүй жагсаалт, харин
+    амлалт нь СЕРВЕРЭЭС гарах ёстой — дэлгэц дээр өөрөө нэмж бодвол хаасны
+    дараах цаастай зөрөх эрсдэл нээгдэнэ (энэ бүх ажлын шалтгаан яг тэр зөрөх).
+    """
+    c = db.get(models.Contract, cid)
+    if not c:
+        raise HTTPException(404, "Гэрээ олдсонгүй")
+    picks = _pick_map(c, db, body.day_choices if body else None)
+    return _close_preview_payload(db, c, body.close_date if body else None, picks)
 
 
 @router.post("/contracts/{cid}/close")
@@ -1363,13 +1487,35 @@ def close(cid: int, body: CloseIn | None = None, db: Session = Depends(get_db),
     err = _close_date_error(c, cd, today)
     if err:
         raise HTTPException(400, err)
+
+    # ---- ГАР ХОНОГИЙН ШИЙДВЭР нь цаас төрөхөөс ӨМНӨ бичигдэнэ (H5) ----
+    # Тасархай цонх нь тохирсон хоногийг богиносгодог тул хаалт бүр дээр
+    # «энэ мөр хэдэн хоногоор нэхэгдэх вэ» гэсэн шийдвэр гарна. Өгөгдмөл нь
+    # ТҮҮНИЙ тоо. Шийдвэр нь `days_confirmed` тамгатай ХАДГАЛАГДАНА — иймд
+    # `ensure_invoices` ба хожмын дахин бодолт ХОЁУЛАА түүнийг ямар ч нэмэлт
+    # параметргүйгээр давтана (rebuild детерминистик хэвээр).
+    picks = _pick_map(c, db, body.day_choices if body else None)
+    marks: list[str] = []
+    for lid, days in _close_days(c, cd, today, picks).items():
+        ln = db.get(models.MovementLine, lid)
+        if ln is None:
+            continue
+        was = ln.billed_days_override
+        ln.billed_days_override, ln.days_confirmed = days, 1
+        marks.append((lid, was, days))
     c.status = "closed"
     c.closed_date = cd
     db.commit()
+    for lid, was, days in marks:
+        audit.log(db, user, "update", "movement", db.get(models.MovementLine, lid).movement_id,
+                  f"№{c.no} мөр #{lid}: гар хоног "
+                  + (f"{was} → {days}" if was != days else f"{days}")
+                  + f" · {cd}-ны хаалтад ТЭР баталсан")
     # Эцсийн тасархай цикл ЭНД цаас болно — «нэхээд хаана» гэсэн дараалал
     created = billing.ensure_invoices(db, c, today)
     audit.log(db, user, "close", "contract", c.id,
               f"№{c.no} · {cd}-нд хаав"
+              + (f" · гар хоног баталсан {len(marks)}" if marks else "")
               + (f" · эцсийн нэхэмжлэл {len(created)}" if created else ""))
     return {"ok": True, "closed_date": str(cd),
             "invoices": [serializers.invoice(i, today) for i in created]}

@@ -194,6 +194,15 @@ class MovementLine(Base):
     # машины тоо (авто). Тоо нь мөнгө биш — тухайн буцаалт хаасан ПАДАНГИЙН
     # хоногийг тэр буцаалт буусан ЦИКЛ дотор л орлуулна (`billing._lot_segments`).
     billed_days_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # ЭНЭ ТООГ ТЭР ХАРААД БАТАЛСАН (H5-ийн сүүлчийн миль). `billed_days_override`
+    # нь «бичигдсэн тоо»; энэ нь «ЭЗЭН нь тэр тоог, хоёр тоог зэрэг харсныхаа
+    # дараа сонгосон» гэсэн ТАМГА. Тамгатай мөрийн хоногийг хөдөлгүүр ХЭЗЭЭ Ч
+    # хумихгүй (`billing._lot_segments`, `return_attribution`) — `override_cap`
+    # нь тэр мөрд ЗӨВЛӨХ болно: тоог нь боддог, зөрүүг нь хэлдэг, ГЭХДЭЭ дардаггүй.
+    # Тамгагүй мөр өнөөдрийнхөөрөө: бичих агшинд шалгагдаж, хумилт нь тор хэвээр.
+    # 0/1 (Boolean БИШ: энэ загварт логик утга бүр бүхэл тоо, миграторын
+    # `DEFAULT 0` нь хуучин мөрүүдийг «баталгаажаагүй» гэж зөв дүүргэнэ).
+    days_confirmed: Mapped[int] = mapped_column(Integer, default=0)
     repair_qty: Mapped[float] = mapped_column(Float, default=0)     # засварт орсон тоо
     repair_fee: Mapped[float] = mapped_column(Float, default=0)     # клиентэд тооцох засварын дүн
     writeoff_qty: Mapped[float] = mapped_column(Float, default=0)   # акталсан тоо

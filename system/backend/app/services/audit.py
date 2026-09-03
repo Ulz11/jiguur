@@ -73,7 +73,7 @@ FIELDS_MN: dict[str, str] = {
     "date": "огноо", "qty": "тоо", "rate": "тариф",
     "return_grade_id": "буцаж ирсэн зэрэглэл", "repair_qty": "засварын тоо",
     "writeoff_qty": "актын тоо", "issue_line_id": "холбогдсон падан",
-    "billed_days_override": "гар хоног",
+    "billed_days_override": "гар хоног", "days_confirmed": "хоногийг баталсан",
     # механизм ба түүний бичилт
     "name": "нэр", "active": "идэвхтэй эсэх", "label": "ажлын нэр",
     "client": "харилцагч", "amount": "дүн", "method": "хэлбэр",

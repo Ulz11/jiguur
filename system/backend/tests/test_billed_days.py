@@ -264,8 +264,15 @@ def _cycle1_total(client, h, cid):
     return sorted(d["invoices"], key=lambda i: i["cycle_start"])[0]["total"]
 
 
-def test_override_rejects_more_days_than_the_cycle_holds(client, as_role):
-    """Цонхонд багтахгүй хоног — ИЛЭРХИЙ татгалзал (чимээгүй хумилт БИШ)."""
+def test_override_past_the_window_warns_but_does_not_refuse(client, as_role):
+    """Цонхонд багтахгүй хоног — АНХААРУУЛГА, татгалзал БИШ.
+
+    Урьд нь энэ 400 буцаадаг байв. Гэвч хоногийг эзэмшдэг нь Отгоо эгч: хэлцэл
+    (урьдчилж тохирсон, тээвэр хоцорсон, өршөөсөн) нь цонхны арифметикаас
+    ӨМНӨ байдаг. Одоо машин хоёр тоог нэрлээд БАТЛУУЛНА — баталсан тоо нь
+    тамгатай хадгалагдаж, ЯГ тэрээрээ нэхэгдэнэ. Чимээгүй хумилт ч, хаалттай
+    хаалга ч биш: гурав дахь зам — ИЛ ЗӨРҮҮ.
+    """
     h = as_role("otgoo")
     cid, mid, gid = _contract(client, as_role, h)
     client.post(f"/api/contracts/{cid}/movements", headers=h, json={
@@ -275,11 +282,20 @@ def test_override_rejects_more_days_than_the_cycle_holds(client, as_role):
 
     r = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
                      json={"billed_days_override": 31, "confirm": True})
-    assert r.status_code == 400
-    assert "30" in r.json()["detail"]
+    assert r.status_code == 200, r.text
+    assert r.json()["days_warning"][0]["window_days"] == 30
+    assert _return_line(client, h, cid)["billed_days_override"] is None   # бичигдээгүй
 
+    ok = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                      json={"billed_days_override": 31, "days_confirm": True,
+                            "confirm": True})
+    assert ok.status_code == 200, ok.text
+    assert _return_line(client, h, cid)["sources"][0]["billed_days"] == 31
+
+    # ҮЛДСЭН ХАТУУ ТАТГАЛЗАЛ: сөрөг хоног гэж БАЙХГҮЙ — утгагүй тоо, хэлцэл биш
     r = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
-                     json={"billed_days_override": -1, "confirm": True})
+                     json={"billed_days_override": -1, "days_confirm": True,
+                           "confirm": True})
     assert r.status_code == 400
 
 
@@ -361,14 +377,17 @@ def test_return_can_be_created_with_her_day_count(client, as_role):
     assert ln["sources"][0]["override"] is True
 
 
-def test_creation_rejects_an_impossible_day_count(client, as_role):
+def test_creation_warns_on_an_over_window_day_count(client, as_role):
+    """Бүртгэх агшинд ч ижил: асуулт гарна, хөдөлгөөн хараахан бичигдэхгүй."""
     h = as_role("otgoo")
     cid, mid, gid = _contract(client, as_role, h)
     r = client.post(f"/api/contracts/{cid}/movements", headers=h, json={
         "type": "RETURN", "date": _iso(25),
         "lines": [{"material_id": mid, "grade_id": gid, "qty": 40,
                    "billed_days_override": 45}]})
-    assert r.status_code == 400
+    assert r.status_code == 200, r.text
+    assert r.json()["days_warning"][0]["days"] == 45
+    assert "id" not in r.json()                          # мөр ҮҮСЭЭГҮЙ
 
 
 # ---------- Дунд циклд гарсан падан: хязгаар нь ПАДАНГИЙНХ ----------
@@ -382,12 +401,14 @@ def _late_lot(client, as_role, h, cid, mid, gid):
     return next(x for x in _issue_lines(client, h, cid) if x["rate"] == 300)
 
 
-def test_creation_refuses_days_the_lot_window_cannot_hold(client, as_role):
-    """Бүртгэх агшинд: цонхонд багтахгүй хоног — ЖИНХЭНЭ ДЭЭД тоог нэрлэсэн 400.
+def test_creation_names_the_true_window_in_its_warning(client, as_role):
+    """Анхааруулга нь ЖИНХЭНЭ ДЭЭД тоог (циклийн уртыг БИШ) нэрлэнэ.
 
     Циклийн 20 дахь хоногт гарсан падангаас буцаахад ихдээ 10 хоног. Урьд нь
     12 гэж бичихэд зөвшөөрөгдөж, хавсралт дээр 10 болж хэвлэгддэг байв —
-    гарын үсэг зурсан тоог машин чимээгүй дарж байсан (H5).
+    гарын үсэг зурсан тоог машин чимээгүй дарж байсан (H5). Дараа нь энэ 400
+    болов. Одоо АСУУЛТ болов: хоёр тоог нэрлээд ТҮҮНД сонгуулна — гэхдээ
+    нэрлэдэг тоо нь падангийнх (10), циклийнх (30) БИШ хэвээр.
     """
     h = as_role("otgoo")
     cid, mid, gid = _contract(client, as_role, h)
@@ -397,9 +418,19 @@ def test_creation_refuses_days_the_lot_window_cannot_hold(client, as_role):
         "type": "RETURN", "date": _iso(12),
         "lines": [{"material_id": mid, "grade_id": gid, "qty": 30,
                    "issue_line_id": late["id"], "billed_days_override": 12}]})
-    assert r.status_code == 400
-    assert "10" in r.json()["detail"]
-    assert "30" not in r.json()["detail"]        # циклийн уртыг нэрлэхээ болив
+    assert r.status_code == 200, r.text
+    w = r.json()["days_warning"][0]
+    assert w["window_days"] == 10 and w["days"] == 12
+    assert "10" in w["text"]
+    assert "30" not in w["text"]                 # циклийн уртыг нэрлэхээ болив
+
+    ok = client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": _iso(12),
+        "lines": [{"material_id": mid, "grade_id": gid, "qty": 30,
+                   "issue_line_id": late["id"], "billed_days_override": 12,
+                   "days_confirm": True}]})
+    assert ok.status_code == 200, ok.text
+    assert _return_line(client, h, cid)["sources"][0]["billed_days"] == 12
 
 
 def test_creation_accepts_the_exact_lot_window_and_bills_it(client, as_role):
@@ -419,8 +450,8 @@ def test_creation_accepts_the_exact_lot_window_and_bills_it(client, as_role):
     assert (src[0]["days"], src[0]["billed_days"]) == (8, 10)
 
 
-def test_patch_refuses_days_the_lot_window_cannot_hold(client, as_role):
-    """Засварын зам ч ижил хаалга — хоёр зам НЭГ хязгаартай."""
+def test_patch_warns_with_the_same_window_as_creation(client, as_role):
+    """Засварын зам ч ижил хаалга — хоёр зам НЭГ дүрэм, НЭГ хязгаар."""
     h = as_role("otgoo")
     cid, mid, gid = _contract(client, as_role, h)
     late = _late_lot(client, as_role, h, cid, mid, gid)
@@ -432,13 +463,15 @@ def test_patch_refuses_days_the_lot_window_cannot_hold(client, as_role):
 
     r = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
                      json={"billed_days_override": 12, "confirm": True})
-    assert r.status_code == 400
-    assert "10" in r.json()["detail"]
+    assert r.status_code == 200, r.text
+    assert r.json()["days_warning"][0]["window_days"] == 10
 
+    # Цонхонд БАГТАХ тоо нь ямар ч асуултгүй, тамгагүй өнгөрнө
     ok = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
                       json={"billed_days_override": 10, "confirm": True})
     assert ok.status_code == 200
     assert _return_line(client, h, cid)["sources"][0]["billed_days"] == 10
+    assert _return_line(client, h, cid)["days_confirmed"] is False
 
 
 def test_growing_the_qty_cannot_silently_shrink_a_stored_day_count(client, as_role):
@@ -448,6 +481,10 @@ def test_growing_the_qty_cannot_silently_shrink_a_stored_day_count(client, as_ro
     буцаалт ДУНД циклийн падан руу халина — тэнд цонх нь 10 тул хадгалагдсан
     25 чимээгүй хумигдана. Дахин шалгахгүй бол H5-ийн зөрчил хаалганы АРААР
     буцаж орно.
+
+    ХАМГААЛАЛТ нь ХЭВЭЭР, зөвхөн хэлбэр нь өөрчлөгдөв: 400-ын оронд АСУУЛТ
+    гарна. Гол зүйл нь өөрчлөгдөөгүй — хадгалагдсан 25 нь ЧИМЭЭГҮЙ хумигдахгүй:
+    баталгаажаагүй бол тоо нь ХӨДЛӨХГҮЙ, баталсан бол 25 ЯГ тэрээрээ үлдэнэ.
     """
     h = as_role("otgoo")
     cid, mid, gid = _contract(client, as_role, h)
@@ -461,9 +498,17 @@ def test_growing_the_qty_cannot_silently_shrink_a_stored_day_count(client, as_ro
 
     r = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
                      json={"qty": 120, "confirm": True})
-    assert r.status_code == 400
-    assert "10" in r.json()["detail"]
+    assert r.status_code == 200, r.text
+    assert r.json()["days_warning"][0]["window_days"] == 10
     assert _return_line(client, h, cid)["qty"] == 30  # хөдлөөгүй
+
+    ok = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                      json={"qty": 120, "days_confirm": True, "confirm": True})
+    assert ok.status_code == 200, ok.text
+    got = _return_line(client, h, cid)
+    assert got["qty"] == 120
+    assert got["billed_days_override"] == 25         # ХУМИГДААГҮЙ
+    assert sum(s["billed_days"] == 25 for s in got["sources"]) == len(got["sources"])
 
 
 # ---------- Падан-pin бүртгэх агшинд (Task 2) ----------

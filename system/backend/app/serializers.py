@@ -362,6 +362,9 @@ def material_lines(c: models.Contract, gmap: dict, mmap: dict, today: date):
                 # тэмдэг («13 хоног · гараар — системээр 12») эндээс гарна;
                 # хоногийн тоонууд өөрсдөө `sources`-д мөр мөрөөр нь ирнэ.
                 "billed_days_override": ln.billed_days_override,
+                # ТЭР ХАРААД БАТАЛСАН эсэх: тамгатай тоог хөдөлгүүр хумихгүй
+                # тул дэлгэц дээр ч «системээр N» нь ЗӨВЛӨМЖ болж уншигдана.
+                "days_confirmed": bool(ln.days_confirmed),
                 "repair_qty": ln.repair_qty, "repair_fee": ln.repair_fee,
                 "writeoff_qty": ln.writeoff_qty, "writeoff_fee": ln.writeoff_fee,
                 "sale_fee": ln.sale_fee,

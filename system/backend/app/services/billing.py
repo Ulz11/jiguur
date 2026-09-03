@@ -163,18 +163,41 @@ def lot_rate_in(contract: models.Contract, lot: dict, d_from: date) -> float:
                         lot["rate"], d_from)
 
 
-def _override_of(contract: models.Contract, ln: models.MovementLine, day: date):
-    """Буцаалтын мөрийн ГАР ХОНОГ → `(хоног, циклийн эхлэл)` эсвэл `None`.
+def _override_of(contract: models.Contract, ln: models.MovementLine, day: date,
+                 choices: dict[int, int] | None = None):
+    """Буцаалтын мөрийн ГАР ХОНОГ → `(хоног, циклийн эхлэл, тамга)` эсвэл `None`.
 
     Циклийн эхлэлийг ЭНД (нэг л удаа) шийднэ: гар хоног нь буцаалт БУУСАН
     циклийн дотор л үйлчилдэг тул тэр цонхны эхлэл нь хожим `_lot_segments`
     доторх «энэ цонхонд хамаарах уу» шалгуурын ГАНЦ түлхүүр болно.
+
+    Гурав дахь гишүүн нь `days_confirmed` — «ЭНЭ ТООГ ТЭР ХАРААД БАТАЛСАН».
+    Тамгатай бол хумилт хаана ч ажиллахгүй (H5-ийн сүүлчийн миль).
+
+    `choices` — ХАДГАЛАГДААГҮЙ сонголтууд `{мөрийн id: хоног}`: хаалтын wizard
+    «хэрэв би ийм тоо сонговол» гэж асуухад л хэрэглэгдэнэ. Сонголт нь өөрөө
+    ШИЙДВЭР тул ҮРГЭЛЖ тамгатай — эс бөгөөс урьдчилсан тоо нь хаалтын дараах
+    цаастай зөрнө (яг тэр зөрөх нь энэ бүх ажлын шалтгаан).
     """
     days = getattr(ln, "billed_days_override", None)
+    confirmed = bool(getattr(ln, "days_confirmed", 0))
+    if choices and ln.id in choices:
+        days, confirmed = choices[ln.id], True
     if days is None:
         return None
     win = cycle_of(contract, day)
-    return None if win is None else (int(days), win[0])
+    return None if win is None else (int(days), win[0], confirmed)
+
+
+def _billed_days(ov: tuple, lot_date: date, win: tuple[date, date]) -> int:
+    """Гар хоногийн мөрөнд ЭЦСИЙН ХОНОГ — `_lot_segments` ба
+    `return_attribution` ХОЁУЛАА эндээс уншина (зөрөх нь боломжгүй).
+
+    Тамгатай бол ТҮҮНИЙ тоо ЯГ тэрээрээ. Тамгагүй бол `override_cap` нь тор
+    хэвээр: бичих агшны валидаци яг тэр хязгаараар явдаг тул амьд зам дээр
+    хумилт ажиллахгүй — загварыг ШУУД хөндсөн (тест, миграци) үед л.
+    """
+    return ov[0] if ov[2] else min(ov[0], override_cap(lot_date, win))
 
 
 def _allocate(pool: list[dict], qty: float, pin: int | None) -> list[tuple[dict, float, bool]]:
@@ -237,7 +260,8 @@ class _DraftLine:
 _DRAFT_KEY = 2 ** 62
 
 
-def _lots(contract: models.Contract, drafts: list[dict] = ()) -> list[dict]:
+def _lots(contract: models.Contract, drafts: list[dict] = (),
+          choices: dict[int, int] | None = None) -> list[dict]:
     """Гэрээний бүх падан — баталгаажсан (done) ОЛГОЛТЫН мөр бүр нэг падан.
 
     Падан бүр өөрийн тариф, огноо, тоотой. ХАСАХ гурван төрөл (буцаалт, акт,
@@ -282,7 +306,7 @@ def _lots(contract: models.Contract, drafts: list[dict] = ()) -> list[dict]:
     lots.sort(key=lambda l: l["_key"])
 
     def _eat(lot: dict, day: date, take: float, ln, pinned: bool):
-        ov = _override_of(contract, ln, day)
+        ov = _override_of(contract, ln, day, choices)
         lot["left"] -= take
         lot["consumed"].append((day, take, ov))
         lot["takes"].append({"line_id": ln.id, "date": day, "qty": take,
@@ -386,11 +410,9 @@ def return_attribution(contract: models.Contract) -> dict[int, list[dict]]:
             days = max((t["date"] - start).days, 0)
             billed = days
             if t["ov"] is not None and win is not None:
-                # `min` нь ХАМГААЛАЛТ: роутерын валидаци (`max_billed_days`) яг
-                # энэ `override_cap`-аар татгалздаг тул API-гаар орсон тоо хэзээ
-                # ч хумигдахгүй. Загварыг ШУУД (тест, миграци) хөндсөн үед л
-                # ажиллана — хумилт нь амьд зам БИШ, тор.
-                billed = min(t["ov"][0], override_cap(lot["date"], win))
+                # `_lot_segments`-тэй НЭГ илэрхийлэл (`_billed_days`) — дэвтэр
+                # дээр уншигдах тоо ба мөнгө нь ЗӨРӨХ боломжгүй.
+                billed = _billed_days(t["ov"], lot["date"], win)
             # Тариф нь ТЭР БУЦААЛТ нэхэгдсэн цонхны хүчинтэй утга (R3 / H6) —
             # хавсралт дээр хэвлэгдэх тоотой яг нэг заамаас.
             eff = resolve_rate(contract, lot["material_id"], lot["grade_id"],
@@ -441,10 +463,12 @@ def _lot_segments(lot: dict, d_from: date, d_to: date) -> list[dict]:
             walk.append((ed, eq))
             continue
         q -= eq                                  # алхалтаас САЛНА
-        # `min` нь ХАМГААЛАЛТ, амьд зам БИШ: роутер `max_billed_days`-ээр яг
-        # энэ `override_cap`-аар татгалзсан тул API-гаар ирсэн тоо ХУМИГДАХГҮЙ
-        # (`return_attribution`-тай нэг илэрхийлэл — зөрөх нь боломжгүй).
-        days = min(ov[0], override_cap(lot["date"], (d_from, d_to)))
+        # `return_attribution`-тай НЭГ илэрхийлэл (`_billed_days`).
+        # ХААЛТ (H5-ийн сүүлчийн миль): эцсийн цикл ТАСАРЧ `d_to` нь хаасан
+        # өдөр дээр богиносоход энэ хумилт нь ЗӨВШӨӨРӨГДСӨН тоог дараад
+        # хавсралт дээр өөр тоо хэвлэдэг байв. Тамгатай мөр дээр хумилт
+        # ОГТ ажиллахгүй — ТҮҮНИЙ тоо цонхноос үл хамааран зогсоно.
+        days = _billed_days(ov, lot["date"], (d_from, d_to))
         if eq > 0 and days > 0:
             out.append({"seg_from": start, "seg_to": ed, "qty": eq,
                         "days": days, "override": True})
@@ -486,15 +510,19 @@ def lot_qty_on(contract: models.Contract, day: date) -> list[dict]:
     return out
 
 
-def accrue_rent(contract: models.Contract, d_from: date, d_to: date):
+def accrue_rent(contract: models.Contract, d_from: date, d_to: date,
+                choices: dict[int, int] | None = None):
     """[d_from, d_to) хоорондох түрээсийн хуримтлал. Буцна: (нийт, мөрийн задаргаа).
 
     Падан бүрээр явна; задаргааны мөр (material, grade, ТАРИФ)-аар бүлэглэгдэнэ —
     иймд нэг материал өөр өөр тарифтай хоёр мөр болж гарч ирж болно.
+
+    `choices` — хадгалагдаагүй гар хоногийн сонголт (`_override_of`): хаалтын
+    wizard «хэрэв» асуухад л дамжина, DB-д юу ч хүрэхгүй.
     """
     lines: dict[tuple[int, int, float], dict] = {}
     total = 0.0
-    for lot in _lots(contract):
+    for lot in _lots(contract, choices=choices):
         # Цонхны тариф (R3 / H6): падангийн тамгалагдсан утга дээр тухайн
         # цонхонд хүчин төгөлдөр өөрчлөлт тавигдана. `d_from` нь цонхны эхлэл —
         # `effective_from` нь заавал хил тул цонх дотор хариулт тогтмол.
@@ -828,8 +856,81 @@ def close_day(contract: models.Contract) -> date | None:
     return getattr(contract, "closed_date", None)
 
 
+def close_day_conflicts(contract: models.Contract, close_date: date,
+                        today: date | None = None) -> list[dict]:
+    """ХААЛТ нь ТОХИРСОН ХОНОГТОЙ зөрчилдөж буй мөрүүд — wizard-ийн асуулт.
+
+    Гэрээ хаахад эцсийн цикл ТАСАРНА (`[циклийн эхлэл, хаасан өдөр + 1)`).
+    Тэр богино цонх нь падангийн цонхыг богиносгодог тул бүртгэх агшинд
+    зөвшөөрөгдсөн хоног энд багтахаа болино. Урьд нь хөдөлгүүр түүнийг
+    ЧИМЭЭГҮЙ хумиж, гарын үсэгтэй 20 нь хавсралт дээр 16 болж хэвлэгддэг байв.
+
+    Одооноос энэ нь ШИЙДВЭР болно: мөр бүрд хоёр тоо, хоёулангийнх нь ₮.
+    Тамгатай (`days_confirmed`) мөр ХЭЗЭЭ Ч энд гарахгүй — тэр аль хэдийн
+    шийдэгдсэн, дахин асуух нь шийдвэрийг эргэлзээ болгоно.
+
+    Мөр бүр: {line_id, movement_id, date, material_id, grade_id, qty,
+    agreed_days, window_days, day_amount, agreed_amount, window_amount,
+    diff_amount}. Нэрийг (материал, зэрэглэл) роутер нэмнэ.
+
+    ЗӨВХӨН ЭЦСИЙН ТАСАРХАЙ ЦОНХ: бүтэн циклүүд нь бичих агшинд аль хэдийн
+    шалгагдсан тул тэнд зөрчил байх боломжгүй, мөн нэхэмжлэгдсэн түүхийг
+    хаалтын мөчид эргүүлэн асуух нь ТУСДАА (дахин бодолтын) хаалга.
+    """
+    today = today or date.today()
+    if contract.type != "rent":
+        return []
+    # ЯГ `derivable_invoice_specs`-ийн тасралт: дуусаагүй циклийн төгсгөл нь
+    # хаасан өдрийн МАРГААШ болно. Хаалт нь циклийн хил дээр таарвал тасархай
+    # цонх огт төрөхгүй — зөрчил ч байхгүй.
+    open_cycle = next((cs for cs, ce, complete
+                       in cycles_of(contract, min(today, close_date))
+                       if not complete), None)
+    if open_cycle is None:
+        return []
+    win = (open_cycle, close_date + timedelta(days=1))
+    if win[1] <= win[0]:
+        return []
+    d_from, d_to = win
+    rows: dict[int, dict] = {}
+    for lot in _lots(contract):
+        rate = lot_rate_in(contract, lot, d_from)
+        if rate <= 0:
+            continue
+        for t in lot["takes"]:
+            ov = t["ov"]
+            # Тамгатай, гар хоноггүй, эсвэл ӨӨР циклийн мөр — асуулт биш
+            if ov is None or ov[2] or ov[1] != d_from or not (d_from <= t["date"] < d_to):
+                continue
+            cap = max(override_cap(lot["date"], win), 0)
+            r = rows.get(t["line_id"])
+            if r is None:
+                r = rows[t["line_id"]] = {
+                    "line_id": t["line_id"], "movement_id": lot["movement_id"],
+                    "date": str(t["date"]), "material_id": lot["material_id"],
+                    "grade_id": lot["grade_id"], "qty": 0.0,
+                    "agreed_days": ov[0], "window_days": cap, "day_amount": 0.0}
+            # Нэг буцаалт хоёр падан дамнавал цонх нь ХАМГИЙН ЖИЖИГЭЭР шийднэ —
+            # `max_billed_days`-тэй ижил дүрэм.
+            r["window_days"] = min(r["window_days"], cap)
+            r["qty"] += t["qty"]
+            r["day_amount"] += t["qty"] * rate      # ЭНЭ МӨРИЙН нэг хоногийн ₮
+    out = []
+    for r in rows.values():
+        if r["agreed_days"] <= r["window_days"]:
+            continue                            # багтаж байна — асуулт үүсгэхгүй
+        # Тамга дарагдсан хоног нь ЯГ тэрээрээ нэхэгддэг тул дүн нь энгийн
+        # үржвэр — Отгоо эгч цаасан дээр дахин гаргаж чадах арифметик.
+        r["agreed_amount"] = r["agreed_days"] * r["day_amount"]
+        r["window_amount"] = r["window_days"] * r["day_amount"]
+        r["diff_amount"] = r["agreed_amount"] - r["window_amount"]
+        out.append(r)
+    return sorted(out, key=lambda r: (r["date"], r["line_id"]))
+
+
 def derivable_invoice_specs(contract: models.Contract, today: date | None = None,
-                            *, close_date: date | None = None) -> list[dict]:
+                            *, close_date: date | None = None,
+                            day_choices: dict[int, int] | None = None) -> list[dict]:
     """Гэрээний өгөгдлөөс ГАРГАЖ БОЛОХ бүх нэхэмжлэлийн ЦЭВЭР жагсаалт.
 
     DB-д юу ч бичихгүй — зөвхөн тооцоолно. `ensure_invoices` (нэмэх) ба
@@ -847,6 +948,11 @@ def derivable_invoice_specs(contract: models.Contract, today: date | None = None
 
     `close_date=` нь ХААГААГҮЙ гэрээн дээр «хаавал юу болох вэ» гэдгийг
     урьдчилан харуулна (хаалтын wizard) — гэрээнд юу ч хүрэхгүй.
+
+    `day_choices=` нь тэр урьдчилсан тооцоонд ГАР ХОНОГИЙН СОНГОЛТыг оруулна
+    (`{мөрийн id: хоног}`): хаалтын мөчид цонх тасарч түүний тохирсон хоног
+    багтахаа болиход тэр СОНГОЛТ хийдэг бөгөөс wizard-ийн амлалт ба хаасны
+    дараах цаас ХОЁУЛАА энэ ганц функцээр гардаг тул зөрөх боломжгүй.
     """
     today = today or date.today()
     cd = close_date if close_date is not None else close_day(contract)
@@ -880,7 +986,7 @@ def derivable_invoice_specs(contract: models.Contract, today: date | None = None
             ce = cd + timedelta(days=1)        # ЭЦСИЙН ТАСАРХАЙ ЦОНХ
             if ce <= cs:
                 continue
-        rent, lines = accrue_rent(contract, cs, ce)
+        rent, lines = accrue_rent(contract, cs, ce, day_choices)
         charge, charge_items = charges_in(contract, cs, ce)
         if rent == 0 and charge == 0:
             continue
