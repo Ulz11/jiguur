@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { READY_MS } from '../support/routes';
 
 /**
  * Нэвтрэх хуудас (`/login`).
@@ -46,9 +47,19 @@ export class LoginPage {
   async signIn(username: string, password: string): Promise<void> {
     await this.usernameInput.fill(username);
     await this.passwordInput.fill(password);
+    /* Нэвтрэлтийн ДАРАА нүүр хуудас өөрийн датаг татна (`/api/dashboard` —
+       гурван рол ЧУ бүгд `/` дээр буудаг, дарга ч мөн адил). Токен ба хажуугийн
+       самбар гарсан нь тэр дата ИРСЭН гэсэн үг БИШ: `<h1>` нь зөвхөн дата
+       ирсний дараа зурагдана. Урьд нь энэ хүлээлт байхгүй тул дараагийн
+       баталгаа (`toHaveText`) 10 секундын төсвөөр дата хөөж, машин ачаалалтай
+       үед WebKit проектууд дээр улаан болдог байв — аппын алдаа биш, уралдаан.
+       Хүлээлтийг ДАРАЛТТАЙ хамт бүртгэнэ: дараа нь бүртгэвэл хариу аль хэдийн
+       ирчихсэн байж мөнхөд хүлээнэ. */
     const [response] = await Promise.all([
       this.page.waitForResponse(
         (r) => r.url().includes('/api/auth/login') && r.request().method() === 'POST'),
+      this.page.waitForResponse(
+        (r) => r.url().includes('/api/dashboard') && r.ok(), { timeout: READY_MS }),
       this.submitButton.click(),
     ]);
     expect(response.status(), 'нэвтрэх хүсэлт амжилтгүй').toBe(200);
