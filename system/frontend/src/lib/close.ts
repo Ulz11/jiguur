@@ -158,9 +158,17 @@ export function pickedDays(row: DayConflict, p?: DayPick | null): number {
   return p.text.trim() !== "" && Number.isFinite(n) && n >= 0 ? n : row.agreed_days;
 }
 
-/** Сонголт → тэр мөрийн ₮. */
+/** Сонголт → тэр мөрийн ₮.
+ *
+ *  НЭРЛЭСЭН хоёр зам дээр СЕРВЕРИЙН тоог шууд авна: труба урт (бутархай тоо)
+ *  зарагддаг тул `хоног × бөөрөнхийлсөн нэг хоногийн ₮` нь жинхэнэ дүнгээс
+ *  нэг хоёр төгрөгөөр хазайж болно. «Өөр тоо» дээр л үржинэ — тэр тоог
+ *  сервер урьдчилж мэдэхгүй. */
 export function pickedAmount(row: DayConflict, p?: DayPick | null): number {
-  return pickedDays(row, p) * row.day_amount;
+  const days = pickedDays(row, p);
+  if (days === row.agreed_days) return row.agreed_amount;
+  if (days === row.window_days) return row.window_amount;
+  return days * row.day_amount;
 }
 
 /** Сервер рүү явах шийдвэрүүд — мөр БҮРийг ИЛЭРХИЙ нэрлэнэ.
@@ -174,9 +182,12 @@ export function dayChoicePayload(rows: DayConflict[] | null | undefined,
                                     days: pickedDays(r, picks[r.line_id]) }));
 }
 
-/** «12 хоног × 13,200₮ = 158,400₮» — задлагдсан үржвэр, нуугдсан тоогүй. */
-export function dayLineText(days: number, dayAmount: number): string {
-  return `${fmt(days)} хоног × ${fmt(dayAmount)}₮ = ${fmt(days * dayAmount)}₮`;
+/** «12 хоног × 13,200₮ = 158,400₮» — задлагдсан үржвэр, нуугдсан тоогүй.
+ *
+ *  `amount` өгвөл ТЭР зогсоно (серверийн жинхэнэ дүн); эс бөгөөс үржинэ. */
+export function dayLineText(days: number, dayAmount: number, amount?: number): string {
+  return `${fmt(days)} хоног × ${fmt(dayAmount)}₮ = `
+       + `${fmt(amount === undefined ? days * dayAmount : amount)}₮`;
 }
 
 /** Сонголт нь эцсийн нэхэмжлэлийг ХЭД хөдөлгөх вэ (өгөгдмөлөөс).
@@ -184,7 +195,7 @@ export function dayLineText(days: number, dayAmount: number): string {
  *  Сервер ЭЦСИЙН тоог өөрөө хэлнэ; энэ нь зөвхөн мөрөн дээрх «одоо −52,800₮»
  *  гэсэн тэмдэг — шийдвэрийн үнэ нь товч дарахаас ӨМНӨ харагдана. */
 export function pickDelta(row: DayConflict, p?: DayPick | null): number {
-  return (pickedDays(row, p) - row.agreed_days) * row.day_amount;
+  return pickedAmount(row, p) - row.agreed_amount;
 }
 
 /** Мөрөн дээрх хоёр гарц → буцаалтын цонхны урьдчилсан утга.

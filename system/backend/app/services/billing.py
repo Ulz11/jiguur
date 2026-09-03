@@ -897,10 +897,13 @@ def close_day_conflicts(contract: models.Contract, close_date: date,
         rate = lot_rate_in(contract, lot, d_from)
         if rate <= 0:
             continue
+        # `_lot_segments`-ийн ЯГ ТЭР шалгуурууд (зөрвөл асуулт нь мөнгөнөөсөө
+        # сална: нэхэгддэггүй мөрөнд шийдвэр асуух, эсвэл эсрэгээр).
+        start = max(lot["date"], d_from)
         for t in lot["takes"]:
             ov = t["ov"]
-            # Тамгатай, гар хоноггүй, эсвэл ӨӨР циклийн мөр — асуулт биш
-            if ov is None or ov[2] or ov[1] != d_from or not (d_from <= t["date"] < d_to):
+            # Тамгатай, гар хоноггүй, эсвэл ӨӨР цонхны мөр — асуулт биш
+            if ov is None or ov[2] or ov[1] != d_from or not (start < t["date"] < d_to):
                 continue
             cap = max(override_cap(lot["date"], win), 0)
             r = rows.get(t["line_id"])

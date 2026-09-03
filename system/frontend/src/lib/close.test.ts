@@ -259,3 +259,34 @@ describe("гар хоногийн зөрчил — ГУРВАН зам, өгөг
     expect(stepBlock(p, "confirm")).toBeNull();
   });
 });
+
+describe("бутархай тоо — дэлгэцийн ₮ нь СЕРВЕРИЙНХЭЭС хазайхгүй", () => {
+  /* Труба УРТААРАА зарагддаг (R2) тул тоо нь бутархай байж болно: тэгвэл
+     «хоног × бөөрөнхийлсөн нэг хоногийн ₮» нь жинхэнэ дүнгээс хазайна.
+     НЭРЛЭСЭН хоёр зам дээр серверийн тоо ЗОГСОНО — Отгоо эгч хоёр газарт
+     хоёр өөр ₮ уншвал аль нь ч итгэл төрүүлэхээ болино. */
+  const odd: DayConflict = {
+    ...conflict, qty: 12.5, day_amount: 4_125,        // 12.5 × 330 = 4,125₮
+    agreed_days: 12, window_days: 8,
+    agreed_amount: 49_499, window_amount: 33_001, diff_amount: 16_498,
+  };
+
+  it("тохирсон зам дээр СЕРВЕРИЙН дүн", () => {
+    expect(pickedAmount(odd, { mode: "agreed", text: "" })).toBe(49_499);
+    expect(pickDelta(odd, { mode: "agreed", text: "" })).toBe(0);
+  });
+
+  it("цонхны зам дээр ч СЕРВЕРИЙН дүн — зөрүү нь мөрөн дээрхтэйгээ таарна", () => {
+    expect(pickedAmount(odd, { mode: "window", text: "" })).toBe(33_001);
+    expect(pickDelta(odd, { mode: "window", text: "" })).toBe(-odd.diff_amount);
+  });
+
+  it("«өөр тоо» дээр л үржинэ — түүнийг сервер урьдчилж мэдэхгүй", () => {
+    expect(pickedAmount(odd, { mode: "other", text: "15" })).toBe(15 * 4_125);
+  });
+
+  it("мөрийн бичиг нь ЯГ тэр дүнг харуулна", () => {
+    expect(dayLineText(12, odd.day_amount, pickedAmount(odd, { mode: "agreed", text: "" })))
+      .toBe("12 хоног × 4,125₮ = 49,499₮");
+  });
+});

@@ -151,6 +151,62 @@ def test_an_already_confirmed_line_is_not_asked_twice(db):
     assert billing.close_day_conflicts(c, CLOSE) == []
 
 
+def test_a_line_that_bills_nothing_is_never_asked_about(db):
+    """НЭХЭГДДЭГГҮЙ мөр асуулт үүсгэхгүй — шийдвэр нь мөнгөнөөсөө салахгүй.
+
+    Циклийн ЭХНИЙ өдөр буусан буцаалт нь алхалтаас огт салдаггүй
+    (`_lot_segments`: `ed <= start` → шууд хасагдана). Тэр мөрөнд «аль тоог
+    нэхэх вэ» гэж асуувал сонголт нь дүнг ХӨДӨЛГӨХГҮЙ — амлалт нь хөдлөхгүй
+    шийдвэр бол Отгоо эгчийн хувьд «дараад юу ч болсонгүй».
+    """
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=240, rate=330)])
+    r = mv(db, c, "RETURN", date(2026, 3, 20),      # ЯГ циклийн эхлэл дээр
+           [dict(material_id=m.id, grade_id=ga.id, qty=30, return_grade_id=gb.id)])
+    r.lines[0].billed_days_override = 20
+    db.commit()
+    db.refresh(c)
+    assert billing.close_day_conflicts(c, CLOSE) == []
+    # ба тэр мөр үнэхээр мөнгө үүсгэдэггүй
+    assert not any(s["override"] for s in billing.accrue_rent_segments(c, *WIN))
+
+
+def test_a_return_across_two_lots_promises_what_it_bills(db):
+    """ХОЁР ПАДАН дамнасан буцаалт: амласан ₮ нь нэхэгдэх ₮-тэй ЯГ тэнцэнэ.
+
+    Цонх нь падан тус бүрд ӨӨР (эхнийх 16, дунд циклийнх 6) тул «цонхны тоо»
+    нь ХАМГИЙН ЖИЖИГ нь болно (`max_billed_days`-тэй ижил). Тамга дарагдсан
+    хоног нь падан БҮРД ЯГ тэрээрээ буудаг тул мөрийн ₮ = хоног × (Σ тоо ×
+    тариф) — энэ ГАНЦ үржвэр нь урьдчилсан тооцоо ба цаас хоёрыг холбоно.
+    """
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20),
+       [dict(material_id=m.id, grade_id=ga.id, qty=40, rate=330)])
+    mv(db, c, "ISSUE", date(2026, 3, 30),                  # 2 дахь падан, өөр тариф
+       [dict(material_id=m.id, grade_id=ga.id, qty=60, rate=300)])
+    r = mv(db, c, "RETURN", date(2026, 4, 1),              # 70ш = 40 + 30
+           [dict(material_id=m.id, grade_id=ga.id, qty=70, return_grade_id=gb.id)])
+    ln = r.lines[0]
+    ln.billed_days_override = 20
+    db.commit()
+    db.refresh(c)
+
+    rows = billing.close_day_conflicts(c, CLOSE)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["window_days"] == 6          # 2 дахь падангийн цонх л шийднэ
+    assert row["day_amount"] == pytest.approx(40 * 330 + 30 * 300)   # 22,200₮
+
+    # АМЛАЛТ (мөрийн ₮) == нэхэгдэх ₮: хоёр замын аль нь ч.
+    for days, promised in ((20, row["agreed_amount"]), (6, row["window_amount"])):
+        billed, _ = billing.accrue_rent(c, *WIN, choices={ln.id: days})
+        plain, _ = billing.accrue_rent(c, *WIN, choices={ln.id: 0})
+        assert billed - plain == pytest.approx(promised)
+        assert promised == pytest.approx(days * row["day_amount"])
+    assert row["diff_amount"] == pytest.approx(14 * 22_200)          # 310,800₮
+
+
 def test_the_choice_can_be_previewed_without_writing_it(db):
     """Wizard-ийн «хэрэв» — гэрээнд хүрэхгүйгээр ТҮҮНИЙ сонголтоор бодно."""
     c, ln = _lot_and_return(db, 20, confirmed=False)
@@ -324,6 +380,53 @@ def test_the_close_decision_lands_in_the_audit(client, as_role):
     trail = client.get("/api/audit?entity=movement&limit=300", headers=h).json()
     row = next(a for a in trail if "гар хоног" in a["detail"] and "15" in a["detail"])
     assert "баталсан" in row["detail"]
+
+
+def test_the_wizard_cannot_rewrite_history(client, as_role):
+    """Хаалтын сонголт нь ЗӨВХӨН зөрчилтэй мөрд — түүхийг эргүүлж бичихгүй.
+
+    Нэхэмжлэгдсэн хуучин циклийн хоногийг эндээс сольвол тэр нэхэмжлэл
+    (append-only) хэвээр үлдэж, дэвтэр ба цаас ЗӨРНӨ. Тэр засвар нь дахин
+    бодолтын ТУСДАА хаалгаар явна — тиймээс энд ИЛЭРХИЙ татгалзана.
+    """
+    h = as_role("otgoo")
+    cid, _, _ = _close_setup(client, as_role, AGREED)
+    other = _the_return_line(client, h, cid, 60)      # зөрчилгүй мөр
+    r = client.post(f"/api/contracts/{cid}/close", headers=h, json={
+        "close_date": iso(3), "day_choices": [{"line_id": other["id"], "days": 3}]})
+    assert r.status_code == 400
+    assert "зөрчил алга" in r.json()["detail"]
+
+
+def test_her_stamp_survives_an_unrelated_edit(client, as_role):
+    """Баталсан тоог ХӨНДӨӨГҮЙ засвар дахин асуухгүй — шийдвэр нь тогтвортой.
+
+    Тоо/падан зассан болгонд «дахин баталгаажуул» гэж асуувал тэр шийдвэр
+    эргэлзээ болж хувирна. Хоногоо ӨӨРӨӨ өөрчилвөл л шинэ шийдвэр болно.
+    """
+    h = as_role("otgoo")
+    _, cid, m, st = make_contract(client, as_role, days_ago=40, qty=100)
+    _confirm_pending(client, as_role, cid)
+    client.post(f"/api/contracts/{cid}/movements", headers=h, json={
+        "type": "RETURN", "date": iso(5),
+        "lines": [{"material_id": m["id"], "grade_id": st["grade_id"], "qty": 40,
+                   "billed_days_override": 45, "days_confirm": True}]})
+    ln = _the_return_line(client, h, cid, 40)
+    assert ln["days_confirmed"] is True
+
+    # ХОНОГ хөндөгдөөгүй — тоо зассан ч асуулт гарахгүй, тамга үлдэнэ
+    r = client.patch(f"/api/movement-lines/{ln['id']}", headers=h,
+                     json={"qty": 50, "confirm": True})
+    assert r.status_code == 200, r.text
+    assert "days_warning" not in r.json()
+    got = _the_return_line(client, h, cid, 50)
+    assert got["days_confirmed"] is True and got["sources"][0]["billed_days"] == 45
+
+    # ХОНОГОО ӨӨРӨӨ өөрчилвөл — ШИНЭ шийдвэр, дахин баталгаажина
+    r2 = client.patch(f"/api/movement-lines/{got['id']}", headers=h,
+                      json={"billed_days_override": 50, "confirm": True})
+    assert r2.status_code == 200 and r2.json()["days_warning"][0]["days"] == 50
+    assert _the_return_line(client, h, cid, 50)["billed_days_override"] == 45
 
 
 def test_a_clean_close_asks_nothing(client, as_role):

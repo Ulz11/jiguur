@@ -27,8 +27,8 @@ import { EffKey, RATE_RESTATE_WARN, effectiveDate, effectiveOptions,
 import { ClosePreview, DayConflict, DayMode, DayPick, OutRow, Prefill, SalePrefill,
          StepKey, applyPrefill, applySalePrefill, closeSteps, dayChoicePayload,
          dayLineText, defaultDayPicks, outstandingQty, outstandingSale,
-         outstandingWriteoff, pickDelta, pickedDays, returnPrefill, salePrefill,
-         stepBlock, stepIndex } from "../lib/close";
+         outstandingWriteoff, pickDelta, pickedAmount, pickedDays, returnPrefill,
+         salePrefill, stepBlock, stepIndex } from "../lib/close";
 import { mvName, mvTone, saleRowTotal, saleTotal } from "../lib/movement";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 
@@ -1925,6 +1925,13 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
      хоёр тоог нэрлээд БАТЛУУЛНА. Тоог нь сервер хэлнэ (дэлгэц дээр дахин
      бодохгүй) тул баталгаажуулах агшинд харагдах тоо ба нэхэгдэх тоо НЭГ. */
   const [warn, setWarn] = useState<any[] | null>(null);
+  /* ⚠ АСУУЛТ НЬ ӨӨРӨӨ ТҮҮН РҮҮ ОЧНО. Отгоо эгч дэлгэц дээр болж буйг
+     АНЗААРДАГГҮЙ: «Бүртгэх» дарсны дараа маягтын ёроолд гарсан анхааруулга
+     нь харагдацаас гадуур үлдвэл түүний хувьд «дараад юу ч болсонгүй»
+     (`ui.tsx`-ийн `askClose` хамгаалалттай ЯГ ижил дүрэм). */
+  const warnRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { if (warn) warnRef.current?.scrollIntoView({ block: "nearest" }); },
+            [warn]);
   const uid = useId();
   const setRow = (i: number, patch: any) =>
     setRows(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)));
@@ -2170,7 +2177,8 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
           Тоо нь серверээс ирнэ: баталгаажуулах агшинд уншсан тоо ба
           нэхэгдэх тоо ХОЁР ӨӨР байх боломжгүй. */}
       {warn && (
-        <div className="rounded-xl border border-warn bg-sunken p-3.5 mt-4" role="status">
+        <div ref={warnRef} className="rounded-xl border border-warn bg-sunken p-3.5 mt-4"
+             role="status">
           <b className="text-[14px] text-ink block mb-1.5">Хоногийн зөрүү</b>
           {warn.map((w: any, i: number) => (
             <p key={i} className="text-[13px] text-t2 mb-1.5">⚠ {w.text}</p>
@@ -2893,7 +2901,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                           </div>
                         )}
                         <p className="text-[12.5px] text-t2 mt-2 tabular-nums">
-                          {dayLineText(days, cf.day_amount)}
+                          {dayLineText(days, cf.day_amount, pickedAmount(cf, pick))}
                           {delta !== 0 && (
                             <span className={delta > 0 ? " text-danger" : " text-money"}>
                               {" "}({delta > 0 ? "+" : "−"}{money(Math.abs(delta))})

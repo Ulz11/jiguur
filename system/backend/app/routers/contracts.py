@@ -622,11 +622,17 @@ def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends
         warn = _check_billed_days(c, mv.date, ln.material_id, ln.grade_id, new_qty,
                                   ov_days, pin=new_pin, line_id=ln.id,
                                   name=ln.material.name if ln.material else "")
+        # ТҮҮНИЙ ШИЙДВЭР НЬ ХАДГАЛАГДАНА: аль хэдийн тамгатай мөрийн ХОНОГ нь
+        # хөндөгдөөгүй бол (тоо/падан л зассан) дахин асуухгүй — тэр тоог тэр
+        # аль хэдийн харж баталсан. Хоногоо ӨӨРӨӨ өөрчилвөл шинэ шийдвэр тул
+        # дахин баталгаажина.
+        kept = bool(ln.days_confirmed) and "billed_days_override" not in detail
+        ok = body.days_confirm or kept
         # Анхааруулгыг ХАРААГҮЙ бол юу ч хөдлөхгүй; баталсан бол тоо нь тамга
         # авч, хөдөлгүүр түүнийг дахин хумихгүй.
-        if warn and not body.days_confirm:
+        if warn and not ok:
             return {"days_warning": [warn], "hint": DAYS_WARN_HINT}
-        detail["days_confirmed"] = 1 if (warn and body.days_confirm) else 0
+        detail["days_confirmed"] = 1 if (warn and ok) else 0
     elif "billed_days_override" in detail:
         detail["days_confirmed"] = 0          # тоог нь цэвэрлэвэл тамга ч арилна
     if mv.status == "done" and body.qty is not None:
@@ -1372,10 +1378,19 @@ def _close_days(c: models.Contract, cd: date, today: date,
 
     Урьдчилсан тооцоо ба жинхэнэ хаалт ХОЁУЛАА эндээс уншдаг тул wizard-ийн
     амлалт ба хэвлэгдсэн цаас зөрөх боломжгүй.
+
+    ХАМРАХ ХҮРЭЭ нь ЗӨВХӨН ЗӨРЧИЛ: хаалтын wizard бол хаалтын шийдвэрийн
+    газар, түүхийг эргүүлэн бичих газар БИШ. Нэхэмжлэгдсэн хуучин циклийн
+    хоногийг эндээс сольвол тэр нэхэмжлэл (append-only) хэвээр үлдэж, дэвтэр
+    ба цаас ЗӨРНӨ — тэр засвар нь дахин бодолтын ТУСДАА хаалгаар явна.
     """
     out = {r["line_id"]: r["agreed_days"]
            for r in billing.close_day_conflicts(c, cd, today)}
-    out.update(picks)
+    for lid, days in picks.items():
+        if lid not in out:
+            raise HTTPException(400, f"Мөр #{lid}-д хаалтын хоногийн зөрчил алга — "
+                                     f"хоногийг гэрээний дэвтрээс засна")
+        out[lid] = days
     return out
 
 
@@ -1495,19 +1510,19 @@ def close(cid: int, body: CloseIn | None = None, db: Session = Depends(get_db),
     # `ensure_invoices` ба хожмын дахин бодолт ХОЁУЛАА түүнийг ямар ч нэмэлт
     # параметргүйгээр давтана (rebuild детерминистик хэвээр).
     picks = _pick_map(c, db, body.day_choices if body else None)
-    marks: list[str] = []
+    marks: list[tuple[int, int, int | None, int]] = []
     for lid, days in _close_days(c, cd, today, picks).items():
         ln = db.get(models.MovementLine, lid)
         if ln is None:
             continue
         was = ln.billed_days_override
         ln.billed_days_override, ln.days_confirmed = days, 1
-        marks.append((lid, was, days))
+        marks.append((lid, ln.movement_id, was, days))
     c.status = "closed"
     c.closed_date = cd
     db.commit()
-    for lid, was, days in marks:
-        audit.log(db, user, "update", "movement", db.get(models.MovementLine, lid).movement_id,
+    for lid, mid, was, days in marks:
+        audit.log(db, user, "update", "movement", mid,
                   f"№{c.no} мөр #{lid}: гар хоног "
                   + (f"{was} → {days}" if was != days else f"{days}")
                   + f" · {cd}-ны хаалтад ТЭР баталсан")
