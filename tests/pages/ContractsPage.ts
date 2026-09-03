@@ -1,4 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { clickToReach } from '../support/interact';
+import { READY_MS } from '../support/routes';
 
 /**
  * Гэрээнүүд (`/contracts`).
@@ -38,11 +40,16 @@ export class ContractsPage {
    * (Хаяг солигдох нь хангалтгүй: дата ирээгүй байхад `<Spinner />` зогсоно.)
    */
   async openContract(contractNo: string, contractId: number): Promise<void> {
-    await Promise.all([
-      this.page.waitForResponse((r) => r.url().includes(`/api/contracts/${contractId}`) && r.ok()),
-      this.row(contractNo).click(),
-    ]);
-    await this.page.waitForURL(new RegExp(`/contracts/${contractId}$`));
+    const loaded = this.page.waitForResponse(
+      (r) => r.url().includes(`/api/contracts/${contractId}`) && r.ok(),
+      { timeout: READY_MS });
+    /* Даралт нь дахин оролдогдож болзошгүй тул хариуны амлалтыг ТУСДАА барина;
+       `catch` нь баригдаагүй татгалзал болж хаяхаас сэргийлнэ — жинхэнэ
+       шалтгааныг доорх `await` өөрөө хэлнэ. */
+    loaded.catch(() => undefined);
+    await clickToReach(this.row(contractNo), this.page,
+                       new RegExp(`/contracts/${contractId}$`), `гэрээ ${contractNo}`);
+    await loaded;
   }
 
   /** Хайлт — жагсаалт нь клиент талд шүүгддэг тул мөрийн тоогоор хүлээнэ. */

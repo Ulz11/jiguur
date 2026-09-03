@@ -1,5 +1,6 @@
 import { test, expect } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
+import { clickToOpen } from '../../support/interact';
 import { readReceipt } from '../../support/receipt';
 import { parseTugrik } from '../../support/money';
 
@@ -33,10 +34,9 @@ function beforeAfter(value: string, where: string): [number, number] {
 
 /** Материалын хүснэгтийн ТАРИФ дээр дарж «дахин тохирох» цонхыг нээнэ. */
 async function openRateModal(page: ContractDetailPage) {
-  await page.page.getByRole('button', { name: /тариф: .* · дахин тохирох/ }).first().click();
-  const modal = page.dialog('Тариф дахин тохирох');
-  await expect(modal).toBeVisible();
-  return modal;
+  return clickToOpen(
+    page.page.getByRole('button', { name: /тариф: .* · дахин тохирох/ }).first(),
+    page.dialog('Тариф дахин тохирох'), 'Тариф дахин тохирох цонх');
 }
 
 test('«Хэзээнээс» гурван сонголт — БОДИТ циклийн хил дээр, анхдагч нь АЮУЛГҮЙ нь',

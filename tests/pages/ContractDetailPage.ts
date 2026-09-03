@@ -1,6 +1,8 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { clickToExpand, clickToOpen } from '../support/interact';
 import { parseTugrik } from '../support/money';
 import { signedTugrik } from '../support/receipt';
+import { READY_MS } from '../support/routes';
 import { exactLabel } from '../support/text';
 
 export type MoneyScan = {
@@ -71,7 +73,11 @@ export class ContractDetailPage {
    */
   async goto(contractId: number): Promise<void> {
     await Promise.all([
-      this.page.waitForResponse((r) => r.url().includes(`/api/contracts/${contractId}`) && r.ok()),
+      /* `READY_MS` — энэ хүлээлт нь `page.goto`-той ЗЭРЭГ явдаг НАВИГАЦИЙН
+         хэсэг тул навигацийн төсөгтэй. `r.ok()` шаардлага хэвээр. */
+      this.page.waitForResponse(
+        (r) => r.url().includes(`/api/contracts/${contractId}`) && r.ok(),
+        { timeout: READY_MS }),
       this.page.goto(`/contracts/${contractId}`),
     ]);
     await expect(this.backLink).toBeVisible();
@@ -82,7 +88,9 @@ export class ContractDetailPage {
   /** Хуудсыг дахин уншуулж, СЕРВЕРИЙН шинэ хариуг хүлээнэ. */
   async reload(contractId: number): Promise<void> {
     await Promise.all([
-      this.page.waitForResponse((r) => r.url().includes(`/api/contracts/${contractId}`) && r.ok()),
+      this.page.waitForResponse(
+        (r) => r.url().includes(`/api/contracts/${contractId}`) && r.ok(),
+        { timeout: READY_MS }),
       this.page.reload(),
     ]);
     await expect(this.backLink).toBeVisible();
@@ -237,8 +245,7 @@ export class ContractDetailPage {
   async openHistory(): Promise<void> {
     const toggle = this.page.getByRole('button', { name: /^Хөдөлгөөний түүх/ });
     await expect(toggle).toBeVisible();
-    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await clickToExpand(toggle, 'Хөдөлгөөний түүх');
   }
 
   /** Хөдөлгөөний мөр — `rowClickProps`-ийн дуудагдах нэрээр. */
@@ -251,9 +258,8 @@ export class ContractDetailPage {
     await this.openHistory();
     const toggle = this.movementToggle(date, name);
     await expect(toggle, `«${date} · ${name}» хөдөлгөөн олдсонгүй`).toBeVisible();
-    await toggle.click();
     const panel = this.page.locator(`#mv-panel-${movementId}`);
-    await expect(panel).toBeVisible();
+    await clickToOpen(toggle, panel, `${date} · ${name} — хөдөлгөөний дэлгэрэнгүй`);
     return panel;
   }
 
@@ -263,9 +269,8 @@ export class ContractDetailPage {
       name: new RegExp(`^${material} \\(${grade}\\)`),
     }).first();
     await expect(row, `«${material} (${grade})» материалын мөр алга`).toBeVisible();
-    await row.click();
     const panel = this.page.locator(`#mat-panel-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`);
-    await expect(panel).toBeVisible();
+    await clickToOpen(row, panel, `${material} (${grade}) — падангийн дэвтэр`);
     return panel;
   }
 

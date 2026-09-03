@@ -1,5 +1,6 @@
 import { test, expect } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
+import { clickToOpen } from '../../support/interact';
 import { readReceipt } from '../../support/receipt';
 
 /**
@@ -45,8 +46,8 @@ test('төлбөр хүчингүй болоход мөр үлдэж, нэхэм
     const amount = Math.floor(oldest.outstanding / 2 / 1000) * 1000;
     expect(amount).toBeGreaterThan(0);
 
-    await page.payButton.click();
-    const payModal = page.dialog('Төлбөр бүртгэх');
+    const payModal = await clickToOpen(page.payButton, page.dialog('Төлбөр бүртгэх'),
+                                       'Төлбөр бүртгэх цонх');
     await payModal.getByLabel('Дүн ₮').fill(String(amount));
     const plan = await readReceipt(payModal, 'төлбөрийн хуваарилалт');
     /* Баримт нь ЯГ нэг нэхэмжлэлийг нэрлэх ёстой — тэр мөнгө хаашаа явахыг
@@ -77,9 +78,9 @@ test('төлбөр хүчингүй болоход мөр үлдэж, нэхэм
     /* ---- 3. Цуцлалт: ШАЛТГААНГҮЙ бол хаалга нээгдэхгүй ---- */
     const row = page.paymentRow(`${amount.toLocaleString('en-US')}₮`);
     await expect(row, 'бүртгэсэн төлбөр жагсаалтад алга').toBeVisible();
-    await row.getByRole('button', { name: /^Хүчингүй болгох/ }).click();
-
-    const voidModal = page.dialog('Төлбөр хүчингүй болгох');
+    const voidModal = await clickToOpen(row.getByRole('button', { name: /^Хүчингүй болгох/ }),
+                                        page.dialog('Төлбөр хүчингүй болгох'),
+                                        'Төлбөр хүчингүй болгох цонх');
     const confirm = voidModal.getByRole('button', { name: 'Хүчингүй болгох', exact: true });
     await expect(confirm, 'шалтгаангүйгээр цуцлах товч идэвхтэй байна').toBeDisabled();
 
@@ -166,9 +167,9 @@ test('ачилт хүчингүй болоход НӨӨЦ агуулах руу�
     const detail = await data.detail(contract.id);
     const mv = detail.movements.find((m: any) => m.id === movementId);
     const panel = await page.openMovement(movementId, mv.date, 'Ачилт');
-    await panel.getByRole('button', { name: /^Хүчингүй болгох/ }).click();
-
-    const modal = page.dialog('Ачилт хүчингүй болгох');
+    const modal = await clickToOpen(panel.getByRole('button', { name: /^Хүчингүй болгох/ }),
+                                    page.dialog('Ачилт хүчингүй болгох'),
+                                    'Ачилт хүчингүй болгох цонх');
     const promise = await readReceipt(modal, 'ачилт цуцлах баримт');
     const line = promise.lines[0];
     expect(line.label, 'цуцлалтын баримт материалаа нэрлэсэнгүй')

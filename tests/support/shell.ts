@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { clickToExpand } from './interact';
 
 /**
  * Аппын бүрхүүл (`App.tsx` `Shell`) — цэс, гарах товч.
@@ -14,8 +15,7 @@ export async function openNavigation(page: Page): Promise<Locator> {
      (десктопын хумих товч) дээр ч тохирч, тест цэсээ нээхийн оронд ХУМИНА. */
   const burger = page.getByRole('button', { name: 'Цэс', exact: true });
   if (await burger.isVisible()) {
-    await burger.click();
-    await expect(burger).toHaveAttribute('aria-expanded', 'true');
+    await clickToExpand(burger, 'Цэс');
   }
   await expect(nav).toBeVisible();
   return nav;

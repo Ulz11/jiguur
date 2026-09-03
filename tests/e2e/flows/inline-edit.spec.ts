@@ -1,5 +1,6 @@
 import { test, expect } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
+import { clickToOpen } from '../../support/interact';
 
 /**
  * H10 — ХАДГАЛАЛТ ЧИМЭЭГҮЙ УНАХГҮЙ.
@@ -39,11 +40,13 @@ test('403 буцахад бичсэн утга АЛДАГДАХГҮЙ — шал
     });
 
     const typed = 'тээврийг захиалагч хариуцна';
-    await managerPage.getByRole('button', { name: /^Тэмдэглэл:/ }).click();
     const field = managerPage.getByLabel('Тэмдэглэл — шинэ утга');
+    await clickToOpen(managerPage.getByRole('button', { name: /^Тэмдэглэл:/ }), field,
+                      'тэмдэглэлийн мөрийн засвар');
     await field.fill(typed);
-    await managerPage.getByRole('button', { name: 'Хадгалахаар үргэлжлүүлэх' }).click();
     const confirm = managerPage.getByRole('button', { name: 'Хадгалах уу?' });
+    await clickToOpen(managerPage.getByRole('button', { name: 'Хадгалахаар үргэлжлүүлэх' }),
+                      confirm, 'хадгалах баталгаажуулалт');
     await confirm.click();
 
     /* 1. БИЧСЭН УТГА БАЙРАНДАА — энэ бол хамгийн чухал баталгаа. */
@@ -98,11 +101,14 @@ test('ЖИНХЭНЭ серверийн татгалзал ч ижилхэн —
     /* Дуудагдах нэр нь «{материал} ({зэрэглэл}) · {огноо} — тоо: 20 · засах» —
        нэрийг ХЭВЭЭР нь дамжуулна (Playwright дэд мөрөөр таарна); regex болговол
        зэрэглэлийн хаалт нь бүлэг болж, хайлт хоосорно. */
-    await panel.getByRole('button', { name: `${label}: ${line.qty}` }).click();
     const field = managerPage.getByLabel(`${label} — шинэ утга`);
+    await clickToOpen(panel.getByRole('button', { name: `${label}: ${line.qty}` }), field,
+                      `${label} мөрийн засвар`);
     await field.fill('999');
-    await managerPage.getByRole('button', { name: 'Хадгалахаар үргэлжлүүлэх' }).click();
-    await managerPage.getByRole('button', { name: 'Тоо солих уу?' }).click();
+    const confirmQty = managerPage.getByRole('button', { name: 'Тоо солих уу?' });
+    await clickToOpen(managerPage.getByRole('button', { name: 'Хадгалахаар үргэлжлүүлэх' }),
+                      confirmQty, 'тоо солих баталгаажуулалт');
+    await confirmQty.click();
 
     await expect(field, 'серверийн татгалзлын дараа бичсэн тоо алга болжээ')
       .toHaveValue('999');

@@ -1,6 +1,7 @@
 import { test, expect } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
 import { daysBetween } from '../../support/dates';
+import { clickToOpen } from '../../support/interact';
 import { readReceipt } from '../../support/receipt';
 
 /**
@@ -36,8 +37,8 @@ test('ТӨЛБӨР БҮРТГЭХЭД АЛДАНГИ ЮУ Ч НОМЖИХГҮЙ 
     const oldest = lines[lines.length - 1];
     const amount = Math.floor(oldest.outstanding / 2 / 1000) * 1000;
 
-    await page.payButton.click();
-    const payModal = page.dialog('Төлбөр бүртгэх');
+    const payModal = await clickToOpen(page.payButton, page.dialog('Төлбөр бүртгэх'),
+                                       'Төлбөр бүртгэх цонх');
     await payModal.getByLabel('Дүн ₮').fill(String(amount));
     /* Хадгалахаас ӨМНӨ цонх өөрөө хэлнэ: энэ төлбөр алдангийг ХӨНДӨХГҮЙ. */
     await expect(payModal, 'төлбөрийн цонх алдангийн байдлыг хэлэхгүй байна')
@@ -73,8 +74,8 @@ test('нэхэгдээгүй тоо нь «нэхэгдээгүй» шошгот
        нэхэгдсэн (мөнгө) ба нэхэгдээгүй (тооцоолол). Отгоо хэдийг өршөөж
        байгаагаа ЯГ ЭНЭ дэлгэцээс уншина. */
     const asOf = data.isoDaysAgo(10);
-    await page.chargePenaltyButton.click();
-    const modal = page.dialog('Алданги нэхэх');
+    const modal = await clickToOpen(page.chargePenaltyButton, page.dialog('Алданги нэхэх'),
+                                    'Алданги нэхэх цонх');
     await modal.getByLabel('Ямар өдрөөр нэхэх вэ').fill(asOf);
     const receipt = await readReceipt(modal, 'алданги нэхэх баримт');
     await modal.getByRole('button', { name: 'Алданги нэхэх', exact: true }).click();
@@ -123,8 +124,8 @@ test('«Алданги нэхэх» — баримтын мөр бүр нэхэ�
     const days = daysBetween(target.penalty_since, asOf);
     expect(days, 'нэхэх хоног гарсангүй').toBeGreaterThan(0);
 
-    await page.chargePenaltyButton.click();
-    const modal = page.dialog('Алданги нэхэх');
+    const modal = await clickToOpen(page.chargePenaltyButton, page.dialog('Алданги нэхэх'),
+                                    'Алданги нэхэх цонх');
     await modal.getByLabel('Ямар өдрөөр нэхэх вэ').fill(asOf);
     const receipt = await readReceipt(modal, 'алданги нэхэх баримт');
 
@@ -167,8 +168,9 @@ test('нэхсэн алдангийг ХҮЧИНГҮЙ болгоход номж
     expect(await page.metricMoney('Нэхэгдсэн алданги')).toBe(Math.round(charged.total));
     const invoicesBefore = await page.invoiceLines();
 
-    await page.penaltyChargeRow(asOf).getByRole('button', { name: /^Хүчингүй болгох/ }).click();
-    const modal = page.dialog('Алдангийн нэхэлт хүчингүй болгох');
+    const modal = await clickToOpen(
+      page.penaltyChargeRow(asOf).getByRole('button', { name: /^Хүчингүй болгох/ }),
+      page.dialog('Алдангийн нэхэлт хүчингүй болгох'), 'алдангийн нэхэлт цуцлах цонх');
     const confirm = modal.getByRole('button', { name: 'Хүчингүй болгох', exact: true });
     await expect(confirm, 'шалтгаангүйгээр нэхэлт цуцлагдаж байна').toBeDisabled();
 

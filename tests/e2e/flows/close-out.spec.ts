@@ -1,5 +1,6 @@
 import { test, expect } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
+import { clickToOpen } from '../../support/interact';
 import { readReceipt } from '../../support/receipt';
 
 /**
@@ -35,10 +36,7 @@ async function setup(data: any) {
 
 /** Хаалтын wizard-ыг нээж, эхний алхам дээр зогсоно. */
 async function openWizard(page: ContractDetailPage) {
-  await page.closeButton.click();
-  const wizard = page.dialog('Гэрээ хаах');
-  await expect(wizard).toBeVisible();
-  return wizard;
+  return clickToOpen(page.closeButton, page.dialog('Гэрээ хаах'), 'Гэрээ хаах wizard');
 }
 
 /**
@@ -58,8 +56,13 @@ async function finalPromise(wizard: ReturnType<ContractDetailPage['dialog']>) {
 async function finishClose(page: ContractDetailPage,
                            wizard: ReturnType<ContractDetailPage['dialog']>,
                            promised: number) {
-  await wizard.getByRole('button', { name: 'Цааш →' }).click();
-  await wizard.getByRole('button', { name: 'Гэрээ хаах', exact: true }).click();
+  /* «Цааш →» ба «Гэрээ хаах» нь JSX-ийн ИЖИЛ байрлалд солигддог тул алхам
+     ҮНЭХЭЭР солигдсоныг хүлээнэ — эс бөгөөс хаалтын товч гэж бодоод хуучин
+     «Цааш →» зангилаа руу дахин буудна. */
+  const commit = wizard.getByRole('button', { name: 'Гэрээ хаах', exact: true });
+  await clickToOpen(wizard.getByRole('button', { name: 'Цааш →' }), commit,
+                    'хаалтын сүүлчийн алхам');
+  await commit.click();
   const done = page.dialog('Гэрээ хаагдлаа');
   await expect(done, 'хаалт гүйцэтгэгдсэнгүй').toBeVisible();
   await expect(done, 'төрсөн нэхэмжлэлийн дүн урьдчилсан тооцоотой зөрж байна')
@@ -103,8 +106,8 @@ test('БУЦААЛТ — гадаа цэвэрлэгдэж, эцсийн тас�
     await page.goto(contract.id);
     const wizard = await openWizard(page);
 
-    await wizard.getByRole('button', { name: /^Буцаалт бүртгэх/ }).click();
-    const ret = page.dialog('Буцаалт бүртгэх');
+    const ret = await clickToOpen(wizard.getByRole('button', { name: /^Буцаалт бүртгэх/ }),
+                                  page.dialog('Буцаалт бүртгэх'), 'Буцаалт бүртгэх цонх');
     /* Мөр дээрх товч нь тоог нь УРЬДЧИЛЖ бөглөнө — «40ш дутагдуулсан» гэж
        дараад 30ш бичигдэх боломжгүй. */
     await expect(ret.getByLabel(/— буцаах тоо$/).first()).toHaveValue(String(QTY));
@@ -158,8 +161,8 @@ test('ДУТАГДУУЛСАН — wizard-ийн «тоо × НБҮнэ» үрж
     await expect(row).toContainText(`дутагдуулбал ${QTY} × ${money(NB)} = ${money(QTY * NB)}`);
     await expect(row).toContainText(`худалдвал ${QTY} × ${money(SALE)} = ${money(QTY * SALE)}`);
 
-    await wizard.getByRole('button', { name: /^Дутагдуулсан/ }).click();
-    const ret = page.dialog('Буцаалт бүртгэх');
+    const ret = await clickToOpen(wizard.getByRole('button', { name: /^Дутагдуулсан/ }),
+                                  page.dialog('Буцаалт бүртгэх'), 'Дутагдуулсны цонх');
     /* «Дутагдуулсан» нь буцаалтын мөрийн АКТЛАХ багана — тоо нь бүтнээрээ,
        задарсан хэвээр (нуугдсан бол НБҮнээр нэхэгдэх мөнгө харагдалгүй өнгөрнө). */
     await expect(ret.getByLabel('Актлах')).toHaveValue(String(QTY));
@@ -193,8 +196,8 @@ test('ХУДАЛДАА БОЛГОХ — «тоо × худалдах үнэ» н
     await page.goto(contract.id);
     const wizard = await openWizard(page);
 
-    await wizard.getByRole('button', { name: /^Худалдаа болгох/ }).click();
-    const sale = page.dialog('Худалдаа болгох');
+    const sale = await clickToOpen(wizard.getByRole('button', { name: /^Худалдаа болгох/ }),
+                                   page.dialog('Худалдаа болгох'), 'Худалдаа болгох цонх');
     await expect(sale.getByLabel(/— худалдах тоо$/).first()).toHaveValue(String(QTY));
     /* Мөр дээрээ ҮРЖВЭР нь ил: «20 × 69,500 = 1,390,000». */
     await expect(sale.getByText(`${QTY} × ${money(SALE)} = ${money(QTY * SALE)}`),
@@ -202,9 +205,12 @@ test('ХУДАЛДАА БОЛГОХ — «тоо × худалдах үнэ» н
     const form = await readReceipt(sale, 'худалдааны баримт');
     expect(form.totalMoney(), 'худалдааны нийт дүн зөрж байна').toBe(QTY * SALE);
 
-    await sale.getByRole('button', { name: 'Худалдаа болгох', exact: true }).click();
-    /* Мөнгө хөдөлж байгаа тул баталгаажуулалт — ЯГ тэр тоог дахин харуулна. */
-    const ask = page.dialog('Худалдаа болгох уу?');
+    /* Мөнгө хөдөлж байгаа тул баталгаажуулалт — ЯГ тэр тоог дахин харуулна.
+       Энэ даралт нь СЕРВЕР рүү юу ч илгээхгүй (`onClick={() => setAsk(true)}`)
+       тул хосоор нь барих нь аюулгүй. */
+    const ask = await clickToOpen(
+      sale.getByRole('button', { name: 'Худалдаа болгох', exact: true }),
+      page.dialog('Худалдаа болгох уу?'), 'худалдааны баталгаажуулалт');
     const confirmReceipt = await readReceipt(ask, 'худалдааны баталгаажуулалт');
     expect(confirmReceipt.totalMoney(), 'баталгаажуулах цонх өөр дүн харуулж байна')
       .toBe(QTY * SALE);

@@ -1,5 +1,6 @@
 import { test, expect } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
+import { clickToClose, clickToOpen } from '../../support/interact';
 import { expectOneWayDoor, tooltipOnlyReasons } from '../../support/danger';
 import { expectReady } from '../../support/routes';
 
@@ -22,8 +23,8 @@ import { expectReady } from '../../support/routes';
 
 /** Хаалга бүрийн дараа: юу ч болоогүйг батал (цонх хаагдсан, тоо хөдлөөгүй). */
 async function cancel(dialog: ReturnType<ContractDetailPage['dialog']>) {
-  await dialog.getByRole('button', { name: 'Болих', exact: true }).click();
-  await expect(dialog).toBeHidden();
+  await clickToClose(dialog.getByRole('button', { name: 'Болих', exact: true }), dialog,
+                     'нэг чигийн хаалганы «Болих»');
 }
 
 test.describe('буцаах боломжгүй үйлдлүүд', () => {
@@ -38,9 +39,11 @@ test.describe('буцаах боломжгүй үйлдлүүд', () => {
 
       await factoryPage.goto('/');
       await expectReady(factoryPage, 'Өнөөдрийн ажил', 'Даргын нүүр');
-      await factoryPage.getByRole('button',
-        { name: new RegExp(`Гэрээ №${contract.no}[\\s\\S]*баталгаажуулах`) }).click();
-      const dialog = factoryPage.getByRole('dialog', { name: 'Ачилт баталгаажуулах' });
+      const dialog = await clickToOpen(
+        factoryPage.getByRole('button',
+          { name: new RegExp(`Гэрээ №${contract.no}[\\s\\S]*баталгаажуулах`) }),
+        factoryPage.getByRole('dialog', { name: 'Ачилт баталгаажуулах' }),
+        'Ачилт баталгаажуулах цонх');
       await expect(dialog.getByText('уншиж байна…')).toHaveCount(0);
 
       /* ⚠ ЗОРИУДААР `expectDanger: false` — энэ бол ОДООГИЙН, БИЧИГДСЭН
@@ -62,10 +65,10 @@ test.describe('буцаах боломжгүй үйлдлүүд', () => {
 
       await managerPage.goto('/salary');
       await expectReady(managerPage, 'Цалин', 'Цалин');
-      await managerPage.getByRole('button',
-        { name: `${run.period} · ${run.half}-р хагас — цалин олгох` }).click();
-
-      const dialog = managerPage.getByRole('dialog', { name: 'Цалин олгох' });
+      const dialog = await clickToOpen(
+        managerPage.getByRole('button',
+          { name: `${run.period} · ${run.half}-р хагас — цалин олгох` }),
+        managerPage.getByRole('dialog', { name: 'Цалин олгох' }), 'Цалин олгох цонх');
       await expectOneWayDoor(dialog, 'Цалин олгох', { expectDanger: true });
       await cancel(dialog);
     });
@@ -76,13 +79,13 @@ test.describe('буцаах боломжгүй үйлдлүүд', () => {
 
     const page = new ContractDetailPage(managerPage);
     await page.goto(contract.id);
-    await managerPage.getByRole('button', { name: 'Барьцааны тооцоо хийх' }).click();
-
     /* Гараар угсарсан цонх (`FormModal`) — `ConfirmModal`-ийн фокусын дүрэм
        автоматаар үйлчлэхгүй. Шаардлага нь ХЭВЭЭР: устгах товч дээр фокус
        зогсохгүй. (Одоо фокус нь «×» дээр — аюулгүй боловч «Болих» БИШ.
        Энэ ялгааг тайланд онцолсон.) */
-    const dialog = page.dialog('Барьцааны тооцоо');
+    const dialog = await clickToOpen(
+      managerPage.getByRole('button', { name: 'Барьцааны тооцоо хийх' }),
+      page.dialog('Барьцааны тооцоо'), 'Барьцааны тооцоо цонх');
     await expectOneWayDoor(dialog, 'Барьцааны тооцоо',
                            { expectDanger: true, focus: 'not-destructive' });
     await cancel(dialog);
@@ -104,20 +107,20 @@ test.describe('буцаах боломжгүй үйлдлүүд', () => {
 
       const page = new ContractDetailPage(managerPage);
       await page.goto(contract.id);
-      await page.closeButton.click();
-      const wizard = page.dialog('Гэрээ хаах');
+      const wizard = await clickToOpen(page.closeButton, page.dialog('Гэрээ хаах'),
+                                       'Гэрээ хаах wizard');
       await expect(wizard.getByText('1. Эцсийн тооцоо')).toBeVisible();
 
       /* ⚠ ЖИНХЭНЭ УНАЛТ: «Цааш →» ба «Гэрээ хаах» хоёр нь JSX-ийн ижил
          байрлалд солигддог тул React нэг л `<button>` зангилааг дахин
          ашиглана — фокус нь товчтойгоо хамт УСТГАХ товч болж хувирдаг байв.
          Тэр агшинд дарагдсан нэг Enter гэрээг ХААНА. */
-      await wizard.getByRole('button', { name: 'Цааш →' }).click();
       /* Алхам ҮНЭХЭЭР солигдсоныг эхлээд батал: «Цааш →» дарсны дараа React
          дахин зурах хүртэл цонх ХУУЧИН алхмаа харуулсаар байдаг — тэр агшинд
          уншвал «улаан товч алга» гэсэн ХУДАЛ хариу гарна. */
-      await expect(wizard.getByRole('button', { name: 'Гэрээ хаах', exact: true }),
-                   'сүүлчийн алхам руу шилжсэнгүй').toBeVisible();
+      await clickToOpen(wizard.getByRole('button', { name: 'Цааш →' }),
+                        wizard.getByRole('button', { name: 'Гэрээ хаах', exact: true }),
+                        'хаалтын сүүлчийн алхам');
       const door = await expectOneWayDoor(wizard, 'Гэрээ хаах (сүүлчийн алхам)',
                                           { expectDanger: true });
       expect(door.sentence).toContain('Гэрээ хаах үйлдлийг буцаах боломжгүй');
@@ -128,9 +131,8 @@ test.describe('буцаах боломжгүй үйлдлүүд', () => {
     const { contract } = await data.rentSetup({ startDaysAgo: 75, penaltyPercent: 0.5 });
     const page = new ContractDetailPage(managerPage);
     await page.goto(contract.id);
-    await page.chargePenaltyButton.click();
-
-    const dialog = page.dialog('Алданги нэхэх');
+    const dialog = await clickToOpen(page.chargePenaltyButton, page.dialog('Алданги нэхэх'),
+                                     'Алданги нэхэх цонх');
     await expectOneWayDoor(dialog, 'Алданги нэхэх', { expectDanger: true });
     await cancel(dialog);
   });
@@ -143,9 +145,9 @@ test.describe('буцаах боломжгүй үйлдлүүд', () => {
 
     const page = new ContractDetailPage(managerPage);
     await page.goto(contract.id);
-    await page.paymentRow('250,000₮').getByRole('button', { name: /^Хүчингүй болгох/ }).click();
-
-    const dialog = page.dialog('Төлбөр хүчингүй болгох');
+    const dialog = await clickToOpen(
+      page.paymentRow('250,000₮').getByRole('button', { name: /^Хүчингүй болгох/ }),
+      page.dialog('Төлбөр хүчингүй болгох'), 'Төлбөр хүчингүй болгох цонх');
     const door = await expectOneWayDoor(dialog, 'Төлбөр хүчингүй болгох', { expectDanger: true });
     /* H1-ийн зарчим: УСТГАХГҮЙ, ХҮЧИНГҮЙ. Тэр ялгаа нь цонхон дээрээ бичигдсэн
        байх ёстой — эс бөгөөс Отгоо «устгачихлаа» гэж айна. */
@@ -158,9 +160,9 @@ test.describe('буцаах боломжгүй үйлдлүүд', () => {
     const page = new ContractDetailPage(managerPage);
     await page.goto(contract.id);
     const panel = await page.openMovement(movementId, contract.startDate, 'Ачилт');
-    await panel.getByRole('button', { name: /^Хүчингүй болгох/ }).click();
-
-    const dialog = page.dialog('Ачилт хүчингүй болгох');
+    const dialog = await clickToOpen(panel.getByRole('button', { name: /^Хүчингүй болгох/ }),
+                                     page.dialog('Ачилт хүчингүй болгох'),
+                                     'Ачилт хүчингүй болгох цонх');
     await expectOneWayDoor(dialog, 'Ачилт хүчингүй болгох', { expectDanger: true });
     await cancel(dialog);
   });
@@ -172,9 +174,9 @@ test.describe('буцаах боломжгүй үйлдлүүд', () => {
 
     const page = new ContractDetailPage(managerPage);
     await page.goto(contract.id);
-    await page.aktRow(note).getByRole('button', { name: /^Хүчингүй болгох/ }).click();
-
-    const dialog = page.dialog('Актын бичилт хүчингүй болгох');
+    const dialog = await clickToOpen(
+      page.aktRow(note).getByRole('button', { name: /^Хүчингүй болгох/ }),
+      page.dialog('Актын бичилт хүчингүй болгох'), 'актын бичилт цуцлах цонх');
     await expectOneWayDoor(dialog, 'Актын бичилт хүчингүй болгох', { expectDanger: true });
     await cancel(dialog);
   });
@@ -190,9 +192,9 @@ test.describe('буцаах боломжгүй үйлдлүүд', () => {
 
     const page = new ContractDetailPage(managerPage);
     await page.goto(contract.id);
-    await page.rateChangeList().getByRole('button', { name: /^Хүчингүй болгох/ }).first().click();
-
-    const dialog = page.dialog('Тарифын өөрчлөлт хүчингүй болгох');
+    const dialog = await clickToOpen(
+      page.rateChangeList().getByRole('button', { name: /^Хүчингүй болгох/ }).first(),
+      page.dialog('Тарифын өөрчлөлт хүчингүй болгох'), 'тарифын өөрчлөлт цуцлах цонх');
     await expectOneWayDoor(dialog, 'Тарифын өөрчлөлт хүчингүй болгох', { expectDanger: true });
     await cancel(dialog);
   });
@@ -205,9 +207,9 @@ test.describe('буцаах боломжгүй үйлдлүүд', () => {
 
     const page = new ContractDetailPage(managerPage);
     await page.goto(contract.id);
-    await page.penaltyChargeRow(asOf).getByRole('button', { name: /^Хүчингүй болгох/ }).click();
-
-    const dialog = page.dialog('Алдангийн нэхэлт хүчингүй болгох');
+    const dialog = await clickToOpen(
+      page.penaltyChargeRow(asOf).getByRole('button', { name: /^Хүчингүй болгох/ }),
+      page.dialog('Алдангийн нэхэлт хүчингүй болгох'), 'алдангийн нэхэлт цуцлах цонх');
     await expectOneWayDoor(dialog, 'Алдангийн нэхэлт хүчингүй болгох', { expectDanger: true });
     await cancel(dialog);
   });
@@ -226,9 +228,8 @@ test.describe('хаалттай төлөвийн шалтгаан', () => {
       const { contract } = await data.rentSetup({ startDaysAgo: 40, qty: 12 });
       const page = new ContractDetailPage(managerPage);
       await page.goto(contract.id);
-      await page.closeButton.click();
-
-      const wizard = page.dialog('Гэрээ хаах');
+      const wizard = await clickToOpen(page.closeButton, page.dialog('Гэрээ хаах'),
+                                       'Гэрээ хаах wizard');
       const next = wizard.getByRole('button', { name: 'Цааш →' });
       await expect(next, 'гадаа бараатай атал цааш явж байна').toBeDisabled();
 
@@ -252,9 +253,9 @@ test.describe('хаалттай төлөвийн шалтгаан', () => {
 
       const page = new ContractDetailPage(managerPage);
       await page.goto(contract.id);
-      await page.paymentRow('90,000₮').getByRole('button', { name: /^Хүчингүй болгох/ }).click();
-
-      const dialog = page.dialog('Төлбөр хүчингүй болгох');
+      const dialog = await clickToOpen(
+        page.paymentRow('90,000₮').getByRole('button', { name: /^Хүчингүй болгох/ }),
+        page.dialog('Төлбөр хүчингүй болгох'), 'Төлбөр хүчингүй болгох цонх');
       const confirm = dialog.getByRole('button', { name: 'Хүчингүй болгох', exact: true });
       await expect(confirm, 'шалтгаангүйгээр цуцлах боломжтой байна').toBeDisabled();
       /* Шаардлага нь ХАРАГДАХ шошго болж зогсоно (`*`-тайгаа) — hover биш. */

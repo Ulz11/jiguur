@@ -1,4 +1,5 @@
 import { test, expect } from '../../fixtures';
+import { clickToClose, clickToOpen } from '../../support/interact';
 import { openNavigation } from '../../support/shell';
 import { describeTargets, undersizedTargets, wholePage } from '../../support/layout';
 import { expectReady } from '../../support/routes';
@@ -86,18 +87,18 @@ test.describe('даргын планшет — хүрэх талбай', () => {
       const open = factoryPage.getByRole('button',
         { name: new RegExp(`Гэрээ №${contract.no}[\\s\\S]*баталгаажуулах`) });
       await expect(open, 'миний гэрээ даргын дараалалд алга').toBeVisible();
-      await open.click();
 
       const modal = factoryPage.getByRole('dialog');
-      await expect(modal.getByRole('heading', { name: 'Ачилт баталгаажуулах' })).toBeVisible();
+      await clickToOpen(open, modal.getByRole('heading', { name: 'Ачилт баталгаажуулах' }),
+                        'Ачилт баталгаажуулах цонх');
       /* Баримт нь уншигдаж дуустал хэмжихгүй: «уншиж байна…» үед мөрүүд нь
          хожим өсөж, өндөр нь өөрчлөгдөнө. */
       await expect(modal.getByText('уншиж байна…')).toHaveCount(0);
       await noneUndersized(modal, 'Ачилт баталгаажуулах цонх');
 
       /* ЮУ Ч баталгаажуулахгүй — энэ тест хэмжинэ, мөнгө хөдөлгөхгүй. */
-      await modal.getByRole('button', { name: 'Болих' }).click();
-      await expect(modal).toBeHidden();
+      await clickToClose(modal.getByRole('button', { name: 'Болих' }), modal,
+                         'Ачилт баталгаажуулах цонхны «Болих»');
     });
 
   test('буцаалт бүртгэх цонх — талбай дээрх хамгийн олон товчтой цонх',
@@ -106,10 +107,10 @@ test.describe('даргын планшет — хүрэх талбай', () => {
 
       await factoryPage.goto(`/contracts/${contract.id}`);
       await expectReady(factoryPage, /./, `гэрээ №${contract.no}`);
-      await factoryPage.getByRole('button', { name: 'Буцаалт бүртгэх', exact: true }).click();
-
       const modal = factoryPage.getByRole('dialog');
-      await expect(modal.getByRole('heading', { name: 'Буцаалт бүртгэх' })).toBeVisible();
+      await clickToOpen(
+        factoryPage.getByRole('button', { name: 'Буцаалт бүртгэх', exact: true }),
+        modal.getByRole('heading', { name: 'Буцаалт бүртгэх' }), 'Буцаалт бүртгэх цонх');
       /* Цонх нь ХООСОН биш гэдгийг батал: материалын мөр гарч ирсэн байх ёстой,
          эс бөгөөс «хэмжих юмгүй тул зөрчилгүй» гэсэн ХУДАЛ ногоон болно. */
       expect(await modal.locator('input,select,button').count(),

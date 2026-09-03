@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { test, expect } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
 import { ContractsPage } from '../../pages/ContractsPage';
+import { clickToOpen, clickToPick } from '../../support/interact';
 import { readReceipt } from '../../support/receipt';
 import { expectReady } from '../../support/routes';
 
@@ -37,13 +38,17 @@ test('4 алхмаар гэрээ үүсч, ачилтын хүсэлт дарг
     await expectReady(managerPage, 'Шинэ гэрээ', 'Шинэ гэрээ');
 
     /* ---- 1. Харилцагч ---- */
-    await managerPage.getByRole('button', { name: client.name }).click();
-    await managerPage.getByRole('button', { name: 'Үргэлжлүүлэх →' }).click();
+    await clickToPick(managerPage.getByRole('button', { name: client.name }),
+                      `харилцагч ${client.name}`);
+    await clickToOpen(managerPage.getByRole('button', { name: 'Үргэлжлүүлэх →' }),
+                      managerPage.getByLabel('Материал хайх'), '2. Материал алхам');
 
     /* ---- 2. Материал ---- */
     await managerPage.getByLabel('Материал хайх').fill(material.name);
-    await managerPage.getByRole('button', { name: material.name }).click();
-    await managerPage.getByLabel(`${material.name} — тоо ширхэг`).fill(String(QTY));
+    const qtyField = managerPage.getByLabel(`${material.name} — тоо ширхэг`);
+    await clickToOpen(managerPage.getByRole('button', { name: material.name }), qtyField,
+                      `материал ${material.name}`);
+    await qtyField.fill(String(QTY));
     await managerPage.getByLabel(`${material.name} — тариф ₮/ш/хоног`).fill(String(RATE));
 
     /* Циклийн үнэ нь БОДОГДОЖ харагдана — Отгоо энэ үржвэрийг өөрөө шалгана. */
@@ -51,7 +56,8 @@ test('4 алхмаар гэрээ үүсч, ачилтын хүсэлт дарг
     expect(picked.value('Сонгосон материал')).toBe(`1 мөр · ${QTY}ш`);
     expect(picked.money('Өдрийн нийт тооцоо')).toBe(QTY * RATE);
     expect(picked.totalMoney(), '30 хоногийн циклийн дүн зөрж байна').toBe(QTY * RATE * 30);
-    await managerPage.getByRole('button', { name: 'Үргэлжлүүлэх →' }).click();
+    await clickToOpen(managerPage.getByRole('button', { name: 'Үргэлжлүүлэх →' }),
+                      managerPage.getByLabel('Алданги %/хоног'), '3. Нөхцөл алхам');
 
     /* ---- 3. Нөхцөл: АЛДАНГИ анхдагчаар 0 (H2) ---- */
     await expect(managerPage.getByLabel('Алданги %/хоног'),
@@ -60,7 +66,9 @@ test('4 алхмаар гэрээ үүсч, ачилтын хүсэлт дарг
     await expect(managerPage.getByText('0 = алданги автоматаар нэхэгдэхгүй (гараар нэхэж болно)'),
       'алдангийн талбар өөрийгөө тайлбарлахгүй байна').toBeVisible();
     await managerPage.getByLabel('Гэрээний № (хоосон бол автомат)').fill(no);
-    await managerPage.getByRole('button', { name: 'Үргэлжлүүлэх →' }).click();
+    await clickToOpen(managerPage.getByRole('button', { name: 'Үргэлжлүүлэх →' }),
+                      managerPage.getByRole('button', { name: '✓ Гэрээ баталгаажуулах' }),
+                      '4. Баталгаажуулах алхам');
 
     /* ---- 4. Баталгаажуулах: бөглөсөн зүйл эргэж харагдана ---- */
     const summary = await readReceipt(managerPage.locator('.card'), 'гэрээний баримт');
@@ -129,8 +137,9 @@ test('4 алхмаар гэрээ үүсч, ачилтын хүсэлт дарг
     const confirmButton = queue.getByRole('button',
       { name: new RegExp(`№${no}.*ачилтыг баталгаажуулах`) });
     await expect(confirmButton, 'даргын «Ачсан ✓» товч мөрөө нэрлээгүй').toBeVisible();
-    await confirmButton.click();
-    const ask = factoryPage.getByRole('dialog', { name: 'Ачилт баталгаажуулах' });
+    const ask = await clickToOpen(confirmButton,
+                                  factoryPage.getByRole('dialog', { name: 'Ачилт баталгаажуулах' }),
+                                  'Ачилт баталгаажуулах цонх');
     /* Мөрүүд нь СЕРВЕРЭЭС ирдэг («уншиж байна…» → жинхэнэ мөрүүд) — тэр
        агшныг хүлээнэ, эс бөгөөс хоосон баримт уншина. */
     await expect(ask.getByText(`${material.name} (${material.grade})`),

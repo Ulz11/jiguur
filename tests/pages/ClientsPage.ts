@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { clickToReach } from '../support/interact';
 import { parseTugrik } from '../support/money';
 
 /**
@@ -59,7 +60,7 @@ export class ClientsPage {
 
   /** Мөр дээр дарж профайл руу — жагсаалтын мөр бүхэлдээ холбоос. */
   async openProfile(client: string): Promise<void> {
-    await this.row(client).click();
-    await this.page.waitForURL(/\/clients\/\d+/);
+    await clickToReach(this.row(client), this.page, /\/clients\/\d+/,
+                       `харилцагч «${client}»-ийн профайл`);
   }
 }

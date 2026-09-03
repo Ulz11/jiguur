@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { clickToExpand } from './interact';
 
 /**
  * САНХҮҮГИЙН ЗАДАРГАА — үйлдвэрийн даргын дэлгэц дээрх НЭГ хэлбэр.
@@ -114,8 +115,7 @@ export async function expectTidyDefault(
 export async function openFinance(page: Page, where: string): Promise<Locator> {
   const toggle = financeToggle(page);
   await expect(toggle, `${where}: задаргааны товч алга`).toBeVisible();
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await clickToExpand(toggle, `${where}: Санхүү задаргаа`);
   const id = await toggle.getAttribute('aria-controls');
   expect(id, `${where}: нээлттэй атал `+'`aria-controls` алга').toBeTruthy();
   const panel = page.locator(`#${id}`);

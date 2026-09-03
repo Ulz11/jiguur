@@ -1,5 +1,6 @@
 import { test, expect } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
+import { clickToOpen, clickToPick } from '../../support/interact';
 import { readReceipt } from '../../support/receipt';
 
 /**
@@ -55,9 +56,8 @@ async function setup(data: any) {
 
 /** Wizard-ыг нээж, хаах огноог −6 болгоно — тэр агшинд зөрчил төрнө. */
 async function openAt(page: ContractDetailPage, data: any, days = 6) {
-  await page.closeButton.click();
-  const wizard = page.dialog('Гэрээ хаах');
-  await expect(wizard).toBeVisible();
+  const wizard = await clickToOpen(page.closeButton, page.dialog('Гэрээ хаах'),
+                                   'Гэрээ хаах wizard');
   await wizard.getByLabel('Хаах огноо').fill(data.isoDaysAgo(days));
   return wizard;
 }
@@ -113,19 +113,21 @@ test('СОНГОСОН тоо нь АМЛАЛТЫГ хөдөлгөнө — гу�
     expect(await promise(wizard)).toBe(HER_RENT);
 
     /* ЦОНХНЫ тоо — амлалт нь ЯГ зөрүүгээрээ буурна. */
-    await wizard.getByRole('button', { name: `${WINDOW} хоног — хаалтын цонх` }).click();
+    await clickToPick(wizard.getByRole('button', { name: `${WINDOW} хоног — хаалтын цонх` }),
+                      'хаалтын цонхны хоног');
     await expect.poll(() => promise(wizard),
       { message: 'цонхны тоог сонгоход амлалт хөдөлсөнгүй' }).toBe(WINDOW_RENT);
     expect(HER_RENT - WINDOW_RENT, 'хоёр замын ₮ зөрүү мөрөн дээрхтэй таарахгүй').toBe(DIFF);
 
     /* ӨӨР тоо — бүрэн эрх чөлөө. */
-    await wizard.getByRole('button', { name: 'Өөр тоо' }).click();
+    await clickToPick(wizard.getByRole('button', { name: 'Өөр тоо' }), 'Өөр тоо');
     await wizard.getByLabel('Хоног', { exact: true }).fill('15');
     await expect.poll(() => promise(wizard),
       { message: 'гурав дахь тоо амлалтад буусангүй' }).toBe(rentFor(15));
 
     /* БУЦААД тохирсон тоо руугаа — сонголт нь эргэдэг, түгждэггүй. */
-    await wizard.getByRole('button', { name: `${AGREED} хоног — тохирсон` }).click();
+    await clickToPick(wizard.getByRole('button', { name: `${AGREED} хоног — тохирсон` }),
+                      'тохирсон хоног');
     await expect.poll(() => promise(wizard)).toBe(HER_RENT);
   });
 
@@ -136,12 +138,15 @@ test('АМЛАЛТ == ҮР ДҮН: сонгосон тоо ЯГ тэрээрээ
     await page.goto(s.contract.id);
     const wizard = await openAt(page, data);
 
-    await wizard.getByRole('button', { name: `${WINDOW} хоног — хаалтын цонх` }).click();
+    await clickToPick(wizard.getByRole('button', { name: `${WINDOW} хоног — хаалтын цонх` }),
+                      'хаалтын цонхны хоног');
     await expect.poll(() => promise(wizard)).toBe(WINDOW_RENT);
     const promised = await promise(wizard);
 
-    await wizard.getByRole('button', { name: 'Цааш →' }).click();
-    await wizard.getByRole('button', { name: 'Гэрээ хаах', exact: true }).click();
+    const commit = wizard.getByRole('button', { name: 'Гэрээ хаах', exact: true });
+    await clickToOpen(wizard.getByRole('button', { name: 'Цааш →' }), commit,
+                      'хаалтын сүүлчийн алхам');
+    await commit.click();
     const done = page.dialog('Гэрээ хаагдлаа');
     await expect(done, 'хаалт гүйцэтгэгдсэнгүй').toBeVisible();
     await expect(done, 'төрсөн цаас амласан дүнгээсээ зөрж байна')
@@ -174,8 +179,10 @@ test('ТОХИРСОН тоогоороо хаавал ХУМИГДАХГҮЙ �
     const promised = await promise(wizard);
     expect(promised).toBe(HER_RENT);
 
-    await wizard.getByRole('button', { name: 'Цааш →' }).click();
-    await wizard.getByRole('button', { name: 'Гэрээ хаах', exact: true }).click();
+    const commit = wizard.getByRole('button', { name: 'Гэрээ хаах', exact: true });
+    await clickToOpen(wizard.getByRole('button', { name: 'Цааш →' }), commit,
+                      'хаалтын сүүлчийн алхам');
+    await commit.click();
     await expect(page.dialog('Гэрээ хаагдлаа')).toContainText(money(promised));
 
     /* ЖИНХЭНЭ БАТАЛГАА: цаас нь гэрээтэйгээ таарав. Урьд нь эндээс 5,280₮
@@ -194,9 +201,8 @@ test('ЗӨРЧИЛГҮЙ хаалт ЮУ Ч АСУУХГҮЙ — хэрэггү�
     const page = new ContractDetailPage(managerPage);
     await page.goto(s.contract.id);
     /* Өнөөдрөөр хаавал цонх [−15, +1) = 16 хоног — 12 нь тайван багтана. */
-    await page.closeButton.click();
-    const wizard = page.dialog('Гэрээ хаах');
-    await expect(wizard).toBeVisible();
+    const wizard = await clickToOpen(page.closeButton, page.dialog('Гэрээ хаах'),
+                                     'Гэрээ хаах wizard');
     await expect(wizard.getByText('Эцсийн нэхэмжлэл')).toBeVisible();
     await expect(wizard.getByText(/Та .* хоног гэж тохирсон/),
       'зөрчилгүй атал хоногийн асуулт гарч ирлээ').toHaveCount(0);

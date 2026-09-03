@@ -1,5 +1,6 @@
 import { test, expect, type DataFactory } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
+import { clickToOpen } from '../../support/interact';
 import { readReceipt } from '../../support/receipt';
 
 /**
@@ -23,8 +24,8 @@ const RATE = 330;
 
 /** Буцаалтын цонхыг нээж, эхний мөрөнд тоо бичээд бэлэн болгоно. */
 async function openReturn(page: ContractDetailPage, qty: number) {
-  await page.returnButton.click();
-  const modal = page.dialog('Буцаалт бүртгэх');
+  const modal = await clickToOpen(page.returnButton, page.dialog('Буцаалт бүртгэх'),
+                                  'Буцаалт бүртгэх цонх');
   await modal.getByLabel(/— буцаах тоо$/).first().fill(String(qty));
   return modal;
 }
@@ -210,8 +211,8 @@ test('падан-pin — аль ҮЕИЙН тарифыг хаахыг Отго�
 
     const page = new ContractDetailPage(managerPage);
     await page.goto(contract.id);
-    await page.returnButton.click();
-    const modal = page.dialog('Буцаалт бүртгэх');
+    const modal = await clickToOpen(page.returnButton, page.dialog('Буцаалт бүртгэх'),
+                                    'Буцаалт бүртгэх цонх');
     /* Нэг материал ХОЁР тарифаар гадаа байгаа тул маягт дээр хоёр мөр —
        буцаалтыг нь ЭХНИЙ мөрөөс бичээд ПАДАНГ нь заана. */
     await modal.getByLabel(/— буцаах тоо$/).first().fill('10');

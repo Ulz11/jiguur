@@ -1,5 +1,6 @@
 import { test, expect } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
+import { clickToOpen } from '../../support/interact';
 import { readReceipt } from '../../support/receipt';
 
 /**
@@ -22,8 +23,8 @@ const DISCOUNT = 67_500;          // = 450,000 × 15% — түүний өөри�
 async function writeAkt(page: ContractDetailPage, opts: {
   kind: 'Нэмэгдэл (+)' | 'Хөнгөлөлт (−)'; amount: string; note: string;
 }): Promise<{ cycle: string; signed: string }> {
-  await page.newAktButton.click();
-  const modal = page.dialog('Акт бичих');
+  const modal = await clickToOpen(page.newAktButton, page.dialog('Акт бичих'),
+                                  'Акт бичих цонх');
   await modal.getByLabel('Дүн ₮').fill(opts.amount);
   await modal.getByRole('button', { name: opts.kind }).click();
   await modal.getByLabel(/Тэмдэглэл/).fill(opts.note);
@@ -47,8 +48,8 @@ test('Хөнгөлөлт нь СӨРӨГ мөр болж, Σ-г бууруулн
     await page.goto(contract.id);
 
     /* ---- 1. Нэмэгдэл — тэр хасах тэмдэг бичсэн ч НЭМЭГДЭЛ хэвээр ---- */
-    await page.newAktButton.click();
-    const form = page.dialog('Акт бичих');
+    const form = await clickToOpen(page.newAktButton, page.dialog('Акт бичих'),
+                                   'Акт бичих цонх');
     await form.getByLabel('Дүн ₮').fill(`-${CHARGE}`);
     await expect(form.getByText(/^Циклд орох дүн:/),
       '«Нэмэгдэл» сонгосон атал гараар бичсэн хасах тэмдэг давав')
@@ -127,8 +128,9 @@ test('Σ нь ХҮЧИНТЭЙ бичилтүүдийн нийлбэр — хү�
 
     /* ---- Хүчингүй болгох: мөр нь ҮЛДЭЖ, Σ-ээс ГАРНА ---- */
     const row = page.aktRow('тохирсон хөнгөлөлт');
-    await row.getByRole('button', { name: /^Хүчингүй болгох/ }).click();
-    const modal = page.dialog('Актын бичилт хүчингүй болгох');
+    const modal = await clickToOpen(row.getByRole('button', { name: /^Хүчингүй болгох/ }),
+                                    page.dialog('Актын бичилт хүчингүй болгох'),
+                                    'актын бичилт цуцлах цонх');
     const confirm = modal.getByRole('button', { name: 'Хүчингүй болгох', exact: true });
     await expect(confirm, 'шалтгаангүйгээр акт цуцлагдаж байна').toBeDisabled();
 
