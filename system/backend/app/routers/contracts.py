@@ -206,7 +206,7 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
     # УСТСАН: хариу нь бүх рольд ИЖИЛ. Эмх цэгц нь frontend-ийн ажил —
     # даргын дэлгэц дээр мөнгө нь НЭГ хэлбэрийн, ХУМИГДСАН «Санхүү»
     # задаргаа дотор, ажлынх нь агуулгын ХОЙНО зогсоно (`ui.tsx`
-    # `FinanceDisclosure`; tests/e2e/money/money-wall.spec.ts).
+    # `FinanceDisclosure`; tests/e2e/money/money-tidy.spec.ts).
     return out
 
 

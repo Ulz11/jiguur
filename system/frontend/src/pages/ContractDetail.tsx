@@ -755,7 +755,7 @@ export default function ContractDetail() {
                       )}
                       {/* ХУДАЛДАА БОЛГОВ (H7). Даргад мөрийн ТОО нь дээр аль
                           хэдийн харагдсан тул энд түүнд нэмэх юм алга — ДҮН нь
-                          зөвхөн Отгоо, санхүүчид (мөнгөний хана). */}
+                          хуудасны доод талын «Санхүү» задаргаанд зогсоно. */}
                       {seesMoney && mv.type === "SALE" && (
                         <span className="block text-violet">
                           Худалдаа: {money(mv.lines.reduce(

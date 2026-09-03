@@ -3,6 +3,7 @@ import { test, expect } from '../../fixtures';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
 import { ContractsPage } from '../../pages/ContractsPage';
 import { readReceipt } from '../../support/receipt';
+import { expectReady } from '../../support/routes';
 
 /**
  * ШИНЭ ГЭРЭЭ — дөрвөн алхмын wizard, эхнээс нь эцэс хүртэл.
@@ -27,7 +28,13 @@ test('4 алхмаар гэрээ үүсч, ачилтын хүсэлт дарг
     const no = `E2E-${randomUUID().slice(0, 8)}`;
 
     await managerPage.goto('/contracts/new');
-    await expect(managerPage.getByRole('heading', { name: 'Шинэ гэрээ' })).toBeVisible();
+    /* «Бэлэн болов уу» гэдэг нь БАТАЛГАА биш, НАВИГАЦИЙН үе шат — тиймээс
+       `expectReady`-гээр (`support/routes.ts`-ийн 45с төсөв). Энэ мөр урьд нь
+       жирийн 10с `expect` байсан тул `--repeat-each=3` дээр (1344 тест, ганц
+       ажилчинтай сервер) wizard «Ачаалж байна…» дээр зогсоод УНАДАГ байв —
+       аппын алдаагүйгээр. Бусад suite (`her/`) энэ хаалгыг аль хэдийн
+       ийм замаар давдаг. */
+    await expectReady(managerPage, 'Шинэ гэрээ', 'Шинэ гэрээ');
 
     /* ---- 1. Харилцагч ---- */
     await managerPage.getByRole('button', { name: client.name }).click();
@@ -106,12 +113,16 @@ test('4 алхмаар гэрээ үүсч, ачилтын хүсэлт дарг
 
     /* ---- Ачилтын хүсэлт ДАРГЫН дараалалд ---- */
     await factoryPage.goto('/');
-    await expect(factoryPage.getByRole('heading', { name: 'Өнөөдрийн ажил' })).toBeVisible();
+    await expectReady(factoryPage, 'Өнөөдрийн ажил', 'Даргын нүүр');
     const queue = factoryPage.locator('.card').filter({
       has: factoryPage.getByRole('heading', { name: 'Ачилт хүлээгдэж буй' }) });
     await expect(queue, 'шинэ ачилт даргын дараалалд ирсэнгүй')
       .toContainText(`${client.name} — №${no}`);
-    /* Даргын мөрөнд ₮ ОРОХГҮЙ — мөнгөний хана дараалал дээр ч үйлчилнэ. */
+    /* Даргын ДАРААЛАЛД ₮ ОРОХГҮЙ. Энэ бол ЭМХ ЦЭГЦИЙН дүрэм (эзний шийдвэр
+       2026-09 — хана биш): дашбоард нь түүний АЖЛЫН ДАРААЛАЛ тул мөнгө
+       тэнд огт байрлахгүй. Гэрээ, харилцагч, бартер, механизм дээрх мөнгө
+       нь хумигдсан «Санхүү» задаргаанд байдаг (money-tidy.spec.ts) —
+       ЭНД тийм задаргаа ч байхгүй: дараалал бол цэвэр ажил. */
     expect(await queue.innerText(), 'даргын дараалалд ₮ гарчихлаа').not.toContain('₮');
 
     /* ---- Дарга «Ачсан ✓» гэмэгц НӨӨЦ хөдөлж, ТООЦОО эхэлнэ ---- */

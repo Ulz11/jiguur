@@ -416,7 +416,7 @@ def test_akt_actions_are_audited(client, as_role):
     assert ("void", "akt") in acts
 
 
-# ---------- 4. Эрх ба МӨНГӨНИЙ ХАНА ----------
+# ---------- 4. ЭРХ (бичих) ба ЭМХ ЦЭГЦ (унших) ----------
 
 def test_finance_can_write_akt_but_factory_cannot(client, as_role):
     """Акт бол МӨНГӨ — санхүүчийнх, үйлдвэрийн даргынх БИШ."""
