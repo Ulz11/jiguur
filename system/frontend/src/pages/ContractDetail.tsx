@@ -24,10 +24,11 @@ import { AKT_KINDS, AktKind, aktAmountText, aktCycle, aktCycleLabel, aktKind,
          aktLandingText, aktSigned, aktTotal } from "../lib/akt";
 import { EffKey, RATE_RESTATE_WARN, effectiveDate, effectiveOptions,
          rateChangeScope, rateChangeText } from "../lib/rate";
-import { ClosePreview, OutRow, Prefill, SalePrefill, StepKey, applyPrefill,
-         applySalePrefill, closeSteps, outstandingQty, outstandingSale,
-         outstandingWriteoff, returnPrefill, salePrefill, stepBlock,
-         stepIndex } from "../lib/close";
+import { ClosePreview, DayConflict, DayMode, DayPick, OutRow, Prefill, SalePrefill,
+         StepKey, applyPrefill, applySalePrefill, closeSteps, dayChoicePayload,
+         dayLineText, defaultDayPicks, outstandingQty, outstandingSale,
+         outstandingWriteoff, pickDelta, pickedDays, returnPrefill, salePrefill,
+         stepBlock, stepIndex } from "../lib/close";
 import { mvName, mvTone, saleRowTotal, saleTotal } from "../lib/movement";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 
@@ -56,6 +57,10 @@ export default function ContractDetail() {
      ачилт байвал өөрөө нээлттэй, эс бөгөөс хумигдсан. */
   const [histOpen, setHistOpen] = useState<boolean | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  /* Хоногийн зөрүүг БАТЛУУЛАХ (H5): сервер хоёр тоог нэрлээд буцсан бол
+     шийдвэрийг ТҮҮНД өгнө — «болохгүй» гэж хаахгүй. */
+  const [daysWarn, setDaysWarn] = useState<
+    null | { path: string; body: any; okMsg: string; rows: any[] }>(null);
   /* Цуцлах гэж буй төлбөр — баталгаажуулах цонх нь мөрөө өөртөө авч явна. */
   const [voidPay, setVoidPay] = useState<any>(null);
   const [voidMv, setVoidMv] = useState<any>(null);
@@ -118,6 +123,14 @@ export default function ContractDetail() {
   async function gatedPatch(path: string, body: any, okMsg: string) {
     try {
       const r = await api(path, { method: "PATCH", body: JSON.stringify(body) });
+      /* ГАР ХОНОГ (H5): цонхонд багтахгүй тоо нь ТАТГАЛЗАЛ БИШ — сервер юу ч
+         бичихгүйгээр хоёр тоог нэрлэж буцаана. Энэ мөрийг барихгүй бол
+         «шинэчлэгдлээ» гэсэн ХУДАЛ toast гарч, тоо нь хөдлөөгүй үлдэнэ
+         (H10-ийн чимээгүй уналт). */
+      if (r?.days_warning) {
+        setDaysWarn({ path, body, okMsg, rows: r.days_warning });
+        return;
+      }
       if (r?.rebuild_required) {
         setPending({ path, body, okMsg, diffs: r.diffs || [], warnings: r.warnings || [] });
         return;
@@ -968,6 +981,25 @@ export default function ContractDetail() {
                                          onReload={load} pdf={pdf} />}
       {pending && <RebuildModal p={pending} onClose={() => setPending(null)}
                                 onDone={() => { setPending(null); load(); }} />}
+      {/* ХОНОГИЙН ЗӨРҮҮ — хоёр тоо ТҮҮНИЙ өмнө, шийдвэр нь түүнийх.
+          Тоог СЕРВЕР хэлнэ тул уншсан тоо ба нэхэгдэх тоо ХОЁР ӨӨР байхгүй. */}
+      {daysWarn && (
+        <ConfirmModal title="Хоногийн зөрүү" confirmLabel="Тийм, энэ тоогоор нэх"
+          cancelLabel="Тоог засах"
+          intro={<>Бичсэн хоног нь тооцооны цонхонд багтахгүй байна. Тоо нь тань —
+                   баталгаажуулбал ЯГ тэрээрээ нэхэгдэж, хавсралт дээр
+                   тэмдэгтэй хэвлэгдэнэ.</>}
+          rows={daysWarn.rows.map((w: any) => ({
+            label: w.material || "Гар хоног",
+            value: `${fmt(w.days)} хоног (системээр ${fmt(w.window_days)})`,
+            accent: "danger" as const }))}
+          onClose={() => setDaysWarn(null)}
+          onConfirm={async () => {
+            const w = daysWarn;
+            setDaysWarn(null);
+            await gatedPatch(w.path, { ...w.body, days_confirm: true }, w.okMsg);
+          }} />
+      )}
       {voidPay && <VoidPaymentModal payment={voidPay} onClose={() => setVoidPay(null)}
                                     onDone={() => { setVoidPay(null); load(); }} />}
       {voidMv && <VoidMovementModal mv={voidMv} onClose={() => setVoidMv(null)}
@@ -1889,6 +1921,10 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
   const [open, setOpen] = useState<number | null>(
     prefill?.writeoff ? rows.findIndex((r: any) => r.writeoff > 0) : null);
   const [busy, setBusy] = useState(false);
+  /* СЕРВЕРИЙН анхааруулга (H5): цонхонд багтахгүй хоног нь ТАТГАЛЗАЛ БИШ —
+     хоёр тоог нэрлээд БАТЛУУЛНА. Тоог нь сервер хэлнэ (дэлгэц дээр дахин
+     бодохгүй) тул баталгаажуулах агшинд харагдах тоо ба нэхэгдэх тоо НЭГ. */
+  const [warn, setWarn] = useState<any[] | null>(null);
   const uid = useId();
   const setRow = (i: number, patch: any) =>
     setRows(rows.map((x, j) => (j === i ? { ...x, ...patch } : x)));
@@ -1909,31 +1945,31 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
   const rowDays = (r: any) =>
     r.days.trim() === "" ? null : Math.round(parseMoney(r.days));
 
-  async function submit() {
+  /* `confirmDays` — «хоёр тоог хараад ЭНЭ-г сонголоо». Эхний илгээлт үүнгүй
+     явна: цонхонд багтахгүй хоног байвал сервер юу ч бичихгүйгээр
+     АНХААРУУЛГА буцаана. Урьд нь энэ шалгуур дэлгэц дээр ХАТУУ зогсоодог
+     байсан — тэр нь H5-ийн эсрэг: хоногийг эзэмшдэг нь Отгоо эгч. */
+  async function submit(confirmDays = false) {
     const lines = rows.filter((r) => r.ret > 0).map((r) => ({
       material_id: r.material_id, grade_id: r.grade_id, qty: r.ret,
       return_grade_id: r.return_grade_id, repair_qty: r.repair, writeoff_qty: r.writeoff,
       issue_line_id: Number(r.pin) || undefined,
       billed_days_override: r.days.trim() === "" ? undefined : Math.round(parseMoney(r.days)),
+      days_confirm: confirmDays || undefined,
     }));
     if (!lines.length) { toast("Буцаах тоо оруулна уу", "err"); return; }
     for (const r of rows.filter((r) => r.ret > 0)) {
       if (r.ret > r.qty) { toast(`${r.material}: түрээсэнд байгаагаас их байна`, "err"); return; }
       if (r.repair + r.writeoff > r.ret) { toast(`${r.material}: засвар + акт нь буцаалтаас их байна`, "err"); return; }
+      // ҮЛДСЭН ХАТУУ ТАТГАЛЗАЛ: сөрөг хоног гэж байхгүй — утгагүй тоо
       const n = rowDays(r);
-      if (n != null) {
-        if (n < 0) { toast(`${r.material}: хоног сөрөг байж болохгүй`, "err"); return; }
-        const cap = rowMax(r);
-        if (cap != null && n > cap) {
-          toast(`${r.material}: гар хоног ${cap} хоногоос их байж болохгүй`, "err");
-          return;
-        }
-      }
+      if (n != null && n < 0) { toast(`${r.material}: хоног сөрөг байж болохгүй`, "err"); return; }
     }
     setBusy(true);
     try {
-      await api(`/api/contracts/${d.id}/movements`, { method: "POST",
+      const r = await api(`/api/contracts/${d.id}/movements`, { method: "POST",
         body: JSON.stringify({ type: "RETURN", date, note: "", lines }) });
+      if (r?.days_warning) { setWarn(r.days_warning); setBusy(false); return; }
       toast("Буцаалт бүртгэгдлээ — тооцоо автоматаар шинэчлэгдэнэ");
       onDone();
     } catch (e: any) { toast(e.message, "err"); setBusy(false); }
@@ -2013,11 +2049,12 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                   <label className="text-[12.5px] text-t2" htmlFor={`${uid}-days-${i}`}>
                     Хоног (гараар)
                   </label>
+                  {/* `max` ЗОРИУДААР алга (H5): цонхноос их тоо бол АЛДАА
+                      биш, ТОХИРОЛ — түүнийг бичих замыг маягт хаах ёсгүй. */}
                   <input id={`${uid}-days-${i}`} type="number" inputMode="numeric" min={0}
-                         max={maxDays ?? undefined}
                          placeholder={hint != null ? String(hint) : "авто"}
                          className={`inp !w-20 !min-h-11 !py-2 text-center font-bold${
-                           dayOver ? " !border-danger" : ""}`}
+                           dayOver ? " !border-warn" : ""}`}
                          value={r.days} onChange={(e) => setRow(i, { days: e.target.value })} />
                   <span className="text-[12.5px] text-t3">
                     {hint != null ? `системээр ${hint} хоног` : "хоосон = авто"}
@@ -2057,10 +2094,13 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                 </div>
               )}
 
+              {/* ХОЁР ТОО НЭРЛЭГДЭНЭ, зам нь ХААГДАХГҮЙ (H5). Урьд нь энэ мөр
+                  «болохгүй» гэж улаанаар зогсоодог байв — гэвч гарын үсэг
+                  зурсан хоногийг систем татгалзах эрхгүй. */}
               {ret > 0 && dayOver && (
-                <p className="text-[12.5px] text-danger mt-2">
-                  Гар хоног {maxDays} хоногоос их байж болохгүй — энэ падан
-                  циклдээ {maxDays} хоног л гадаа байсан.
+                <p className="text-[12.5px] text-warn mt-2">
+                  ⚠ Та {rowDays(r)} хоног гэж бичлээ · системээр {maxDays} хоног
+                  багтана. Тоо нь тань — «Бүртгэх» дарвал баталгаажуулна.
                 </p>
               )}
 
@@ -2126,9 +2166,31 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                      accent: net > 0 ? "danger" : net < 0 ? "money" : undefined }} />
         );
       })()}
+      {/* СЕРВЕРИЙН АНХААРУУЛГА — хоёр тоо ТҮҮНИЙ өмнө, дараа нь сонголт.
+          Тоо нь серверээс ирнэ: баталгаажуулах агшинд уншсан тоо ба
+          нэхэгдэх тоо ХОЁР ӨӨР байх боломжгүй. */}
+      {warn && (
+        <div className="rounded-xl border border-warn bg-sunken p-3.5 mt-4" role="status">
+          <b className="text-[14px] text-ink block mb-1.5">Хоногийн зөрүү</b>
+          {warn.map((w: any, i: number) => (
+            <p key={i} className="text-[13px] text-t2 mb-1.5">⚠ {w.text}</p>
+          ))}
+          <p className="text-[12.5px] text-t3 mb-3">
+            Тоо нь тань — баталгаажуулбал ЯГ тэрээрээ нэхэгдэнэ.
+          </p>
+          <div className="flex justify-end gap-2.5 flex-wrap">
+            <button className="btn-ghost" onClick={() => setWarn(null)}>Тоог засах</button>
+            <button className="btn-primary" disabled={busy}
+                    onClick={() => { setWarn(null); void submit(true); }}>
+              Тийм, энэ тоогоор нэх
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary tap-lg" onClick={onClose}>Болих</button>
-        <button className="btn-primary tap-lg px-6" disabled={busy} onClick={submit}>
+        <button className="btn-primary tap-lg px-6" disabled={busy}
+                onClick={() => void submit()}>
           {busy ? "…" : "✓ Буцаалт бүртгэх"}
         </button>
       </div>
@@ -2572,13 +2634,48 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                                       | { kind: "deposit" }>(null);
   const [done, setDone] = useState<any[] | null>(null);
 
+  /* ГАР ХОНОГИЙН ЗӨРЧИЛ (H5-ийн сүүлчийн миль).
+     Хаах огноо нь эцсийн циклийг ТАСАЛДАГ тул тохирсон 12 хоног нь 8
+     хоногийн цонхонд багтахаа болино. Урьд нь хөдөлгүүр түүнийг ЧИМЭЭГҮЙ
+     хумиж, гарын үсэгтэй тоо хавсралт дээр өөр болж хэвлэгддэг байв.
+
+     Мөрүүд нь ДЭЛГЭЦИЙН ТӨЛӨВТ үлдэнэ (серверийн сүүлийн хариунаас БИШ):
+     сонголт хийсэн мөр сервер дээр «шийдэгдсэн» болж жагсаалтаас гардаг тул
+     эс бөгөөс тэр сонголтоо буцааж өөрчлөх нүд нь нүднийх нь өмнөөс алга
+     болно. Огноо солигдвол л дахин үрждэг. */
+  const [conflicts, setConflicts] = useState<DayConflict[]>([]);
+  const [picks, setPicks] = useState<Record<number, DayPick>>({});
+  const seq = useRef(0);
+
+  /* Дүнг ҮРГЭЛЖ СЕРВЕР хэлнэ. Дэлгэц дээр дахин бодвол хаасны дараах цаастай
+     зөрөх зай нээгдэнэ — энэ бүх ажлын шалтгаан яг тэр зөрөх байсан. */
+  const price = async (next: Record<number, DayPick>, rows: DayConflict[]) => {
+    const mine = ++seq.current;
+    try {
+      const r = await api(`/api/contracts/${d.id}/close-preview`, { method: "POST",
+        body: JSON.stringify({ close_date: closeDate,
+                               day_choices: dayChoicePayload(rows, next) }) });
+      if (mine === seq.current) setP(r);       // хожуу ирсэн хуучин хариу үл тоогдоно
+    } catch (e: any) { toast(e.message, "err"); }
+  };
+
   const load = async () => {
+    seq.current++;
     try {
       const q = closeDate ? `?close_date=${closeDate}` : "";
-      setP(await api(`/api/contracts/${d.id}/close-preview${q}`));
+      const r = await api(`/api/contracts/${d.id}/close-preview${q}`);
+      setP(r);
+      setConflicts(r.day_conflicts || []);
+      setPicks(defaultDayPicks(r.day_conflicts));    // ӨГӨГДМӨЛ нь ТҮҮНИЙ тоо
     } catch (e: any) { toast(e.message, "err"); }
   };
   useEffect(() => { void load(); }, [closeDate]);
+
+  const setPick = (lineId: number, p: DayPick) => {
+    const next = { ...picks, [lineId]: p };
+    setPicks(next);
+    void price(next, conflicts);
+  };
 
   const steps = closeSteps(p);
   const step = steps[Math.min(at, steps.length - 1)];
@@ -2605,7 +2702,8 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
     setBusy(true);
     try {
       const r = await api(`/api/contracts/${d.id}/close`, { method: "POST",
-        body: JSON.stringify({ close_date: closeDate }) });
+        body: JSON.stringify({ close_date: closeDate,
+                               day_choices: dayChoicePayload(conflicts, picks) }) });
       toast(`Гэрээ ${r.closed_date}-нд хаагдлаа`);
       setDone(r.invoices || []);
       onReload();
@@ -2729,6 +2827,86 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
             {p.close_error && (
               <p className="text-[12.5px] text-danger mb-3">⚠ {p.close_error}</p>
             )}
+
+            {/* ---------- ХОНОГИЙН ЗӨРЧИЛ (H5-ийн сүүлчийн миль) ----------
+                Зөрчилгүй бол ЮУ Ч ГАРАХГҮЙ: хийх шаардлагагүй шийдвэрийг
+                зохиож гаргах нь ажил нэмнэ (§3-ын «алхам нь датанаас» дүрэм).
+
+                Гарвал ГУРВУУЛАН ЗАМ НЭРЛЭГДЭНЭ, өгөгдмөл нь ТҮҮНИЙ тохирсон
+                тоо — гарын үсэг зурсан нь тэр. Арифметик нь ил: хоног × нэг
+                хоногийн ₮ = мөрийн дүн, тэгээд хоёр замын ₮ зөрүү. */}
+            {conflicts.length > 0 && (
+              <div className="rounded-xl border border-warn p-3.5 mb-4">
+                <b className="text-[14.5px] text-ink block">Тохирсон хоног хаалтын огноотой зөрж байна</b>
+                <p className="text-[12.5px] text-t2 mt-1 mb-3">
+                  Хаах огноо нь эцсийн циклийг таслах тул доорх мөрүүдийн
+                  тохирсон хоног цонхондоо багтахгүй байна. Аль тоогоор
+                  нэхэхийг ТА шийднэ — сонгосон тоо хавсралт дээр хэвлэгдэнэ.
+                </p>
+                <div className="divide-y divide-line border-t border-line">
+                  {conflicts.map((cf) => {
+                    const pick = picks[cf.line_id] || { mode: "agreed", text: "" };
+                    const days = pickedDays(cf, pick);
+                    const delta = pickDelta(cf, pick);
+                    const opts: [DayMode, string][] = [
+                      ["agreed", `${fmt(cf.agreed_days)} хоног — тохирсон`],
+                      ["window", `${fmt(cf.window_days)} хоног — хаалтын цонх`],
+                      ["other", "Өөр тоо"],
+                    ];
+                    return (
+                      <div key={cf.line_id} className="py-3">
+                        <b className="text-[14px] text-ink block leading-tight">{cf.material}</b>
+                        <span className="text-[12.5px] text-t2">
+                          <span className="pill-grey !py-0 mr-1.5">{cf.grade}</span>
+                          {fmt(cf.qty)}ш · {cf.date}-нд буцсан
+                        </span>
+                        <p className="text-[13px] text-t2 mt-2">
+                          Та <b className="text-ink tabular-nums">{fmt(cf.agreed_days)}</b> хоног
+                          гэж тохирсон · хаалтын огноогоор{" "}
+                          <b className="text-ink tabular-nums">{fmt(cf.window_days)}</b> хоног
+                          багтана · зөрүү нь{" "}
+                          <b className="text-ink tabular-nums">{money(cf.diff_amount)}</b>
+                        </p>
+                        <div className="flex gap-2 flex-wrap mt-2.5" role="group"
+                             aria-label={`${cf.material} — нэхэх хоног`}>
+                          {opts.map(([v, lb]) => (
+                            <button key={v} aria-pressed={pick.mode === v}
+                                    onClick={() => setPick(cf.line_id, { ...pick, mode: v })}
+                                    className={`flex-1 min-w-[128px] rounded-[10px] border py-2.5 px-2 font-semibold text-[13px] transition min-h-11 ${
+                                      pick.mode === v ? "border-brand bg-brand-50 text-brand-ink"
+                                                      : "border-line-strong text-t2"}`}>
+                              {lb}
+                            </button>
+                          ))}
+                        </div>
+                        {pick.mode === "other" && (
+                          <div className="flex items-center gap-2.5 mt-2.5 flex-wrap">
+                            <label className="text-[12.5px] text-t2"
+                                   htmlFor={`${uid}-oth-${cf.line_id}`}>Хоног</label>
+                            <input id={`${uid}-oth-${cf.line_id}`} type="number"
+                                   inputMode="numeric" min={0} autoFocus
+                                   placeholder={String(cf.agreed_days)}
+                                   className="inp !w-20 !min-h-11 !py-2 text-center font-bold"
+                                   value={pick.text}
+                                   onChange={(e) => setPick(cf.line_id,
+                                                            { mode: "other", text: e.target.value })} />
+                          </div>
+                        )}
+                        <p className="text-[12.5px] text-t2 mt-2 tabular-nums">
+                          {dayLineText(days, cf.day_amount)}
+                          {delta !== 0 && (
+                            <span className={delta > 0 ? " text-danger" : " text-money"}>
+                              {" "}({delta > 0 ? "+" : "−"}{money(Math.abs(delta))})
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {p.final_invoices.length > 0 ? (
               <Receipt
                 rows={p.final_invoices.flatMap((fi) => [

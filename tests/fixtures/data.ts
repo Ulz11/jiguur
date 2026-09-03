@@ -69,6 +69,9 @@ type MovementLineIn = {
   repair_qty?: number;
   writeoff_qty?: number;
   billed_days_override?: number | null;
+  /** «Хоёр тоог хараад ЭНЭ-г сонголоо» (H5) — цонхонд багтахгүй хоногийг
+   *  бүртгүүлэх ГАНЦ түлхүүр. Ирээгүй бол сервер анхааруулга буцаана. */
+  days_confirm?: boolean;
 };
 
 export type DataFactory = {

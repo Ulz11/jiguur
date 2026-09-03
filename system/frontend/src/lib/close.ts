@@ -22,11 +22,34 @@ export type OutRow = {
   sale_price: number; sale_amount: number;
 };
 
+/** ХААЛТЫН ТАСАРХАЙ ЦОНХТОЙ ЗӨРЧИЛДСӨН гар хоног (H5-ийн сүүлчийн миль).
+ *
+ *  Хаах агшинд эцсийн цикл ТАСАРНА. Тэр богино цонх нь падангийн цонхыг
+ *  богиносгодог тул бүртгэх агшинд тохирсон 20 хоног энд багтахаа болино.
+ *  Урьд нь хөдөлгүүр түүнийг чимээгүй хумиж, гарын үсэгтэй 20 нь хавсралт
+ *  дээр 16 болж хэвлэгддэг байв. Одоо энэ нь ТҮҮНИЙ ШИЙДВЭР болно. */
+export type DayConflict = {
+  line_id: number; movement_id: number; date: string;
+  material_id: number; material: string;
+  grade_id: number; grade: string;
+  qty: number;
+  /** Тохирсон тоо (гарын үсэг зурсан нь энэ) */
+  agreed_days: number;
+  /** Хаалтын огноогоор багтах тоо */
+  window_days: number;
+  /** ЭНЭ МӨРИЙН нэг хоногийн ₮ — тоо × тариф */
+  day_amount: number;
+  agreed_amount: number; window_amount: number;
+  /** Хоёр замын ₮ зөрүү */
+  diff_amount: number;
+};
+
 export type ClosePreview = {
   close_date: string;
   close_error?: string | null;
   can_close: boolean;
   outstanding: OutRow[];
+  day_conflicts: DayConflict[];
   final_invoices: { no: string; cycle_start: string; cycle_end: string; label: string;
                     rent_amount: number; charge_amount: number; vat_amount: number;
                     total: number }[];
@@ -99,6 +122,69 @@ export function stepBlock(p: ClosePreview | null | undefined,
   }
   if (key === "confirm" && p.close_error) return p.close_error;
   return null;
+}
+
+/* ---------- ГАР ХОНОГИЙН СОНГОЛТ (H5) ----------
+ *
+ * ГУРВАН ЗАМ, гуравуулаа НЭРЛЭГДСЭН: тохирсон тоогоо нэх (ӨГӨГДМӨЛ — гарын
+ * үсэг зурсан нь тэр), цонхны тоог нэх, эсвэл ӨӨР тоо бичих. Нэрлээгүй гарц
+ * нь байхгүй гарц (§3 H7-ийн дүрэм гадаа үлдэгдэлтэй ижил).
+ *
+ * Дүн нь ҮРЖВЭР: хоног × нэг хоногийн ₮. Отгоо эгчийн арифметик — цаасан
+ * дээр дахин гаргаад шалгаж болно. */
+
+export type DayMode = "agreed" | "window" | "other";
+
+/** `text` нь ЗӨВХӨН «өөр тоо» замд утгатай — бичиж байх зуур бүтэн биш
+ *  байж болох тул хоногийг `pickedDays` шийднэ, түүхий бичиг биш. */
+export type DayPick = { mode: DayMode; text: string };
+
+/** Мөр бүрийн эхлэлийн сонголт — ҮРГЭЛЖ ТҮҮНИЙ тохирсон тоо. */
+export function defaultDayPicks(rows: DayConflict[] | null | undefined)
+    : Record<number, DayPick> {
+  const out: Record<number, DayPick> = {};
+  for (const r of rows || []) out[r.line_id] = { mode: "agreed", text: "" };
+  return out;
+}
+
+/** Сонголт → ҮНЭХЭЭР нэхэгдэх хоног.
+ *
+ *  «Өөр тоо» нь хоосон эсвэл утгагүй байвал ТОХИРСОН тоо руугаа унана —
+ *  бичиж эхлээгүй нүд нь шийдвэр биш. */
+export function pickedDays(row: DayConflict, p?: DayPick | null): number {
+  if (!p || p.mode === "agreed") return row.agreed_days;
+  if (p.mode === "window") return row.window_days;
+  const n = Math.round(Number(p.text));
+  return p.text.trim() !== "" && Number.isFinite(n) && n >= 0 ? n : row.agreed_days;
+}
+
+/** Сонголт → тэр мөрийн ₮. */
+export function pickedAmount(row: DayConflict, p?: DayPick | null): number {
+  return pickedDays(row, p) * row.day_amount;
+}
+
+/** Сервер рүү явах шийдвэрүүд — мөр БҮРийг ИЛЭРХИЙ нэрлэнэ.
+ *
+ *  Өгөгдмөлөө хэвээр үлдээсэн мөрийг ч илгээнэ: сервер дээр «сонгоогүй» нь
+ *  мөн л түүний тоо руу унадаг ч, ИЛЭРХИЙ илгээсэн тоо нь audit дээр
+ *  «ТЭР баталсан» гэж мөрөө үлдээнэ. */
+export function dayChoicePayload(rows: DayConflict[] | null | undefined,
+                                 picks: Record<number, DayPick>) {
+  return (rows || []).map((r) => ({ line_id: r.line_id,
+                                    days: pickedDays(r, picks[r.line_id]) }));
+}
+
+/** «12 хоног × 13,200₮ = 158,400₮» — задлагдсан үржвэр, нуугдсан тоогүй. */
+export function dayLineText(days: number, dayAmount: number): string {
+  return `${fmt(days)} хоног × ${fmt(dayAmount)}₮ = ${fmt(days * dayAmount)}₮`;
+}
+
+/** Сонголт нь эцсийн нэхэмжлэлийг ХЭД хөдөлгөх вэ (өгөгдмөлөөс).
+ *
+ *  Сервер ЭЦСИЙН тоог өөрөө хэлнэ; энэ нь зөвхөн мөрөн дээрх «одоо −52,800₮»
+ *  гэсэн тэмдэг — шийдвэрийн үнэ нь товч дарахаас ӨМНӨ харагдана. */
+export function pickDelta(row: DayConflict, p?: DayPick | null): number {
+  return (pickedDays(row, p) - row.agreed_days) * row.day_amount;
 }
 
 /** Мөрөн дээрх хоёр гарц → буцаалтын цонхны урьдчилсан утга.

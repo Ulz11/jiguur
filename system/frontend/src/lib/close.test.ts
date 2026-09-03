@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { applyPrefill, closeSteps, outstandingQty, outstandingSale, outstandingWriteoff,
-         returnPrefill, salePrefill, stepBlock, stepIndex, CLOSE_STEP_TITLES } from "./close";
+         returnPrefill, salePrefill, stepBlock, stepIndex, CLOSE_STEP_TITLES,
+         dayChoicePayload, dayLineText, defaultDayPicks, pickDelta, pickedAmount,
+         pickedDays, type DayConflict, type DayPick } from "./close";
 
 const clean = {
   close_date: "2026-05-03", close_error: null, can_close: true,
-  outstanding: [], final_invoices: [{ no: "R-24/03-2", cycle_start: "2026-04-19",
+  outstanding: [], day_conflicts: [], final_invoices: [{ no: "R-24/03-2", cycle_start: "2026-04-19",
                                       cycle_end: "2026-05-04", label: "…",
                                       rent_amount: 462000, charge_amount: 0,
                                       vat_amount: 0, total: 462000 }],
@@ -172,5 +174,88 @@ describe("ГУРАВ ДАХЬ ГАРЦ — «Худалдаа болгох» (H7
     expect(msg).toContain("буцаалт");
     expect(msg).toContain("дутагдуулсан");
     expect(msg).toContain("худалдаа");
+  });
+});
+
+/* ---------- ГАР ХОНОГИЙН ЗӨРЧИЛ (H5-ийн сүүлчийн миль) ----------
+   Хаах агшинд эцсийн цикл тасарч, тохирсон 12 хоног нь 8 хоногийн цонхонд
+   багтахаа болино. Урьд нь машин түүнийг ЧИМЭЭГҮЙ хумидаг байв. Одоо гурван
+   зам нэрлэгдэж, аль нь ч ТҮҮНИЙ сонголт болно. */
+const conflict: DayConflict = {
+  line_id: 77, movement_id: 12, date: "2026-05-01",
+  material_id: 1, material: "Хэв хашмал 6012", grade_id: 2, grade: "А",
+  qty: 40, agreed_days: 12, window_days: 8,
+  day_amount: 13_200,                       // 40ш × 330₮
+  agreed_amount: 158_400, window_amount: 105_600, diff_amount: 52_800,
+};
+
+describe("гар хоногийн зөрчил — ГУРВАН зам, өгөгдмөл нь ТҮҮНИЙХ", () => {
+  it("өгөгдмөл сонголт нь ТОХИРСОН тоо — гарын үсэг зурсан нь тэр", () => {
+    const picks = defaultDayPicks([conflict]);
+    expect(picks[77]).toEqual({ mode: "agreed", text: "" });
+    expect(pickedDays(conflict, picks[77])).toBe(12);
+    expect(pickedAmount(conflict, picks[77])).toBe(158_400);
+  });
+
+  it("сонголтгүй мөр ч ТҮҮНИЙ тоо руугаа унана", () => {
+    expect(pickedDays(conflict, undefined)).toBe(12);
+    expect(pickedDays(conflict, null)).toBe(12);
+  });
+
+  it("цонхны тоог сонговол ЯГ тэр — зөрүү нь −52,800₮", () => {
+    const p: DayPick = { mode: "window", text: "" };
+    expect(pickedDays(conflict, p)).toBe(8);
+    expect(pickedAmount(conflict, p)).toBe(105_600);
+    expect(pickDelta(conflict, p)).toBe(-52_800);
+    expect(pickDelta(conflict, p)).toBe(-conflict.diff_amount);
+  });
+
+  it("ӨӨР тоо — бүрэн эрх чөлөө, 20 гэвэл 20", () => {
+    const p: DayPick = { mode: "other", text: "20" };
+    expect(pickedDays(conflict, p)).toBe(20);
+    expect(pickedAmount(conflict, p)).toBe(264_000);
+    expect(pickDelta(conflict, p)).toBe(8 * 13_200);
+  });
+
+  it("бичиж эхлээгүй нүд нь ШИЙДВЭР БИШ — тохирсон тоо руугаа унана", () => {
+    for (const text of ["", "   ", "abc", "-3"]) {
+      expect(pickedDays(conflict, { mode: "other", text })).toBe(12);
+    }
+  });
+
+  it("бутархай бичвэл бүхэлдээ бөөрөнхийлнө — хоног бол бүхэл тоо", () => {
+    expect(pickedDays(conflict, { mode: "other", text: "9.4" })).toBe(9);
+    expect(pickedDays(conflict, { mode: "other", text: "9.6" })).toBe(10);
+  });
+
+  it("тэг хоног нь ЖИНХЭНЭ сонголт — «тэр өдрүүд нэхэгдэхгүй»", () => {
+    expect(pickedDays(conflict, { mode: "other", text: "0" })).toBe(0);
+    expect(pickedAmount(conflict, { mode: "other", text: "0" })).toBe(0);
+  });
+
+  it("сервер рүү мөр БҮР илэрхий явна — өгөгдмөл нь ч тоологдоно", () => {
+    const other: DayConflict = { ...conflict, line_id: 78, agreed_days: 5,
+                                 window_days: 3, day_amount: 1000 };
+    const picks = { 77: { mode: "window" as const, text: "" } };
+    expect(dayChoicePayload([conflict, other], picks))
+      .toEqual([{ line_id: 77, days: 8 }, { line_id: 78, days: 5 }]);
+  });
+
+  it("зөрчилгүй бол илгээх юу ч алга", () => {
+    expect(dayChoicePayload([], {})).toEqual([]);
+    expect(dayChoicePayload(null, {})).toEqual([]);
+    expect(defaultDayPicks(null)).toEqual({});
+  });
+
+  it("арифметик нь ЗАДЛАГДАЖ бичигдэнэ — цаасан дээр дахин гаргаж болно", () => {
+    expect(dayLineText(12, 13_200)).toBe("12 хоног × 13,200₮ = 158,400₮");
+    expect(dayLineText(8, 13_200)).toBe("8 хоног × 13,200₮ = 105,600₮");
+  });
+
+  it("зөрчил нь алхам НЭМЭХГҮЙ, зам ч ХААХГҮЙ — шийдвэр нь «Эцсийн тооцоо» дотор", () => {
+    const p = { ...clean, day_conflicts: [conflict] };
+    expect(closeSteps(p).map((s) => s.key)).toEqual(["final", "confirm"]);
+    expect(stepBlock(p, "final")).toBeNull();
+    expect(stepBlock(p, "confirm")).toBeNull();
   });
 });

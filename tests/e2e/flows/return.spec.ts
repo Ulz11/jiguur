@@ -128,43 +128,76 @@ test('гараар тохирсон хоног — зөрүү ИЛ, баримт
       .toContainText(`${typed} хоног (гараар — системээр ${hint})`);
   });
 
-test('падангийн цонхноос давсан хоног ЧАНГА татгалзана — хязгаараа НЭРЛЭЖ',
+test('падангийн цонхноос давсан хоног АНХААРУУЛНА, ХААХГҮЙ — хоёр тоог НЭРЛЭЖ',
   async ({ managerPage, data }) => {
+    /* Урьд нь энэ зам ЧАНГА ТАТГАЛЗДАГ байв («{max} хоногоос их байж
+       болохгүй»). Гэвч хоногийг эзэмшдэг нь Отгоо эгч: хэлцэл (урьдчилж
+       тохирсон, тээвэр хоцорсон, өршөөсөн) нь цонхны арифметикаас ӨМНӨ
+       байдаг. Одоо машин ХОЁР ТООГ нэрлээд БАТЛУУЛНА — чимээгүй хумилт ч,
+       хаалттай хаалга ч биш: гурав дахь зам, ИЛ ЗӨРҮҮ. */
     const { contract } = await data.rentSetup({
       ownMaterial: true, startDaysAgo: 45, qty: QTY, dailyRate: RATE });
     const page = new ContractDetailPage(managerPage);
     await page.goto(contract.id);
 
     const before = (await data.detail(contract.id)).movements.length;
-    const modal = await openReturn(page, QTY);
+    /* ХОЁРЫГ гадаа үлдээнэ — доорх 4 дэх алхам түүхий API-гаар дахин буцаана. */
+    const modal = await openReturn(page, QTY - 2);
     const days = modal.getByLabel('Хоног (гараар)');
-    const max = Number(await days.getAttribute('max'));
-    expect(max, 'хоногийн дээд хязгаар талбар дээр алга').toBeGreaterThan(0);
-    await days.fill(String(max + 1));
+    const hint = Number(await days.getAttribute('placeholder'));
+    /* Талбар нь тоог нь БИЧИХ замыг хаадаггүй — `max` тавьвал маягт өөрөө
+       гарын үсэг зурсан тоог татгалзаж эхэлнэ. */
+    expect(await days.getAttribute('max'),
+      'маягт хоногийн дээд хязгаар тавьжээ — тохирсон тоог бичих зам хаагдана').toBeNull();
 
-    /* 1. Талбарын доор — ЯГ тэр хязгаарыг НЭРЛЭСЭН тайлбар. */
-    await expect(modal.getByText(
-      `Гар хоног ${max} хоногоос их байж болохгүй — энэ падан циклдээ ${max} хоног л гадаа байсан`),
-      'хязгаарын шалтгаан дэлгэц дээр алга').toBeVisible();
+    const over = 45;                       // циклийн уртаас (30) давсан тоо
+    await days.fill(String(over));
 
-    /* 2. Дарвал ХУМИГДАХГҮЙ, ТАТГАЛЗАНА — хумивал хавсралт дээр хоёр талын
-          зөвшөөрөөгүй тоо хэвлэгдэнэ. */
+    /* 1. Талбарын доор — ХОЁР ТОО, «болохгүй» гэсэн үг АЛГА. */
+    const warn = modal.getByText(/Та \d+ хоног гэж бичлээ/);
+    await expect(warn, 'хоёр тоог нэрлэсэн анхааруулга дэлгэц дээр алга').toBeVisible();
+    await expect(warn).toContainText(`Та ${over} хоног гэж бичлээ`);
+    await expect(warn).toContainText('системээр 30 хоног багтана');
+    await expect(warn, 'анхааруулга нь татгалзал шиг ярьсаар байна')
+      .not.toContainText('болохгүй');
+
+    /* 2. Дарвал СЕРВЕР юу ч бичихгүйгээр асууна — тоо нь хараахан хөдлөөгүй. */
     await modal.getByRole('button', { name: '✓ Буцаалт бүртгэх' }).click();
-    await expect(page.errorToast, 'татгалзлын мессеж хязгаараа нэрлэсэнгүй')
-      .toContainText(`гар хоног ${max} хоногоос их байж болохгүй`);
-    await expect(modal, 'татгалзсан хойно цонх хаагдчихлаа — бичсэн зүйл алдагдана')
-      .toBeVisible();
+    const ask = modal.getByText(/системээр 30 хоног багтана/).last();
+    await expect(ask, 'баталгаажуулах асуулт гарч ирсэнгүй').toBeVisible();
     expect((await data.detail(contract.id)).movements.length,
-      'татгалзсан атал буцаалт бүртгэгджээ').toBe(before);
+      'баталгаажуулахаас өмнө буцаалт бүртгэгджээ').toBe(before);
 
-    /* 3. Хаалт нь СЕРВЕРТ — UI-г тойрч ирсэн хүсэлт ч ижил тоог нэрлэнэ. */
+    /* 3. Баталсны дараа ЯГ ТЭР тоо нэхэгдэнэ — хумилт БАЙХГҮЙ. */
+    await modal.getByRole('button', { name: 'Тийм, энэ тоогоор нэх' }).click();
+    await expect(modal).toBeHidden();
+    const after = await data.detail(contract.id);
+    const line = after.material_lines.flatMap((g: any) => g.lines || [])
+      .find((l: any) => l.type === 'RETURN');
+    expect(line.billed_days_override, 'баталсан тоо хадгалагдсангүй').toBe(over);
+    expect(line.days_confirmed, 'шийдвэрийн тамга буусангүй').toBe(true);
+    expect(line.sources[0].billed_days, 'баталсан тоо ХУМИГДЖЭЭ').toBe(over);
+    expect(line.sources[0].days, 'машины тоо алга болжээ — зөрүү харагдахаа болино')
+      .toBe(hint);
+
+    /* 4. Хаалт нь СЕРВЕРТ: батлаагүй хүсэлт бичихгүй, батласан нь ЯГ тэрээрээ. */
     const res = await data.api.post(`/api/contracts/${contract.id}/movements`, {
       data: { type: 'RETURN', date: data.isoDaysAgo(0), note: '',
               lines: [{ material_id: contract.materialId, grade_id: contract.gradeId,
-                        qty: QTY, billed_days_override: max + 1 }] },
+                        qty: 1, billed_days_override: over }] },
     });
-    expect(res.status(), 'сервер хэт урт хоногийг зөвшөөрчихлөө').toBe(400);
-    expect((await res.json()).detail).toContain(`${max} хоногоос их байж болохгүй`);
+    expect(res.status(), 'сервер анхааруулгын оронд татгалзжээ').toBe(200);
+    const body = await res.json();
+    expect(body.id, 'батлаагүй хүсэлт дээр мөр үүсгэжээ').toBeUndefined();
+    expect(body.days_warning[0].window_days).toBe(30);
+
+    /* ҮЛДСЭН ХАТУУ ТАТГАЛЗАЛ: сөрөг хоног гэж БАЙХГҮЙ — утгагүй тоо. */
+    const neg = await data.api.post(`/api/contracts/${contract.id}/movements`, {
+      data: { type: 'RETURN', date: data.isoDaysAgo(0), note: '',
+              lines: [{ material_id: contract.materialId, grade_id: contract.gradeId,
+                        qty: 1, billed_days_override: -1, days_confirm: true }] },
+    });
+    expect(neg.status(), 'сөрөг хоног зөвшөөрөгджээ').toBe(400);
   });
 
 test('падан-pin — аль ҮЕИЙН тарифыг хаахыг Отгоо заана', async ({ managerPage, data }) => {
