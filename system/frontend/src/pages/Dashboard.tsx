@@ -6,7 +6,7 @@ import { disclosureProps } from "../lib/disclosure";
 import { useScope, ScopeSwitch } from "../App";
 import { useLive } from "../lib/live";
 import { rowClickProps } from "../lib/rowClick";
-import { clientHref, contractHref, contractsHref, invoiceHref, notificationHref } from "../lib/links";
+import { clientHref, contractHref, contractsHref, flaggedHref, invoiceHref, notificationHref } from "../lib/links";
 import { invoiceLabel } from "../lib/invoice";
 import { dueLabel, todayIso } from "../lib/schedule";
 import { UNCHARGED } from "../lib/penalty";
@@ -67,6 +67,9 @@ export default function Dashboard() {
   /* Хуучин сервер (кэшлэгдсэн хуудас) эдгээр талбаргүй хариу буцаавал самбар
      нурах ёсгүй — хоосон жагсаалт руу унана. */
   const overdueList = d.overdue_list || [];
+  /* ⚑ тэмдэглэгдсэн мөрүүд (P1-22). Хуучин сервер энэ талбаргүй хариу
+     буцаавал самбар нь ХООСОН болно — хуудас нурах ёсгүй. */
+  const flagged = d.flagged || [];
   const schedule = d.payment_schedule || [];
   const scheduleTotal = schedule.reduce((s: number, r: any) => s + r.projected_amount, 0);
   const today = todayIso();
@@ -163,6 +166,43 @@ export default function Dashboard() {
           </div>
         </button>
       ))}
+    </div>
+  );
+
+  /* ⚑ АНХААРАХ — Отгоогийн ШАР НҮДНҮҮД (P1-22). Мөр бүр «хаанаас гарсан»-аа
+     авч явдаг тул дарахад тэр объект руугаа буулгана (`flaggedHref` —
+     `notificationHref`-ийн ЯГ тэр журам: худал холбоос нь холбоосгүйгээс дор). */
+  const attendCard = (
+    <div className="card p-5 mb-3">
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <h2 className="font-bold text-ink text-[15.5px]">Анхаарах</h2>
+        <span className={flagged.length ? "pill-amber" : "pill-grey"}>
+          ⚑ {flagged.length} тэмдэглэл
+        </span>
+      </div>
+      {flagged.length === 0 ? (
+        <p className="text-t3 text-sm py-4">
+          Анхаарах тэмдэглэл алга. 🙌 Гэрээ, харилцагчийн «Тэмдэглэл» дээр
+          ⚑ тэмдэглэсэн мөр энд цугларна.
+        </p>
+      ) : flagged.map((n: any) => {
+        const to = flaggedHref(n);
+        return (
+          <div key={n.id}
+               {...(to ? rowClickProps(() => nav(to), `${n.text} — ${n.entity_name}, нээх`, "link") : {})}
+               className={`flex gap-3 py-3 border-b border-sunken last:border-0 items-start -mx-2 px-2 rounded-lg transition ${
+                 to ? "cursor-pointer hover:bg-canvas" : ""}`}>
+            <div className="w-8 h-8 rounded-[10px] grid place-items-center shrink-0 text-sm bg-warn-50 text-warn"
+                 aria-hidden="true">⚑</div>
+            <div className="min-w-0">
+              <b className="text-[13.5px] text-ink font-semibold block leading-snug break-words">{n.text}</b>
+              <span className="text-[12.5px] text-t2">
+                {n.entity_name} · {n.date}{n.author ? ` · ${n.author}` : ""}
+              </span>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 
@@ -359,6 +399,13 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* ⚑ АНХААРАХ — түүний ШАР НҮДНҮҮД НЭГ ДЭЛГЭЦЭН ДЭЭР (P1-22 / №111).
+          Excel дээр «энэ рүү эргэж хар» гэсэн дүүргэлтийг тэр хуудас хуудсаар
+          нь хайдаг: арван харилцагчийн хуудсыг нээж яваад л олдог. Энд
+          тэдгээр нь огноогоороо, хаанаас гарснаа хэлж, дарахад ЯГ тэр мөр
+          рүүгээ аваачна. */}
+      {attendCard}
 
       {/* Хэтэрсэн нэхэмжлэлийн задаргаа — KPI картын ЯГ доор задарна */}
       {overdueOpen && (

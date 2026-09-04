@@ -126,3 +126,26 @@ export function notificationHref(
   if (!to) return null;
   return role === "factory" && FACTORY_BLOCKED.has(to) ? null : to;
 }
+
+/* ---------- Дашбоардын «Анхаарах» самбар (P1-22) ---------- */
+
+/** Тэмдэглэгдсэн ШАР НҮД хаашаа аваачих вэ.
+ *
+ *  Харилцагч, гэрээ, материал нь ӨӨРСДИЙН хуудастай. Хөдөлгөөн ба нэхэмжлэл
+ *  нь гэрээний хуудсан дээр амьдардаг тул тэдгээрийн тэмдэглэл `contract_id`-
+ *  гаа авч явна; ирээгүй бол ХООСОН — `auditHref`-ийн журмаар «худал холбоос
+ *  нь холбоосгүйгээс дор» (өөр гэрээ нээгдэнэ). */
+export function flaggedHref(n: {
+  entity_type: string;
+  entity_id: number;
+  contract_id?: number | null;
+}): string | null {
+  switch (n.entity_type) {
+    case "client": return clientHref(n.entity_id);
+    case "contract": return contractHref(n.entity_id);
+    case "material": return materialHref(n.entity_id);
+    case "invoice": return n.contract_id ? invoiceHref(n.contract_id, n.entity_id) : null;
+    case "movement": return n.contract_id ? contractHref(n.contract_id) : null;
+    default: return null;
+  }
+}

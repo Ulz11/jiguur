@@ -17,7 +17,7 @@ from .seed import seed
 from . import models
 from .services import cron
 from .routers import (core, contracts, clients, payments, dashboard, files,
-                      barter, loans, machines, salary, reports, features)
+                      barter, loans, machines, salary, reports, features, notes)
 
 VERSION = "1.0.0"
 
@@ -105,7 +105,7 @@ async def catch_errors(request: Request, call_next):
 
 
 for r in (core, contracts, clients, payments, dashboard, files,
-          barter, loans, machines, salary, reports, features):
+          barter, loans, machines, salary, reports, features, notes):
     app.include_router(r.router)
 
 

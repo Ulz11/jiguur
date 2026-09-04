@@ -56,6 +56,10 @@ export const ENTITIES: Record<string, string> = {
   deposit_event: "Барьцааны бичилт",
   /* Түрээс БИШ бичилт (H11) — олгосон зээл, цалин, кран, хоорондын тооцоо. */
   client_entry: "Харилцагчийн бичилт",
+  /* ЗАХЫН ТЭМДЭГЛЭЛ (P1-22) — «7.06нд тооцов», «ирээгүй», ⚑ шар туг.
+     `collection_note` («Тэмдэглэл» — авлагын яриа) -тай ЯЛГААТАЙ үгтэй байх
+     ёстой: шүүлтүүрийн хоёр товч ижил нэртэй бол аль нь юу вэ гэдэг алга. */
+  note: "Захын тэмдэглэл",
 };
 
 /** Backend-ийн `audit.log(db, user, ACTION, …)` дуудлагад БОДИТООР гардаг үйлдлүүд. */
@@ -70,6 +74,7 @@ export const BACKEND_ENTITIES = [
   "contract", "contract_item", "payment", "stock", "collection_note",
   "movement", "invoice", "akt", "rate_change", "penalty_charge",
   "machine", "machine_log", "machine_invoice", "deposit_event", "client_entry",
+  "note",
 ] as const;
 
 /** Үйлдлийн нэр + пилийн анги. Танихгүй түлхүүр ирвэл ядаж СААРАЛ болж,

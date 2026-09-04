@@ -6,6 +6,7 @@ import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit,
          FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
 import { PayModal } from "./ContractDetail";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
+import { NotesStrip } from "../components/Notes";
 import { isVoided, voidRowClass, voidTitle } from "../lib/void";
 import { ClientEntry, ENTRY_KINDS, EntryKind, EntryMode, entryAmountText,
          entryError, entryKindLabel, entryKindPill, entryModeLabel,
@@ -513,6 +514,14 @@ export default function ClientProfile() {
             <button className="btn-secondary mt-4" onClick={() => fileRef.current?.click()}>+ Файл хавсаргах</button>
           </div>
         )}
+      </div>
+
+      {/* ЗАХЫН ТЭМДЭГЛЭЛ (P1-22) — «модонд», «нөат шивсэн», «хаав». Табны
+          ГАДНА зогсоно: түүний шийдвэрүүд аль табан дээр ч байрандаа байна.
+          Харилцагчийн дэвтэр нь мөнгөнийх тул үйлдвэрийн даргад унших нь
+          нээлттэй, бичих нь хаалттай (сервер ч тэгнэ). */}
+      <div className="mt-4">
+        <NotesStrip entityType="client" entityId={d.id} canWrite={seesMoney} />
       </div>
 
       {/* САНХҮҮ — зөвхөн даргад, түүхийнх нь ХОЙНО. Хураангуй нь §3-ын бүтэн

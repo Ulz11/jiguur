@@ -34,6 +34,7 @@ import { ClosePreview, DayConflict, DayMode, DayPick, OutRow, Prefill, SalePrefi
          salePrefill, stepBlock, stepIndex } from "../lib/close";
 import { mvName, mvTone, saleRowTotal, saleTotal } from "../lib/movement";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
+import { NotesStrip } from "../components/Notes";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
 // хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
@@ -711,6 +712,11 @@ export default function ContractDetail() {
 
         {/* Хөдөлгөөн + төлбөр */}
         <div className="space-y-4">
+          {/* ЗАХЫН ТЭМДЭГЛЭЛ (P1-22) — «7.06нд тооцов», «ирээгүй», «хаав».
+              Гурван рольд ч бичигдэнэ: талбай дээр «ирээгүй» гэдгийг
+              анзаардаг нь үйлдвэрийн дарга (сервер ч гэрээ/хөдөлгөөнийг
+              түүнд нээлттэй үлдээнэ). */}
+          <NotesStrip entityType="contract" entityId={d.id} canWrite={!!u?.role} />
           {/* Он цагийн дараалсан түүх — материалын доорх дэвтэр гарснаар
               ХОЁРДОГЧ болов. Гэхдээ хумигдсанаас өөр юу ч алдагдаагүй:
               хөдөлгөөний ОГНОО, тэмдэглэл нь ганц хөдөлгөөнд бүхэлд нь
@@ -892,6 +898,11 @@ export default function ContractDetail() {
                         </div>
                       ))}
                       {mv.note && <span className="block text-[12px] text-t3 mt-2">{mv.note}</span>}
+                      {/* ЭНЭ АЧИЛТЫН тухай тэмдэглэл (P1-22): «хагас ирсэн»,
+                          «ирээгүй» гэдэг нь гэрээнийх БИШ, тухайн хөдөлгөөнийх.
+                          Дарга ч бичнэ — тэр талбай дээр байгаа хүн. */}
+                      <NotesStrip entityType="movement" entityId={mv.id} compact
+                                  canWrite={!!u?.role} />
                     </div>
                   )}
                 </div>

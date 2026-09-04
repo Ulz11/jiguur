@@ -6,6 +6,7 @@ from ..db import get_db
 from .. import models, auth, serializers
 from ..services import billing
 from ..services import loans as loans_svc
+from ..services import notes as notes_svc
 
 router = APIRouter(prefix="/api")
 
@@ -218,5 +219,10 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
             "revenue": revenue, "aging": aging,
             "overdue_list": overdue_list, "payment_schedule": schedule,
             "notifications": notifications[:20], "pending_shipments": pending,
+            # ШАР НҮДНҮҮД НЭГ ДЭЛГЭЦЭН ДЭЭР (P1-22 / №111). Отгоо эгч Excel
+            # дээрээ «энэ рүү эргэж хар»-аа хуудас хуудсаар нь хайдаг —
+            # энд тэдгээр нь огноогоороо, хаанаас гарснаа хэлж зогсоно.
+            # Рольоор ХАСАХГҮЙ (UI-ЗАРЧИМ §4): харагдац нь хуудасны ажил.
+            "flagged": notes_svc.flagged(db),
             "loans_upcoming": loans_upcoming,
             "loans_total": loan_sum["total_debt"]}

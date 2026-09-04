@@ -1,5 +1,6 @@
 """Шинэ боломжууд: барьцаа, авлага цуглуулах, тооллого, аналитик, audit."""
 from datetime import date
+from datetime import date as _date_t   # `date` нэртэй ТАЛБАР төрлөө далдална
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from ..services import billing, analytics, cron
 from ..services import audit as audit_svc
 from ..services import deposit as deposit_svc
 from ..services import entries as entries_svc
+from . import notes as notes_router
 
 router = APIRouter(prefix="/api")
 fin = auth.require_roles("manager", "finance")
@@ -241,7 +243,16 @@ class NoteIn(BaseModel):
 
 
 class NotePatch(BaseModel):
-    status: str
+    """`PATCH /notes/{id}`-ийн ХОЁР салааны нэгдсэн бие.
+
+    Тэр хаяг дээр урьд нь ЗӨВХӨН авлагын амлалтын төлөв суудаг байв. Захын
+    тэмдэглэлийн давхарга (P1-22) ижил хаягийг нэхэх тул хоёр route бүртгэвэл
+    нэг нь ЧИМЭЭГҮЙ хучигдана. `status` ирвэл ХУУЧИН зам, эс бөгөөс ШИНЭ.
+    """
+    status: str | None = None
+    text: str | None = None
+    flag: bool | None = None
+    date: _date_t | None = None
 
 
 def note_ser(n: models.CollectionNote):
@@ -281,7 +292,19 @@ def add_note(cid: int, body: NoteIn, db: Session = Depends(get_db), user=Depends
 
 
 @router.patch("/notes/{nid}")
-def patch_note(nid: int, body: NotePatch, db: Session = Depends(get_db), user=Depends(fin)):
+def patch_note(nid: int, body: NotePatch, db: Session = Depends(get_db),
+               user=Depends(auth.current_user)):
+    """Амлалтын ТӨЛӨВ (хуучин) эсвэл ЗАХЫН ТЭМДЭГЛЭЛ (шинэ) — биеэрээ салаална.
+
+    Рольыг энд ГАРААР шалгана: хоёр салаа өөр эрхтэй (тэмдэглэлийн давхаргад
+    үйлдвэрийн дарга гэрээ/хөдөлгөөн дээр бичиж чадна), тиймээс нэг
+    `require_roles` хамаагүй хатуу.
+    """
+    if body.status is None:
+        return notes_router.patch_entity_note(nid, body.text, body.flag, body.date,
+                                              db, user)
+    if getattr(user, "role", "") not in ("manager", "finance"):
+        raise HTTPException(403, "Энэ үйлдлийг хийх эрх байхгүй")
     n = db.get(models.CollectionNote, nid)
     if not n:
         raise HTTPException(404, "Олдсонгүй")

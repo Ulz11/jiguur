@@ -4,8 +4,8 @@
 нөөц, түрээсийн тооцоо, нэхэмжлэл, авлага бүгд үүнээс урсана.
 """
 from datetime import date, datetime
-from sqlalchemy import (String, Integer, Float, Date, DateTime, ForeignKey,
-                        Text, UniqueConstraint)
+from sqlalchemy import (String, Integer, Float, Boolean, Date, DateTime, ForeignKey,
+                        Index, Text, UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -692,6 +692,50 @@ class AuditLog(Base):
     entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     detail: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ---------- Захын тэмдэглэл ба ШАР ТУГ ----------
+class Note(Base):
+    """ЗАХЫН ТЭМДЭГЛЭЛ — Отгоо эгчийн шийдвэрүүдийн давхарга (P1-22 / №111, 112).
+
+    Түүний хуудсан дээр шийдвэр нь тоон ДОТОР биш, тооны ХАЖУУД амьдардаг:
+
+      · `ГрэйтМайнинг-5!H30` = `'7.06нд тооцов'` — тэр өдөр тооцоо хийгдэв;
+      · `F27` = `'нөат шивсэн'` — энэ дүнг татварт шивсэн, засах эрх хаагдав;
+      · `WB2!R22` = `'модонд'` / `R23='кранд'` — төлбөрийн ХЭЛБЭР;
+      · гадна: `'хаав'`, `'ирээгүй'`, `'дутуу'`, `'тооцоо дууссан.'`;
+      · ШАР дүүргэлт (`FFFFFF00`) = «АНХААР» — өнгө нь өөрөө өгүүлбэр (№111).
+
+    Систем дээр эдгээрийн байр нь `Contract.note` / `Client.note` гэсэн ГАНЦ
+    Text талбар байв: гурван тэмдэглэл нэг нүдэнд нурж, огноогүй, зохиогчгүй,
+    шүүгдэхгүй болно. Шар тугны байр нь ОГТ байхгүй байв.
+
+    ДҮРЭМ:
+      · `text` ЗААВАЛ — текстгүй мөр нь маргааш тайлагдахгүй тэмдэглэл;
+      · `flag` нь түүний ШАР НҮД: «энэ рүү эргэж хар». Дашбоардын «Анхаарах»
+        самбар нь тэдгээрийг НЭГ дэлгэцэн дээр цуглуулна;
+      · цуцлалт нь УСТГАЛ БИШ (H1) — мөр нь шалтгаантайгаа үлдэж, зөвхөн
+        тугны жагсаалтаас гарна;
+      · ХУУЧИН `note` талбарууд ХЭВЭЭР: энэ давхарга нь НЭМЭЛТ.
+    """
+    __tablename__ = "notes"
+    # Тэмдэглэл нь ҮРГЭЛЖ «энэ объектынх юу вэ» гэсэн асуултаар уншигдана
+    __table_args__ = (Index("ix_notes_entity", "entity_type", "entity_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # client | contract | invoice | movement | material
+    entity_type: Mapped[str] = mapped_column(String(12))
+    entity_id: Mapped[int] = mapped_column(Integer)
+    date: Mapped[date] = mapped_column(Date)
+    text: Mapped[str] = mapped_column(Text)
+    #: ШАР НҮД — «анхаар». Дашбоардын самбар үүгээр цуглуулна.
+    flag: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Бичсэн хүн. Талбай дээр «ирээгүй» гэдгийг АНЗААРДАГ нь үйлдвэрийн
+    #: дарга тул түүний нэр ч энд бууна.
+    author: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_by: Mapped[str] = mapped_column(String(100), default="")
 
 
 # ---------- Бусад ----------

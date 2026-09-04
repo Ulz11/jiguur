@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   clientHref, contractHref, materialHref, invoiceAnchorId, invoiceHref,
   contractsHref, contractFilterFrom, auditHref, notificationHref,
-  scopeFrom, scopeHref,
+  scopeFrom, scopeHref, flaggedHref,
 } from "./links";
 
 /* Дэлгэц бүр дээр НЭГ объект НЭГ хаягтай байх ёстой. Хаягийг мөрөөр нь
@@ -165,5 +165,31 @@ describe("notificationHref", () => {
   it("танихгүй мэдэгдэл хаашаа ч аваачихгүй", () => {
     expect(notificationHref({ kind: "хачин" }, "manager")).toBeNull();
     expect(notificationHref({ kind: "loan", contract_id: null }, "manager")).toBe("/loans");
+  });
+});
+
+describe("flaggedHref — ШАР НҮД өөрийн мөр рүүгээ буулгана", () => {
+  it("харилцагч, гэрээ, материал нь ӨӨРСДИЙН хуудастай", () => {
+    expect(flaggedHref({ entity_type: "client", entity_id: 7 })).toBe("/clients/7");
+    expect(flaggedHref({ entity_type: "contract", entity_id: 5 })).toBe("/contracts/5");
+    expect(flaggedHref({ entity_type: "material", entity_id: 3 }))
+      .toBe("/warehouse/materials/3");
+  });
+
+  it("нэхэмжлэл нь ГЭРЭЭНИЙХЭЭ ЯГ ТЭР МӨР рүү", () => {
+    expect(flaggedHref({ entity_type: "invoice", entity_id: 41, contract_id: 5 }))
+      .toBe("/contracts/5#inv-41");
+  });
+
+  it("хөдөлгөөнд хуудас байхгүй — ГЭРЭЭ рүүгээ", () => {
+    expect(flaggedHref({ entity_type: "movement", entity_id: 88, contract_id: 5 }))
+      .toBe("/contracts/5");
+  });
+
+  it("гэрээгээ мэдэхгүй хөдөлгөөн/нэхэмжлэл хаашаа ч аваачихгүй", () => {
+    // Худал холбоос нь холбоосгүйгээс ДОР: өөр гэрээ нээгдэнэ.
+    expect(flaggedHref({ entity_type: "movement", entity_id: 88 })).toBeNull();
+    expect(flaggedHref({ entity_type: "invoice", entity_id: 41, contract_id: null })).toBeNull();
+    expect(flaggedHref({ entity_type: "хачин", entity_id: 1 })).toBeNull();
   });
 });
