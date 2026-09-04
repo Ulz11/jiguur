@@ -101,6 +101,9 @@ class MovementIn(BaseModel):
     type: str                    # ISSUE | RETURN | WRITEOFF | SALE
     date: date
     note: str = ""
+    # ТАЛБАЙ (№88, 97) — «хаанаас гарсан / хаана буцсан». Блүүмийн 4,294ш нь
+    # технологи 2,044 + архангай 326 + дарь эх 1,924. Хоосон бол өнөөдрийнх.
+    site: str = ""
     lines: list[MovementLineIn]
 
 

@@ -14,7 +14,7 @@ import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import { daysVarianceText, lotDaysHint, lotDaysMax, lotOptions, materialSections,
-         overrideEffect, MaterialSection } from "../lib/lots";
+         overrideEffect, siteBreakdown, usedSites, MaterialSection } from "../lib/lots";
 import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED,
          chargeLabel, chargedTotal, laterLiveCharge } from "../lib/penalty";
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
@@ -442,6 +442,20 @@ export default function ContractDetail() {
                           {i === 0 && sec.pending > 0 && (
                             <span className="pill-amber ml-2">+{fmt(sec.pendingQty)}ш хүлээгдэж буй</span>
                           )}
+                          {/* ТАЛБАЙН ЗАДАРГАА (№88, 97) — Блүүмийн 4,294ш нь
+                              «технологи 2,044 · архангай 326 · дарь эх 1,924».
+                              ГАНЦ талбайтай гэрээнд огт гарахгүй: тэр мөр
+                              толгойн тоог л давтана. Шинэ эх сурвалж БИШ —
+                              дэвтрийн мөрүүдийн нийлбэр (`lib/lots.ts`). */}
+                          {i === 0 && (() => {
+                            const parts = siteBreakdown(sec.lines);
+                            return parts.length ? (
+                              <span className="block text-[12px] text-t3 font-normal tabular-nums">
+                                {parts.map((p) => `${p.site || "Талбайгүй"} ${fmt(p.qty)}`)
+                                      .join(" · ")}
+                              </span>
+                            ) : null;
+                          })()}
                         </td>
                         <td className="td"><span className="pill-blue">{it.grade}</span></td>
                         <td className="td text-right tabular-nums">{fmt(it.qty)}</td>
@@ -764,6 +778,9 @@ export default function ContractDetail() {
                     <b className={`block text-[13.5px] text-ink font-semibold ${voidRowClass(mv)}`}>
                       <Chevron open={open} />{" "}
                       {mvName(mv.type)} — {fmt(mv.lines.reduce((s: number, l: any) => s + l.qty, 0))}ш
+                      {/* ТАЛБАЙ (№88, 97) — «хаанаас гарсан / хаана буцсан».
+                          Бичээгүй бол мөр огт өөрчлөгдөхгүй. */}
+                      {mv.site && <span className="text-t3 font-normal"> · {mv.site}</span>}
                     </b>
                     {/* Шалтгаан нь ГОЛ мэдээлэл — tooltip дотор нуугдвал
                         Отгоо «яагаад» гэдгээ уншихын тулд хулгана барих
@@ -818,6 +835,19 @@ export default function ContractDetail() {
                             confirmText="Огноо солих уу?"
                             onSave={(v) => gatedPatch(`/api/movements/${mv.id}`, { date: v },
                                                       "Хөдөлгөөний огноо шинэчлэгдлээ")} />
+                        </div>
+                      )}
+                      {/* ТАЛБАЙ (№88, 97) — мөнгө хөдөлгөдөггүй ШОШГО тул
+                          дахин бодолтын хаалгагүй, шууд `savePatch`. Талбай
+                          дээр байгаа хүн (үйлдвэрийн дарга) ч засна. */}
+                      {(u?.role === "manager" || u?.role === "factory") && (
+                        <div className="text-[12px] text-t2 inline-flex items-center gap-1.5 mb-2 ml-3">
+                          <span aria-hidden="true">Талбай:</span>
+                          <InlineEdit label={`${mv.date} · ${mvName(mv.type)} — талбай`}
+                            value={mv.site || ""} display={mv.site || "талбай нэмэх…"}
+                            width="w-36" confirmText="Талбай солих уу?"
+                            onSave={(v) => savePatch(`/api/movements/${mv.id}`, { site: v },
+                                                     "Талбай шинэчлэгдлээ")} />
                         </div>
                       )}
                       {/* Хөдөлгөөн ЦУЦЛАХ нь менежерийн засварын зам: устгал
@@ -1793,6 +1823,9 @@ function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit, onVoid }: {
                   <VoidButton label={`${ln.date} · ${mvName(ln.type)}`}
                               onClick={() => onVoid(ln.movement_id)} />
                 )}
+                {/* ТАЛБАЙ (№88, 97) — «энэ 300ш ДАРЬ ЭХЭЭС буцлаа». Хөдөлгөөний
+                    түүх дээрхтэй ижил жижиг, бүдэг дагавар. */}
+                {ln.site ? <span className="text-t3"> · {ln.site}</span> : null}
                 {!!ln.return_grade && ln.return_grade !== sec.grade && (
                   <span className="text-t3"> → {ln.return_grade}</span>
                 )}
@@ -1925,6 +1958,8 @@ function PdfButton({ pdf, path, children, className = "btn-secondary", busyLabel
 function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
   const toast = useToast();
   const [date, setDate] = useState(today());
+  /* ТАЛБАЙ (№88, 97) — буцаалт ТАЛБАЙГААРАА тоологдоно (Блүүмийн гурван талбай) */
+  const [site, setSite] = useState("");
   const [rows, setRows] = useState<any[]>(
     applyPrefill(d.items.filter((i: any) => i.qty > 0).map((i: any) => ({
       ...i, ret: 0, return_grade_id: i.grade_id, repair: 0, writeoff: 0,
@@ -1992,7 +2027,7 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
     setBusy(true);
     try {
       const r = await api(`/api/contracts/${d.id}/movements`, { method: "POST",
-        body: JSON.stringify({ type: "RETURN", date, note: "", lines }) });
+        body: JSON.stringify({ type: "RETURN", date, note: "", site, lines }) });
       if (r?.days_warning) { setWarn(r.days_warning); setBusy(false); return; }
       toast("Буцаалт бүртгэгдлээ — тооцоо автоматаар шинэчлэгдэнэ");
       onDone();
@@ -2000,13 +2035,30 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
   }
 
   // Ямар нэг тоо бөглөсөн бол санамсаргүй хаагдаж бүх мөр алдагдахаас хамгаална
-  const dirty = date !== today() || rows.some(
+  const dirty = date !== today() || site !== "" || rows.some(
     (r) => r.ret > 0 || r.repair > 0 || r.writeoff > 0 || r.days !== "" || r.pin !== "0");
 
   return (
     <FormModal title="Буцаалт бүртгэх" onClose={onClose} wide dirty={dirty}>
-      <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
-      <input id={`${uid}-date`} type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
+      <div className="flex gap-3.5 flex-wrap mb-4">
+        <div>
+          <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+          <input id={`${uid}-date`} type="date" className="inp max-w-[200px]" value={date}
+                 onChange={(e) => setDate(e.target.value)} />
+        </div>
+        {/* ТАЛБАЙ (№88, 97) — «энэ 300ш ХААНААС буцаж ирэв». Заавал биш;
+            санал нь ЭНЭ ГЭРЭЭН ДЭЭР аль хэдийн хэрэглэгдсэн талбайнууд, тул
+            «Дарь эх» ба «дарь эх» гэсэн хоёр бүлэг төрөхгүй. */}
+        <div>
+          <label className="lbl" htmlFor={`${uid}-site`}>Талбай</label>
+          <input id={`${uid}-site`} className="inp max-w-[220px]" list={`${uid}-sites`}
+                 placeholder="ж: Дарь эх" value={site}
+                 onChange={(e) => setSite(e.target.value)} />
+          <datalist id={`${uid}-sites`}>
+            {usedSites(d.movements).map((sname) => <option key={sname} value={sname} />)}
+          </datalist>
+        </div>
+      </div>
 
       {/* Буцаалт нь агуулахын шалан дээр, планшетаар хийгддэг ажил — Тооллоготой
           ижил хэлбэр: мөр бүр нэг материал, том тоон талбар, засвар/акт нь
@@ -2362,6 +2414,8 @@ function SaleModal({ d, seesMoney, prefill, onClose, onDone }: any) {
 function AddModal({ d, seesMoney, onClose, onDone }: any) {
   const toast = useToast();
   const [date, setDate] = useState(today());
+  /* ТАЛБАЙ (№88, 97) — олголт ч талбайгаа авч явна */
+  const [site, setSite] = useState("");
   const rent = d.type === "rent";
   const [rows, setRows] = useState<any[]>(
     d.items.map((i: any) => ({ ...i, add: 0, rate: rent ? i.daily_rate : i.unit_price })));
@@ -2369,7 +2423,7 @@ function AddModal({ d, seesMoney, onClose, onDone }: any) {
   const uid = useId();
   /* Тоо оруулсан, тарифыг нь өөрчилсөн, эсвэл огноог хөдөлгөсөн бүхэн —
      санамсаргүй хаалтад алдагдах ёсгүй хөдөлмөр. */
-  const dirty = date !== today()
+  const dirty = date !== today() || site !== ""
     || rows.some((r) => r.add > 0 || r.rate !== (rent ? r.daily_rate : r.unit_price));
 
   async function submit() {
@@ -2382,7 +2436,7 @@ function AddModal({ d, seesMoney, onClose, onDone }: any) {
     setBusy(true);
     try {
       await api(`/api/contracts/${d.id}/movements`, { method: "POST",
-        body: JSON.stringify({ type: "ISSUE", date, note: "Нэмэлт олголт", lines }) });
+        body: JSON.stringify({ type: "ISSUE", date, note: "Нэмэлт олголт", site, lines }) });
       toast("Нэмэлт олголт үүслээ — дарга баталгаажуулсны дараа тооцоонд орно");
       onDone();
     } catch (e: any) { toast(e.message, "err"); setBusy(false); }
@@ -2390,8 +2444,24 @@ function AddModal({ d, seesMoney, onClose, onDone }: any) {
 
   return (
     <FormModal title="Нэмэлт олголт" onClose={onClose} dirty={dirty}>
-      <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
-      <input id={`${uid}-date`} type="date" className="inp mb-4 max-w-[200px]" value={date} onChange={(e) => setDate(e.target.value)} />
+      <div className="flex gap-3.5 flex-wrap mb-4">
+        <div>
+          <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+          <input id={`${uid}-date`} type="date" className="inp max-w-[200px]" value={date}
+                 onChange={(e) => setDate(e.target.value)} />
+        </div>
+        {/* ТАЛБАЙ (№88, 97) — «энэ олголт ХААШАА явж байна». Санал нь энэ
+            гэрээн дээр аль хэдийн хэрэглэгдсэн талбайнууд. */}
+        <div>
+          <label className="lbl" htmlFor={`${uid}-site`}>Талбай</label>
+          <input id={`${uid}-site`} className="inp max-w-[220px]" list={`${uid}-sites`}
+                 placeholder="ж: Технологи" value={site}
+                 onChange={(e) => setSite(e.target.value)} />
+          <datalist id={`${uid}-sites`}>
+            {usedSites(d.movements).map((sname) => <option key={sname} value={sname} />)}
+          </datalist>
+        </div>
+      </div>
       <div className="flex items-center gap-3 pb-1" aria-hidden="true">
         {seesMoney && (
           <span className="lbl !mb-0 ml-auto w-28 text-right">{rent ? "Тариф ₮/ш/хоног" : "Нэгж үнэ"}</span>

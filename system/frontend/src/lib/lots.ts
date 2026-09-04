@@ -59,6 +59,8 @@ export type LedgerLine = {
   writeoff_fee?: number;
   /** Худалдаа болгосон мөрийн дүн (H7) — зөвхөн SALE. Даргад ирэхгүй. */
   sale_fee?: number;
+  /** ТАЛБАЙ (№88, 97) — «хаанаас гарсан / хаана буцсан». Хоосон бол нэргүй. */
+  site?: string;
   [k: string]: unknown;
 };
 
@@ -288,4 +290,58 @@ export function daysVarianceText(s: LotSource): string {
   if (!s.override) return `${billed} хоног`;
   if (s.days === undefined || s.days === billed) return `${billed} хоног (гараар)`;
   return `${billed} хоног (гараар — системээр ${s.days})`;
+}
+
+
+/* ---------- ТАЛБАЙН ЗАДАРГАА (№88, 97) ----------
+ *
+ * Блүүмийн НЭГ хуудас ГУРВАН талбайг барина: `2026 шинэ`!C16/C17/C18 нь
+ * `БЛҮҮМ технологи` 2,044 · `БЛҮҮМ архангай` 326 · `Блүүм дарь эх` 1,924 —
+ * нийлбэр нь 4,294ш, гэвч АВЛАГА нь НЭГ. Батцоожийн хуудсан дээр
+ * `F5='А Е блок үлдэгдэл'` гэсэн багана дэд-объектынхоо үлдэгдлийг өөрөө
+ * барьдаг: «нийт хэд гадаа байна» гэдэг нь түүнд ХАНГАЛТГҮЙ хариу, учир нь
+ * буцаалт нь ТАЛБАЙГААРАА ирдэг.
+ *
+ * Энэ бол ЦЭВЭР ГАРГАЛТ: шинэ эх сурвалж БИШ, дэвтрийн мөрүүдийн нийлбэр
+ * (H9 «нэг факт, нэг тоо»). Дүрэм нь үлдэгдлийнхтэй ЯГ ИЖИЛ — зөвхөн
+ * `counted` мөрүүд оролцоно, тул задаргааны нийлбэр нь толгойн тоотой таарна.
+ */
+
+export type SitePart = { site: string; qty: number };
+
+/** Талбай бүрийн гадаа байгаа тоо. ХОЁРООС ЦӨӨН талбайтай бол ХООСОН:
+ *  ганц талбайн задаргаа нь толгойн тоог давтаж, мөр л нэмнэ.
+ *
+ *  Дараалал нь ДЭВТРИЙНХ (эхэлж гарч ирсэн талбай эхэндээ) — тоогоор
+ *  эрэмбэлбэл буцаалт болгоны дараа мөрүүд байраа солино. */
+export function siteBreakdown(
+  lines: { site?: string; delta: number; counted: boolean }[] | null | undefined,
+): SitePart[] {
+  const order: string[] = [];
+  const sum = new Map<string, number>();
+  for (const ln of lines || []) {
+    if (!ln.counted) continue;
+    const site = ln.site || "";
+    if (!sum.has(site)) { sum.set(site, 0); order.push(site); }
+    sum.set(site, sum.get(site)! + ln.delta);
+  }
+  if (order.length < 2) return [];
+  return order.map((site) => ({ site, qty: sum.get(site)! }));
+}
+
+/** Тухайн гэрээн дээр АЛЬ ХЭДИЙН хэрэглэгдсэн талбайнууд — цонхны `datalist`.
+ *
+ *  Талбайн нэрийг гараар бичих нь «Дарь эх» ба «дарь эх» гэсэн ХОЁР бүлэг
+ *  төрүүлнэ: задаргаа тэр агшинд худал болно. Санал болгосон жагсаалт нь тэр
+ *  хуваагдлыг эхнээс нь хаана. Дараалал: цагаан толгойн (сонголтын жагсаалт
+ *  тул хайлт нь урьдчилан таамаглагдана). */
+export function usedSites(
+  movements: { site?: string }[] | null | undefined,
+): string[] {
+  const seen = new Set<string>();
+  for (const mv of movements || []) {
+    const s = (mv.site || "").trim();
+    if (s) seen.add(s);
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b, "mn"));
 }

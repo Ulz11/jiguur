@@ -297,6 +297,16 @@ class Movement(Base):
     type: Mapped[str] = mapped_column(String(12))  # ISSUE | RETURN | WRITEOFF | SALE
     date: Mapped[date] = mapped_column(Date)
     note: Mapped[str] = mapped_column(Text, default="")
+    # ТАЛБАЙ — «хаанаас гарсан / хаана буцсан» (№88, 97).
+    #
+    # Блүүмийн НЭГ хуудас ГУРВАН талбайг барина: `БЛҮҮМ технологи` 2,044 ·
+    # `БЛҮҮМ архангай` 326 · `Блүүм дарь эх` 1,924 — нийлбэр нь 4,294ш, гэвч
+    # АВЛАГА нь НЭГ. Батцоожийн хуудсан дээр `F5='А Е блок үлдэгдэл'` гэсэн
+    # багана дэд-объектынхоо үлдэгдлийг өөрөө барьдаг.
+    #
+    # Хоосон нь ӨНӨӨДРИЙНХ: талбай бичээгүй гэрээ бүр яг хэвээрээ ажиллана.
+    # ⚠ Мөнгө ХӨДӨЛГӨХГҮЙ — зөвхөн шошго тул засварт нь дахин бодолт хэрэггүй.
+    site: Mapped[str] = mapped_column(String(120), default="")
     status: Mapped[str] = mapped_column(String(12), default="done")  # pending | done (ачилт дарга баталгаажуулна)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     # ---- ХҮЧИНГҮЙ (void) — «буруу гэрээнд олгосон падан хэзээ ч зогсохгүй» ----

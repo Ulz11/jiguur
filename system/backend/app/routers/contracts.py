@@ -241,6 +241,8 @@ class MovementPatch(_BM):
     # `date` талбарын нэр нь `date` төрлийг далдалдаг тул alias-аар зарлана
     date: _date_t | None = None
     note: str | None = None
+    # ТАЛБАЙ (№88, 97) — МӨНГӨ ХӨДӨЛГӨДӨГГҮЙ шошго тул дахин бодолт хэрэггүй
+    site: str | None = None
     confirm: bool = False
 
 
@@ -338,6 +340,7 @@ def _recompute_fees(db: Session, mv: models.Movement, ln: models.MovementLine):
 
 
 def _apply_movement_edit(db: Session, mv: models.Movement, new_date=None, note=None,
+                         site=None,
                          line: models.MovementLine | None = None,
                          qty: float | None = None, rate: float | None = None,
                          detail: dict | None = None):
@@ -355,6 +358,8 @@ def _apply_movement_edit(db: Session, mv: models.Movement, new_date=None, note=N
         mv.date = new_date
     if note is not None:
         mv.note = note
+    if site is not None:
+        mv.site = site.strip()
     if line is not None:
         if qty is not None:
             line.qty = qty
@@ -491,14 +496,21 @@ def patch_movement(mid: int, body: MovementPatch, db: Session = Depends(get_db),
         keys = {(ln.material_id, ln.grade_id) for ln in mv.lines}
         if not _timeline_ok(c, keys, mv_dates={mv.id: new_date}):
             raise HTTPException(400, TIMELINE_ERR)
-    before = {"date": mv.date, "note": mv.note}
-    after = {"date": new_date, "note": body.note if body.note is not None else mv.note}
+    before = {"date": mv.date, "note": mv.note, "site": mv.site or ""}
+    after = {"date": new_date, "note": body.note if body.note is not None else mv.note,
+             "site": (body.site.strip() if body.site is not None else (mv.site or ""))}
     gmap, mmap = _maps(db)
-    # Хүлээгдэж буй ачилт тооцоо ч, нөөц ч хөдөлгөөгүй тул үргэлж чөлөөтэй.
-    days = [mv.date, new_date] if mv.status == "done" else []
+    # ОГНООНЫ зам ХЭВЭЭР: огноо ирсэн бол (ижил өдөр байсан ч — тэр нь
+    # `test_rebuild_after_a_sale_is_stable`-ийн «дахин бодуул» гэсэн ил
+    # хүсэлт) нэхэмжлэгдсэн цонхонд дахин бодолтын хаалга нээгдэнэ.
+    # Тэмдэглэл ба ТАЛБАЙ (№88, 97) нь ШОШГО — мөнгө хөндөхгүй тул дахин
+    # бодолт нэхэхгүй: мөрөн дээр дарж талбайгаа бичих агшинд гэнэт «дахин
+    # бодох уу?» гарвал Отгоо болих л болно.
+    # Хүлээгдэж буй ачилт нь тооцоо ч, нөөц ч хөдөлгөөгүй тул үргэлж чөлөөтэй.
+    days = [mv.date, new_date] if (body.date is not None and mv.status == "done") else []
 
     def mutate():
-        _apply_movement_edit(db, mv, new_date=body.date, note=body.note)
+        _apply_movement_edit(db, mv, new_date=body.date, note=body.note, site=body.site)
 
     rebuilt, preview = _gated(db, user, c, mutate, days, body.confirm,
                               f"хөдөлгөөн #{mv.id}")
@@ -1205,7 +1217,7 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
         if warns:
             return {"days_warning": warns, "hint": DAYS_WARN_HINT}
     mv = models.Movement(contract_id=cid, type=body.type, date=body.date,
-                         note=body.note, status=status)
+                         note=body.note, site=(body.site or "").strip(), status=status)
     db.add(mv)
     db.flush()
     defaults = billing.default_rates(c)
@@ -1262,6 +1274,8 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
     audit.log(db, user, "create", "movement", mv.id,
               f"№{c.no} · {mv.date} · {audit.value_mn(mv.type)} {qty:g}ш"
               + (f" ({audit.value_mn(mv.status)})" if mv.status != "done" else "")
+              # ТАЛБАЙ (№88, 97) — «хаанаас гарсан» нь бүртгэлийн мөрөнд ч үлдэнэ
+              + (f" · талбай: {mv.site}" if mv.site else "")
               + ("".join(f" · {x}" for x in marks))
               + (f" · {mv.note}" if mv.note else ""))
     if status == "done":

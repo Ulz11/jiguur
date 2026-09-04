@@ -85,7 +85,7 @@ FIELDS_MN: dict[str, str] = {
     "start_date": "эхлэх огноо", "end_date": "дуусах огноо",
     "cycle_days": "циклийн хоног", "cycle_mode": "циклийн хэлбэр",
     # хөдөлгөөн ба түүний мөр
-    "date": "огноо", "qty": "тоо", "rate": "тариф",
+    "date": "огноо", "qty": "тоо", "rate": "тариф", "site": "талбай",
     "return_grade_id": "буцаж ирсэн зэрэглэл", "repair_qty": "засварын тоо",
     "writeoff_qty": "актын тоо", "issue_line_id": "холбогдсон падан",
     "billed_days_override": "гар хоног", "days_confirmed": "хоногийг баталсан",

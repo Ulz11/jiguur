@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { materialSections, lotOptions, lotDaysHint, lotDaysMax, overrideEffect,
-         daysVarianceText } from "./lots";
+         daysVarianceText, siteBreakdown, usedSites } from "./lots";
 
 /* Отгоо материалын мөр дээр дарахад доор нь ТЭР материалын түүх задарна:
    юу гарсан, юу буцсан, аль паданнаас, тэгээд ХЭД үлдсэн. Үлдэгдлийн багана
@@ -277,5 +277,83 @@ describe("daysVarianceText", () => {
   it("авто хоногт хаалт хэрэггүй", () => {
     expect(daysVarianceText({ days: 12, billed_days: 12, override: false } as any))
       .toBe("12 хоног");
+  });
+});
+
+/* ---------- ТАЛБАЙН ЗАДАРГАА (№88, 97) ----------
+   Блүүмийн НЭГ хуудас ГУРВАН талбайг барина: `БЛҮҮМ технологи` 2,044 ·
+   `БЛҮҮМ архангай` 326 · `Блүүм дарь эх` 1,924 = 4,294ш, гэвч АВЛАГА нь НЭГ.
+   Батцоожийн `F5='А Е блок үлдэгдэл'` багана нь дэд-объектынхоо үлдэгдлийг
+   өөрөө барьдаг. Задаргаа нь ЦЭВЭР ГАРГАЛТ — дэвтрийн мөрүүдээс. */
+describe("siteBreakdown", () => {
+  const at = (site: string, delta: number, extra: any = {}) => ({
+    id: 1, movement_id: 1, type: delta > 0 ? "ISSUE" : "RETURN", date: "2026-03-21",
+    status: "done", counted: true, qty: Math.abs(delta), delta, rate: null,
+    sources: null, site, ...extra,
+  });
+
+  it("Блүүм: 2,044 технологи + 326 архангай + 1,924 дарь эх = 4,294", () => {
+    const parts = siteBreakdown([
+      at("Технологи", 2044), at("Архангай", 326), at("Дарь эх", 1924),
+    ]);
+    expect(parts).toEqual([
+      { site: "Технологи", qty: 2044 },
+      { site: "Архангай", qty: 326 },
+      { site: "Дарь эх", qty: 1924 },
+    ]);
+    expect(parts.reduce((s, p) => s + p.qty, 0)).toBe(4294);
+  });
+
+  it("буцаалт нь ӨӨРИЙН талбайгаасаа хасагдана", () => {
+    expect(siteBreakdown([
+      at("Технологи", 2044), at("Дарь эх", 1924), at("Технологи", -300),
+    ])).toEqual([{ site: "Технологи", qty: 1744 }, { site: "Дарь эх", qty: 1924 }]);
+  });
+
+  it("ГАНЦ талбай бол задаргаа ХЭРЭГГҮЙ — толгойн тоо аль хэдийн хэлсэн", () => {
+    expect(siteBreakdown([at("Дарь эх", 100), at("Дарь эх", -40)])).toEqual([]);
+    expect(siteBreakdown([at("", 100)])).toEqual([]);
+    expect(siteBreakdown([])).toEqual([]);
+    expect(siteBreakdown(null)).toEqual([]);
+  });
+
+  it("талбай БИЧЭЭГҮЙ мөр өөрийн бүлэгтэй — чимээгүй нийлэхгүй", () => {
+    // Хуучин хөдөлгөөнүүд талбайгүй: тэднийг нэрлэсэн талбай руу нааж болохгүй
+    expect(siteBreakdown([at("Дарь эх", 100), at("", 40)]))
+      .toEqual([{ site: "Дарь эх", qty: 100 }, { site: "", qty: 40 }]);
+  });
+
+  it("ТООЛОГДООГҮЙ мөр (хүлээгдэж буй, ХҮЧИНГҮЙ) задаргаанд ОРОХГҮЙ", () => {
+    // Дүрэм нь үлдэгдлийнхтэй ЯГ ижил: `counted` мөрүүдийн `delta`-гийн нийлбэр
+    expect(siteBreakdown([
+      at("Технологи", 500),
+      at("Архангай", 300, { counted: false, status: "pending" }),
+      at("Архангай", 120),
+      at("Технологи", -80, { counted: false, voided: true }),
+    ])).toEqual([{ site: "Технологи", qty: 500 }, { site: "Архангай", qty: 120 }]);
+  });
+
+  it("бүх мөр нь тоологдоогүй бол задаргаа гарахгүй", () => {
+    expect(siteBreakdown([
+      at("Технологи", 500, { counted: false }),
+      at("Архангай", 300, { counted: false }),
+    ])).toEqual([]);
+  });
+});
+
+describe("usedSites — цонхны санал", () => {
+  it("давхардлыг хасч, цагаан толгойн дарааллаар", () => {
+    expect(usedSites([
+      { site: "Дарь эх" }, { site: "Архангай" }, { site: "Дарь эх" }, { site: "" },
+    ])).toEqual(["Архангай", "Дарь эх"]);
+  });
+
+  it("талбайгүй гэрээнд санал ГАРАХГҮЙ", () => {
+    expect(usedSites([{ site: "" }, {}])).toEqual([]);
+    expect(usedSites(null)).toEqual([]);
+  });
+
+  it("урд/хойд зайг тайрна — «Дарь эх » ба «Дарь эх» нь НЭГ талбай", () => {
+    expect(usedSites([{ site: " Дарь эх " }, { site: "Дарь эх" }])).toEqual(["Дарь эх"]);
   });
 });

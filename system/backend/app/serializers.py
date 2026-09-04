@@ -280,6 +280,8 @@ def movement(mv: models.Movement, gmap: dict, mmap: dict):
     """Хөдөлгөөний мөр. ХҮЧИНГҮЙ болсон нь ч ЭНД гарна — цуцлалт бол устгал БИШ:
     түүхэн дэх мөр нь тэмдэгтэйгээ үлдэж, зөвхөн тооцооноос гарна."""
     return {"id": mv.id, "type": mv.type, "date": str(mv.date), "note": mv.note,
+            # ТАЛБАЙ (№88, 97) — хоосон бол хоосон мөр, NULL БИШ
+            "site": mv.site or "",
             "status": mv.status,
             "voided": mv.voided_at is not None,
             "void_reason": mv.void_reason or "",
@@ -345,6 +347,9 @@ def material_lines(c: models.Contract, gmap: dict, mmap: dict, today: date):
             group(ln.material_id, ln.grade_id)["lines"].append({
                 "id": ln.id, "movement_id": mv.id, "type": mv.type,
                 "date": str(mv.date), "status": mv.status, "note": mv.note,
+                # Талбай нь МӨРӨӨРӨӨ явна: гэрээний доторх задаргаа
+                # (2,044 технологи · 326 архангай · 1,924 дарь эх) эндээс гарна
+                "site": mv.site or "",
                 "qty": ln.qty, "delta": sign * ln.qty,
                 # Цуцлагдсан мөр ХАРАГДАНА, гэхдээ `counted: False` — хүлээгдэж
                 # буй ачилттай яг ижил журам, тул тэнцэл хэвээр:

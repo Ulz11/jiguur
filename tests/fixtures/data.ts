@@ -124,7 +124,11 @@ export type DataFactory = {
   /** Шинэ хөдөлгөөн (ISSUE/RETURN/SALE) — түүхий эрх. */
   addMovement(contractId: number, body: {
     type: 'ISSUE' | 'RETURN' | 'SALE' | 'WRITEOFF';
-    date: string; note?: string; lines: MovementLineIn[];
+    date: string; note?: string;
+    /** ТАЛБАЙ (№88, 97) — «хаанаас гарсан / хаана буцсан». Блүүмийн 4,294ш нь
+     *  технологи 2,044 + архангай 326 + дарь эх 1,924. */
+    site?: string;
+    lines: MovementLineIn[];
   }): Promise<{ id: number; status: string }>;
   confirmMovement(movementId: number): Promise<void>;
   /** Хоёр дахь ПАДАН — өөр тарифаар, баталгаажсан. Мөрийн id-г буцаана. */

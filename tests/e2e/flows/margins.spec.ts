@@ -156,3 +156,45 @@ test('гурван гарын үсэгтэн ХАРИЛЦАГЧИЙН хуудс
       .toHaveAttribute('href', `tel:${people[1][2]}`);
     await expect(row.getByRole('link', { name: `☎ ${people[2][2]}` })).toHaveCount(0);
   });
+
+// ---------- 3. Талбай: нэг гэрээ, гурван талбай ----------
+
+test('буцаалт ТАЛБАЙГААРАА тоологдож, материалын мөрөнд задаргаа гарна',
+  async ({ managerPage, data }) => {
+    /* Блүүмийн загвар: НЭГ гэрээ, олон талбай. Эхний ачилт талбайгүй
+       (хуучин мөр), хоёр дахь нь «Дарь эх» — задаргаа тэр хоёрыг ЯЛГАНА. */
+    const { contract, material } = await data.rentSetup({ startDaysAgo: 40, qty: 60 });
+    const mv = await data.addMovement(contract.id, {
+      type: 'ISSUE', date: data.isoDaysAgo(20), site: 'Дарь эх',
+      lines: [{ material_id: contract.materialId, grade_id: contract.gradeId, qty: 40 }],
+    });
+    await data.confirmMovement(mv.id);
+
+    const page = new ContractDetailPage(managerPage);
+    await page.goto(contract.id);
+    const name = material?.name ?? '';
+    const row = managerPage.getByRole('row').filter({ hasText: name }).first();
+    await expect(row, 'материалын мөр олдсонгүй').toBeVisible();
+    /* Задаргааны нийлбэр нь толгойн тоотой ТААРНА: 60 + 40 = 100 */
+    await expect(row).toContainText('Талбайгүй 60');
+    await expect(row).toContainText('Дарь эх 40');
+
+    /* БУЦААЛТ талбайгаа нэрлэнэ — цонхны талбар нь тэр гэрээн дээр аль
+       хэдийн хэрэглэгдсэн талбайг санал болгоно (`usedSites`). */
+    const modal = await clickToOpen(page.returnButton,
+      page.dialog('Буцаалт бүртгэх'), 'Буцаалт бүртгэх цонх');
+    await modal.getByLabel('Талбай').fill('Дарь эх');
+    await modal.getByRole('spinbutton').first().fill('15');
+    await modal.getByRole('button', { name: /Буцаалт бүртгэх/ }).click();
+    await expect(modal, 'буцаалтын цонх хаагдсангүй').toBeHidden();
+
+    /* 40 − 15 = 25 — буцаалт нь ӨӨРИЙН талбайгаасаа хасагдана. */
+    const after = managerPage.getByRole('row').filter({ hasText: name }).first();
+    await expect(after).toContainText('Дарь эх 25');
+    await expect(after).toContainText('Талбайгүй 60');
+
+    /* Хөдөлгөөний түүхэнд ч талбай нь бүдэг дагавраар зогсоно. */
+    await clickToExpand(managerPage.getByRole('button', { name: /^Хөдөлгөөний түүх/ }),
+      'Хөдөлгөөний түүх');
+    await expect(managerPage.getByText('Буцаалт — 15ш · Дарь эх')).toBeVisible();
+  });
