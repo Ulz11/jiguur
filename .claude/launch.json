@@ -8,6 +8,12 @@
       "port": 8000
     },
     {
+      "name": "jiguur-top10",
+      "runtimeExecutable": "system/backend/.venv/bin/python",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000", "--app-dir", "system/backend", "--env-file", "system/backend/.env.top10", "--reload", "--reload-dir", "system/backend/app"],
+      "port": 8000
+    },
+    {
       "name": "jiguur-web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "system/frontend", "run", "dev"],
