@@ -51,3 +51,6 @@ node_modules/
 
 # Vitest/Playwright түр гаралт
 system/frontend/test-results/
+
+# Бодит харилцагчийн нэр, үлдэгдэл агуулсан аудитын тайлан — түгээхгүй
+docs/Топ10 өгөгдлийн зураглал.md
