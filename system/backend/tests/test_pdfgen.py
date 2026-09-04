@@ -47,6 +47,33 @@ def test_invoice_detail_handles_empty_and_none():
     assert pdfgen._invoice_detail("[]") == ([], [])
 
 
+# ---------- Мөргүй нэхэмжлэлийн ГАНЦ өгүүлбэр (H11) ----------
+
+def test_an_entry_invoice_names_its_kind_label_and_source():
+    """`A-` нэхэмжлэл цаасан дээр «юуны төлөө» гэдгээ ӨӨРӨӨ хэлнэ.
+
+    Урьд нь мөргүй нэхэмжлэл нь дүнтэй, тайлбаргүй хоосон хүснэгт болж
+    хэвлэгддэг байв — Бутангуудын 164,492,000₮ гэрээний дансанд шалтгаангүй
+    зогсоно гэсэн үг.
+    """
+    raw = ('{"note": "2025 онд бэлэн мөнгө зээлсэн", "kind": "advance", '
+           '"kind_mn": "Олгосон зээл", "label": "2025 онд бэлэн мөнгө зээлсэн", '
+           '"ref": "Бутан-Өнөорд!G23"}')
+    assert pdfgen._detail_note(raw) == \
+        "Олгосон зээл · 2025 онд бэлэн мөнгө зээлсэн · Бутан-Өнөорд!G23"
+
+
+def test_the_opening_balance_note_still_reads_as_a_sentence():
+    """Шилжилтийн OB- нэхэмжлэл ч мөрөө авна — `{"note": …}` ганцаараа."""
+    assert pdfgen._detail_note('{"note": "Хуучин системийн үлдэгдэл"}') == \
+        "Хуучин системийн үлдэгдэл"
+
+
+def test_a_broken_detail_never_breaks_the_document():
+    for raw in (None, "", "[]", "{", '["мөр"]'):
+        assert pdfgen._detail_note(raw) == ""
+
+
 # ---------- Task 4: гэрээний нэр томьёо (түрээс vs худалдаа) ----------
 
 from types import SimpleNamespace

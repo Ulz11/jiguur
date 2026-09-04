@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from .. import models, schemas, serializers, auth
 from ..services import billing
+from ..services import entries as entries_svc
 from .barter import ser as barter_ser
 
 router = APIRouter(prefix="/api")
@@ -58,6 +59,7 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
     # ТӨСӨӨЛӨЛ. Дашбоардын самбартай ЯГ нэг эх сурвалжаас (serializers.upcoming_row).
     upcoming = sorted((u for u in (serializers.upcoming_row(ct, today) for ct in c.contracts) if u),
                       key=lambda u: u["expected_date"])
+    # ХҮЧИНГҮЙ болсон нэхэмжлэл ч ЭНД гарна — цуцлалт бол устгал БИШ (H1).
     invoices = [serializers.invoice(i, today)
                 for ct in c.contracts for i in ct.invoices]
     invoices.sort(key=lambda i: i["due_date"], reverse=True)
@@ -96,7 +98,8 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
                              "title": f"{kind} — {qty:g}ш · №{ct.no}", "sub": sub,
                              "voided": mv.voided_at is not None})
     for p in payments:
-        m = {"CASH": "Бэлэн", "BANK": "Данс", "BARTER": "Бартер"}[p["method"]]
+        m = {"CASH": "Бэлэн", "BANK": "Данс", "BARTER": "Бартер",
+             "CREDIT": "Бичилтийн кредит"}.get(p["method"], p["method"])
         sub = m + (f" · {p['barter_desc']}" if p["barter_desc"] else "")
         # Цуцлагдсан төлбөр он цагийн хэлхээнээс АЛГА БОЛОХГҮЙ — тэр өдөр
         # бичилт хийгдсэн нь үнэн. Гэхдээ хэлхээ дээр л ХҮЧИНГҮЙ гэдгээ хэлнэ,
@@ -124,4 +127,8 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
     return {**row, "since": str(c.created_at)[:10],
             "contracts": contracts, "invoices": invoices, "upcoming": upcoming,
             "payments": payments, "files": files, "barter": barter, "notes": notes,
+            # ТҮРЭЭС БИШ бичилтүүд (H11 / P1-16) — олгосон зээл, ажилчдын
+            # цалин, кран, харилцагч хоорондын тооцоо. Хүчингүй болсон нь ч
+            # ХАРАГДАНА (H1).
+            "entries": entries_svc.entries_of(db, cid),
             "timeline": timeline[:50]}

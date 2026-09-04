@@ -117,7 +117,7 @@ def cash_forecast(db: Session, today: date | None = None):
     legacy_inflow = 0.0
     for c in db.query(models.Contract).all():
         billing.ensure_invoices(db, c, today)
-    for inv in db.query(models.Invoice).all():
+    for inv in db.query(models.Invoice).filter(billing.LIVE_INVOICE).all():
         out = billing.invoice_outstanding(inv)
         if out <= 0:
             continue
@@ -247,7 +247,7 @@ def collections(db: Session, today: date | None = None):
         overdue = 0.0
         oldest_days = 0
         for ct in cl.contracts:
-            for inv in ct.invoices:
+            for inv in billing.live_invoices(ct):
                 out = billing.invoice_outstanding(inv)
                 if out <= 0 or inv.due_date >= today:
                     continue

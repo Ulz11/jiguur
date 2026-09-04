@@ -1191,6 +1191,50 @@ def upcoming_payment(contract: models.Contract, today: date | None = None):
 
 # ---------- алданги ба үлдэгдэл ----------
 
+# ---------- ХҮЧИНГҮЙ НЭХЭМЖЛЭЛ (H1-ийн тэгш хэм) ----------
+#
+# Нэхэмжлэл нь ерөнхийдөө ДЕРИВАЦЛАГДДАГ (`R-`/`S-`) тул засвар нь дахин
+# бодолтоор явна — цуцлах гэсэн ойлголт тэдэнд хэрэггүй. Гэвч ГАРААР
+# үүсгэсэн нэхэмжлэл бий: харилцагчийн дансан дээрх түрээс биш бичилт
+# (`A-`, H11). Түүнийг УСТГАВАЛ Отгоогийн хуудасны мөр алга болно; тиймээс
+# төлбөртэй ЯГ ижил журам — мөр нь ХҮЧИНГҮЙ тэмдэгтэй үлдэж, зөвхөн
+# тооцооноос гарна. Хаана авлага НИЙЛҮҮЛЖ байна, тэнд энэ шүүлтүүр заавал.
+LIVE_INVOICE = models.Invoice.voided_at.is_(None)
+
+
+def invoice_active(inv: models.Invoice) -> bool:
+    """ORM объект дээрх ижил шалгуур (query биш, ачаалагдсан цуглуулгад)."""
+    return getattr(inv, "voided_at", None) is None
+
+
+def live_invoices(contract: models.Contract) -> list[models.Invoice]:
+    return [i for i in contract.invoices if invoice_active(i)]
+
+
+def void_invoice(db: Session, inv: models.Invoice, reason: str,
+                 user_name: str = "") -> list[dict]:
+    """Нэхэмжлэлийг ХҮЧИНГҮЙ болгоно — мөрийг нь УСТГАХГҮЙ.
+
+    Түүн дээр суусан хуваарилалт бүр СУЛАРНА (төлбөр нь хэвээр үлдэж,
+    хуваарилагдаагүй кредит болно), дараа нь харилцагчийн кредит дахин
+    хуваарилагдана — `void_payment`-ийн толин тусгал.
+    """
+    rows = db.query(models.PaymentAllocation).filter_by(invoice_id=inv.id).all()
+    released = [{"payment_id": a.payment_id, "part": a.part, "amount": a.amount} for a in rows]
+    for a in rows:
+        db.delete(a)
+    inv.paid = 0.0
+    inv.penalty_paid = 0.0
+    inv.voided_at = datetime.utcnow()
+    inv.void_reason = reason
+    inv.voided_by = user_name or ""
+    inv.status = _stored_status(inv)
+    db.commit()
+    db.expire_all()
+    apply_client_credit(db, inv.contract.client_id)
+    return released
+
+
 def invoice_outstanding(inv: models.Invoice) -> float:
     return max(inv.total - inv.paid, 0.0)
 
@@ -1303,7 +1347,7 @@ def book_penalties(db: Session, client_id: int, as_of: date,
     Буцна: нийт нэхэгдсэн алданги.
     """
     q = (db.query(models.Invoice).join(models.Contract)
-         .filter(models.Contract.client_id == client_id))
+         .filter(models.Contract.client_id == client_id).filter(LIVE_INVOICE))
     if contract_id is not None:
         q = q.filter(models.Invoice.contract_id == contract_id)
     invoices = q.all()
@@ -1341,7 +1385,7 @@ def charge_contract_penalty(db: Session, contract: models.Contract, as_of: date,
 
     Буцна: {as_of, total, rows} — мөр бүр нь баримтын «№R-… : X₮ (Y хоног)».
     """
-    rows = _book_invoices(list(contract.invoices), as_of)
+    rows = _book_invoices(live_invoices(contract), as_of)
     db.add(models.PenaltyCharge(contract_id=contract.id, client_id=contract.client_id,
                                 as_of=as_of, amount=round(sum(r["amount"] for r in rows), 2),
                                 user_name=user_name))
@@ -1379,11 +1423,12 @@ def contract_penalty_charges(db: Session, contract_id: int,
 
 def contract_balance(contract: models.Contract, today: date | None = None):
     today = today or date.today()
-    outstanding = sum(invoice_outstanding(i) for i in contract.invoices)
-    penalty = sum(invoice_penalty(i, today) for i in contract.invoices)
+    live = live_invoices(contract)
+    outstanding = sum(invoice_outstanding(i) for i in live)
+    penalty = sum(invoice_penalty(i, today) for i in live)
     # Хоёр нүүрийг ТУСАД нь: нэхэгдсэн нь МӨНГӨ (төлөгдөнө), нэхэгдээгүй нь
     # зөвхөн ХӨШҮҮРЭГ. Нийлүүлж харуулсан тоо нь «машин өр зохиов» гэж уншигдана.
-    booked = sum(invoice_penalty_due(i) for i in contract.invoices)
+    booked = sum(invoice_penalty_due(i) for i in live)
     cur = current_cycle_accrual(contract, today)
     return {"outstanding": outstanding, "penalty": penalty,
             "penalty_booked": booked, "penalty_unbooked": max(penalty - booked, 0.0),
@@ -1441,7 +1486,7 @@ def client_receivable(client: models.Client, today: date | None = None) -> dict:
             "penalty_unbooked": max(penalty - booked, 0.0),
             "deposit": deposit, "active_contracts": active,
             "overdue": any(invoice_status(i, today) == "overdue"
-                           for ct in client.contracts for i in ct.invoices)}
+                           for ct in client.contracts for i in live_invoices(ct))}
 
 
 def receivable_display(total: float, invoiced: float) -> dict:
@@ -1538,8 +1583,9 @@ def _fill_invoices(db: Session, payment: models.Payment, remain: float,
     дараа нь дараагийнх руу. Хаана ч алданги бүртгэгдээгүй үед энэ нь
     хуучин зан төлөвтэй яг ижил.
     """
-    q = db.query(models.Invoice).join(models.Contract).filter(
-        models.Contract.client_id == payment.client_id)
+    q = (db.query(models.Invoice).join(models.Contract)
+         .filter(models.Contract.client_id == payment.client_id)
+         .filter(LIVE_INVOICE))
     if payment.contract_id:
         q = q.filter(models.Invoice.contract_id == payment.contract_id)
     filled = 0.0
@@ -1851,7 +1897,7 @@ def build_notifications(db: Session, today: date | None = None, scope: str = "al
                               "title": f"{c.client.name} — гэрээ №{c.no}-ийн хугацаа хэтэрсэн",
                               "sub": f"{-left} хоногийн өмнө дуусах ёстой байсан. Сунгах эсвэл хаана уу.",
                               "contract_id": c.id})
-        for inv in c.invoices:
+        for inv in live_invoices(c):
             st = invoice_status(inv, today)
             if st == "overdue":
                 # Мэдэгдэл дээр «алданги X₮» гэж бичих нь НЭХСЭН мэт уншигдана.

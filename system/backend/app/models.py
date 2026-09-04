@@ -86,6 +86,52 @@ class Client(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     contracts: Mapped[list["Contract"]] = relationship(back_populates="client")
+    # Түрээсийн мөчлөгт хамаарахгүй бичилтүүд (H11 / P1-16)
+    entries: Mapped[list["ClientEntry"]] = relationship(back_populates="client")
+
+
+class ClientEntry(Base):
+    """ХАРИЛЦАГЧИЙН ДАНСАН ДЭЭРХ, ТҮРЭЭС БИШ БИЧИЛТ (H11 / P1-16).
+
+    Отгоо эгчийн хуудсууд дээр харилцагчийн данс нь зөвхөн түрээсийнх БИШ:
+
+      · `Бутан-Өнөорд!C23` «2025 онд Бутангууд ХХК-д бэлэн мөнгө зээлсэн
+        нийт дүн» G23 = 164,492,000₮ — ОЛГОСОН зээл (`Loan` нь ӨГЛӨГ);
+      · `C28` «Бутангууд констракшн ххк-ын ажилчдын цалинд» = 2,800,000₮;
+      · `АшидДонж-11!L30` «Авто кран түрээс» 10,000,000₮/сар — самбарын
+        сарын нүд нь «=65472000+10000000» (түрээс + кран);
+      · WB3!R24 = 139,648,000₮ — Бутангууд ↔ Өнө Ордын хоорондын тооцоо.
+
+    ДҮРЭМ (H9 «нэг факт, нэг тоо»): бичилт нь ӨӨРИЙН гэсэн үлдэгдэл
+    ҮҮСГЭХГҮЙ — авлагын ХУУЧИН зам дээр материалчлагдана:
+      · `amount > 0` → харилцагчийн ДАНСНЫ гэрээн (`OB-{id}`) дээр
+        `A-{client_id}-{n}` нэхэмжлэл;
+      · `amount < 0` → `CREDIT` төлбөр, хамгийн хуучин нэхэмжлэлээс эхэлж
+        жирийн журмаараа хуваарилагдана.
+    Цуцлалт нь тэгш хэмтэй: төрсөн нэхэмжлэл/төлбөр нь хамт хүчингүй болно.
+
+    `amount` нь ТЭМДЭГТЭЙ: + бол харилцагч ИЛҮҮ өртэй, − бол түүнд кредит.
+    Дэлгэц дээр тэр хасах тэмдэг БИЧДЭГГҮЙ — «Дебит/Кредит» сонголт зөөнө.
+    """
+    __tablename__ = "client_entries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
+    date: Mapped[date] = mapped_column(Date)
+    amount: Mapped[float] = mapped_column(Float)          # ТЭМДЭГТЭЙ
+    kind: Mapped[str] = mapped_column(String(12))         # advance|service|transfer|adjustment
+    # «164,492,000₮» гэсэн тоо дангаараа ямар ч асуултад хариулдаггүй —
+    # шошго нь ЗААВАЛ (Отгоогийн хуудсан дээр мөр бүр өөрийн өгүүлбэртэй).
+    label: Mapped[str] = mapped_column(String(200))
+    note: Mapped[str] = mapped_column(Text, default="")
+    # Эх сурвалж: хуудас/нүд эсвэл актын № — «энэ тоо ХААНААС гарав».
+    ref: Mapped[str] = mapped_column(String(100), default="")
+    user_name: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_by: Mapped[str] = mapped_column(String(100), default="")
+
+    client: Mapped["Client"] = relationship(back_populates="entries")
 
 
 # ---------- Гэрээ ----------
@@ -291,6 +337,19 @@ class Invoice(Base):
     status: Mapped[str] = mapped_column(String(12), default="open")  # open|partial|paid|penalty
     detail_json: Mapped[str] = mapped_column(Text, default="[]")     # мөрүүдийн задаргаа
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Түрээс БИШ бичилтээс төрсөн нэхэмжлэл (H11) — цуцлалт нь тэгш хэмтэй
+    client_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_entries.id"), nullable=True)
+    # ---- ХҮЧИНГҮЙ (void) — устгалын ОРОНД (H1) ----
+    # ЗӨВХӨН гараар үүсгэсэн (`A-`) нэхэмжлэлд хэрэглэгдэнэ: деривацлагдсан
+    # (`R-`/`S-`) нэхэмжлэл нь дахин бодолтоор л засагддаг. Тоологдох газар
+    # бүрд `billing.LIVE_INVOICE` / `invoice_active` шүүлтүүр зогсоно.
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_by: Mapped[str] = mapped_column(String(100), default="")
+    # ХАМТАРСАН ГАРЫН ҮСГИЙН ТӨЛӨВ (№69 / P1-5) — «Тооцоо нийлсэн: …»
+    agreed_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    agreed_by: Mapped[str] = mapped_column(String(100), default="")
 
     contract: Mapped["Contract"] = relationship(back_populates="invoices")
 
@@ -302,10 +361,14 @@ class Payment(Base):
     contract_id: Mapped[int | None] = mapped_column(ForeignKey("contracts.id"), nullable=True)
     date: Mapped[date] = mapped_column(Date)
     amount: Mapped[float] = mapped_column(Float)
-    method: Mapped[str] = mapped_column(String(10))  # CASH | BANK | BARTER
+    # CASH | BANK | BARTER | CREDIT (түрээс биш бичилтээс төрсөн кредит, H11)
+    method: Mapped[str] = mapped_column(String(10))
     barter_desc: Mapped[str] = mapped_column(String(200), default="")  # ж: Автомашин 9957УКК
     note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Түрээс БИШ бичилтээс төрсөн төлбөр (H11) — цуцлалт нь тэгш хэмтэй
+    client_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_entries.id"), nullable=True)
     # ---- ХҮЧИНГҮЙ (void) — устгалын ОРОНД ----
     # Буруу бичсэн төлбөр мөнхөд үлдэх нь Отгоог Excel рүү буцаадаг №1 шалтгаан
     # (Чадварын харьцуулалт H1). Мөр нь УСТАХГҮЙ: хуваарилалт нь суларч,

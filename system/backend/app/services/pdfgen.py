@@ -54,6 +54,24 @@ def _invoice_detail(detail_json: str | None) -> tuple[list, list]:
     return [], []
 
 
+def _detail_note(detail_json: str | None) -> str:
+    """Мөргүй нэхэмжлэлийн ГАНЦ өгүүлбэр — «энэ дүн ЮУНЫ төлөө вэ».
+
+    Хоёр төрөл: шилжилтийн `OB-` («Хуучин системийн үлдэгдэл») ба харилцагчийн
+    түрээс биш бичилтийн `A-` (H11: «Олгосон зээл · 2025 онд бэлэн мөнгө
+    зээлсэн · Бутан-Өнөорд!G23»). Урьд нь энэ мөр цаасан дээр ОГТ гардаггүй
+    байсан тул нэхэмжлэл нь дүнтэй, тайлбаргүй хоосон хүснэгт болдог байв.
+    """
+    try:
+        d = json.loads(detail_json or "{}")
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(d, dict):
+        return ""
+    parts = [d.get("kind_mn"), d.get("label") or d.get("note"), d.get("ref")]
+    return " · ".join(str(x) for x in parts if x)
+
+
 def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> bytes:
     c = inv.contract
     p = _pdf()
@@ -98,6 +116,14 @@ def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> byt
         p.cell(w[0] + w[1] + w[2], 7, f"{ch.get('desc', '')} ({ch.get('date', '')})", border=1)
         p.cell(w[3], 7, "", border=1)
         p.cell(w[4], 7, _money(ch.get("amount", 0)), border=1, align="R")
+        p.ln()
+    # Мөргүй нэхэмжлэл (OB- шилжилт, A- харилцагчийн бичилт) — тайлбар нь ЭНД
+    # зогсоно, эс бөгөөс цаасан дээр дүн нь ганцаараа үлдэж «юуны төлөө вэ»
+    # гэдэг асуулт хариулагдахгүй (H11).
+    note = _detail_note(inv.detail_json) if not lines and not charges else ""
+    if note:
+        p.cell(w[0] + w[1] + w[2] + w[3], 7, note, border=1)
+        p.cell(w[4], 7, _money(inv.rent_amount + inv.charge_amount), border=1, align="R")
         p.ln()
     p.ln(4)
     # ---- Нийт дүнгийн блок — Excel маягийн БҮРЭН хүрээтэй мини-хүснэгт ----
@@ -426,7 +452,7 @@ def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
     p.ln()
     p.set_font("dejavu", "", 9)
     tot = paid = out = pen_t = 0.0
-    for inv in sorted(c.invoices, key=lambda i: i.due_date):
+    for inv in sorted(billing.live_invoices(c), key=lambda i: i.due_date):
         o = billing.invoice_outstanding(inv)
         pen = billing.invoice_penalty_due(inv)
         label = (billing.cycle_label(inv.cycle_start, inv.cycle_end)

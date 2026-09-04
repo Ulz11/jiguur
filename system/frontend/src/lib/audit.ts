@@ -50,6 +50,8 @@ export const ENTITIES: Record<string, string> = {
   machine_invoice: "Механизмын нэхэмжлэл",
   /* Барьцааны ГҮЙДЭГ ДЭВТЭР (H8) — байршуулав / нэмэв / суутгав / буцаав. */
   deposit_event: "Барьцааны бичилт",
+  /* Түрээс БИШ бичилт (H11) — олгосон зээл, цалин, кран, хоорондын тооцоо. */
+  client_entry: "Харилцагчийн бичилт",
 };
 
 /** Backend-ийн `audit.log(db, user, ACTION, …)` дуудлагад БОДИТООР гардаг үйлдлүүд. */
@@ -62,7 +64,7 @@ export const BACKEND_ACTIONS = [
 export const BACKEND_ENTITIES = [
   "contract", "contract_item", "payment", "stock", "collection_note",
   "movement", "invoice", "akt", "rate_change", "penalty_charge",
-  "machine", "machine_log", "machine_invoice", "deposit_event",
+  "machine", "machine_log", "machine_invoice", "deposit_event", "client_entry",
 ] as const;
 
 /** Үйлдлийн нэр + пилийн анги. Танихгүй түлхүүр ирвэл ядаж СААРАЛ болж,

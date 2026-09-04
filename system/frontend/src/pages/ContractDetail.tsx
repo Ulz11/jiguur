@@ -893,8 +893,10 @@ export default function ContractDetail() {
                   <span className="block text-[12px] text-t3">{p.date}</span>
                 </div>
                 {isVoided(p) && <span className="pill-red" title={voidTitle(p)}>ХҮЧИНГҮЙ</span>}
-                <span className={`ml-auto ${voidRowClass(p)} ${p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green" : "pill-blue"}`}>
-                  {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн" : "Данс"}
+                <span className={`ml-auto ${voidRowClass(p)} ${p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green"
+                        : p.method === "CREDIT" ? "pill-grey" : "pill-blue"}`}>
+                  {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн"
+                         : p.method === "CREDIT" ? "Бичилтийн кредит" : "Данс"}
                 </span>
                 {canVoid && !isVoided(p) && (
                   <VoidButton label={`${money(p.amount)} · ${p.date}`}
@@ -1130,8 +1132,10 @@ function ContractFinance({ d, cyc, pen, aktSum }: {
             </div>
             {isVoided(p) && <span className="pill-red">ХҮЧИНГҮЙ</span>}
             <span className={`ml-auto ${voidRowClass(p)} ${
-              p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green" : "pill-blue"}`}>
-              {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн" : "Данс"}
+              p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green"
+                        : p.method === "CREDIT" ? "pill-grey" : "pill-blue"}`}>
+              {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн"
+                         : p.method === "CREDIT" ? "Бичилтийн кредит" : "Данс"}
             </span>
           </div>
         ))}

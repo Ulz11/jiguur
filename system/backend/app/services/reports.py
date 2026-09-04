@@ -72,7 +72,8 @@ def pnl(db: Session, d_from: date, d_to: date):
     # бодогдоно. Худалдаа тусдаа хураагдаж, тусдаа задарна.
     sale_charge = 0.0
     sale_charge_rows: list[dict] = []
-    for inv in db.query(models.Invoice).join(models.Contract).all():
+    for inv in (db.query(models.Invoice).join(models.Contract)
+                .filter(billing.LIVE_INVOICE).all()):
         if is_opening(inv):
             continue
         base = inv.rent_amount + inv.charge_amount

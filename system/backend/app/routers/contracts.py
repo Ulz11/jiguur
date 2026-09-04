@@ -311,7 +311,8 @@ def _touches_invoiced(c: models.Contract, days: list[date]) -> bool:
     өөрчилдөг тул `cycle_end > огноо` бүхэн нөлөөлнө. Худалдааны нэхэмжлэл
     (цикл нь нэг өдөр) тухайн өдрөөрөө таарна.
     """
-    wins = [(i.cycle_start, i.cycle_end) for i in c.invoices if not i.no.startswith("OB-")]
+    wins = [(i.cycle_start, i.cycle_end) for i in billing.live_invoices(c)
+            if not i.no.startswith("OB-")]
     for d in days:
         for cs, ce in wins:
             if ce > d or (cs == ce and cs == d):
@@ -1451,7 +1452,8 @@ def _close_preview_payload(db: Session, c: models.Contract, close_date: _date_t 
                  if r["line_id"] not in picks]
     days = _close_days(c, cd, today, picks) if err is None else {}
 
-    have = {billing.spec_key(c, i.cycle_start, i.cycle_end, i.no) for i in c.invoices}
+    have = {billing.spec_key(c, i.cycle_start, i.cycle_end, i.no)
+            for i in billing.live_invoices(c)}
     finals = []
     if c.type == "rent" and err is None:
         for sp in billing.derivable_invoice_specs(c, today, close_date=cd,

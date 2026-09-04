@@ -61,7 +61,7 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
             active_cnt += 1
             if c.end_date and 0 <= (c.end_date - today).days <= 7:
                 ending_cnt += 1
-        for inv in c.invoices:
+        for inv in billing.live_invoices(c):
             if billing.invoice_status(inv, today) == "overdue":
                 # KPI-ийн мөнгө ЯГ энэ тоонуудаас нийлнэ — самбар дээрх нийлбэр
                 # задаргаатайгаа зөрвөл аль нь ч итгэл хүлээхээ болино.
@@ -135,7 +135,7 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
     for c in contracts:
         if not in_scope(c):
             continue
-        for inv in c.invoices:
+        for inv in billing.live_invoices(c):
             out = billing.invoice_outstanding(inv)
             if out <= 0:
                 continue
@@ -198,7 +198,7 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
     for c in contracts:
         if c.type != "sale":
             continue
-        for inv in c.invoices:
+        for inv in billing.live_invoices(c):
             if (inv.cycle_start.year, inv.cycle_start.month) == (today.year, today.month):
                 month_sale += inv.total
 

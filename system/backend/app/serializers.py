@@ -223,7 +223,8 @@ def client_row(c: models.Client, today: date):
 def contract_row(c: models.Contract, today: date):
     b = billing.contract_balance(c, today)
     cur = billing.current_cycle_accrual(c, today)
-    overdue = any(billing.invoice_status(i, today) == "overdue" for i in c.invoices)
+    overdue = any(billing.invoice_status(i, today) == "overdue"
+                  for i in billing.live_invoices(c))
     ending = (c.end_date is not None and c.status == "active"
               and 0 <= (c.end_date - today).days <= 7)
     state = ("closed" if c.status == "closed"
@@ -413,6 +414,15 @@ def invoice(inv: models.Invoice, today: date):
             # дахин бодогдоно — тэр бодолтын эхлэл цэг нь энэ огноо.
             "penalty_since": str(billing._penalty_since(inv)),
             "status": billing.invoice_status(inv, today),
+            # ХҮЧИНГҮЙ — гараар үүсгэсэн (`A-`) нэхэмжлэл дээр л утгатай (H1):
+            # мөр нь ХАРАГДСААР үлдэж, тооцооноос л гарна.
+            "voided": inv.voided_at is not None,
+            "void_reason": inv.void_reason or "",
+            "voided_by": inv.voided_by or "",
+            "voided_at": str(inv.voided_at)[:19] if inv.voided_at else None,
+            # ХАМТАРСАН ГАРЫН ҮСГИЙН ТӨЛӨВ (№69) — «энэ тоог хоёр тал баталсан»
+            "agreed_at": str(inv.agreed_at) if inv.agreed_at else None,
+            "agreed_by": inv.agreed_by or "",
             "detail": json.loads(inv.detail_json or "[]")}
 
 

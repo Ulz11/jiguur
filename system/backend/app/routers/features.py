@@ -8,6 +8,7 @@ from .. import models, auth, serializers
 from ..services import billing, analytics, cron
 from ..services import audit as audit_svc
 from ..services import deposit as deposit_svc
+from ..services import entries as entries_svc
 
 router = APIRouter(prefix="/api")
 fin = auth.require_roles("manager", "finance")
@@ -126,6 +127,71 @@ def settle_deposit(cid: int, body: DepositSettleIn, db: Session = Depends(get_db
                   f"барьцаа {held:,.0f}₮ — суутгасан {body.apply_amount:,.0f}₮, "
                   f"буцаасан {body.return_amount:,.0f}₮")
     return {"ok": True, "applied": body.apply_amount, "returned": body.return_amount}
+
+
+# ---------------- Харилцагчийн ТҮРЭЭС БИШ бичилт (H11 / P1-16) ----------------
+#
+# Бутангуудын дансанд 164,492,000₮ олгосон зээл, 2,800,000₮ ажилчдын цалин;
+# Ашид Донжийн сарын нүдэнд 10,000,000₮ кран; самбарын мөр 24-д Өнө Ордтой
+# хийсэн 139,648,000₮-ийн тооцоо сууна. Эдгээр нь ШИНЭ үлдэгдлийн эх сурвалж
+# БИШ — авлагын хуучин зам дээр (нэхэмжлэл / төлбөр) материалчлагдана.
+
+class ClientEntryIn(BaseModel):
+    date: date
+    amount: float                # ТЭМДЭГТЭЙ: + өр нэмнэ, − кредит
+    kind: str                    # advance | service | transfer | adjustment
+    label: str
+    note: str = ""
+    ref: str = ""
+
+
+@router.get("/clients/{cid}/entries")
+def client_entries(cid: int, db: Session = Depends(get_db), user=Depends(fin)):
+    if not db.get(models.Client, cid):
+        raise HTTPException(404, "Харилцагч олдсонгүй")
+    return entries_svc.entries_of(db, cid)
+
+
+@router.post("/clients/{cid}/entries")
+def add_client_entry(cid: int, body: ClientEntryIn, db: Session = Depends(get_db),
+                     user=Depends(fin)):
+    cl = db.get(models.Client, cid)
+    if not cl:
+        raise HTTPException(404, "Харилцагч олдсонгүй")
+    try:
+        e = entries_svc.create_entry(db, cl, body.date, body.amount, body.kind,
+                                     body.label, body.note, body.ref,
+                                     getattr(user, "name", "") or "")
+    except ValueError as ex:
+        raise HTTPException(400, str(ex)) from ex
+    row = entries_svc.serialize(db, e)
+    audit_svc.log(db, user, "create", "client_entry", e.id,
+                  f"{cl.name} · {entries_svc.KIND_MN[e.kind]} · "
+                  f"{'авлага нэмэв' if e.amount > 0 else 'кредит бичив'} "
+                  f"{abs(e.amount):,.0f}₮ · {e.label}"
+                  + (f" · эх сурвалж: {e.ref}" if e.ref else ""))
+    return {"entry": row, "receivable": round(billing.client_receivable(cl)["total"])}
+
+
+@router.post("/client-entries/{eid}/void")
+def void_client_entry(eid: int, body: VoidIn, db: Session = Depends(get_db),
+                      user=Depends(fin)):
+    e = db.get(models.ClientEntry, eid)
+    if not e:
+        raise HTTPException(404, "Бичилт олдсонгүй")
+    if e.voided_at is not None:
+        raise HTTPException(409, "Энэ бичилт аль хэдийн хүчингүй болсон байна")
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "Цуцлах шалтгаан заавал бичигдэнэ")
+    cl = e.client
+    entries_svc.void_entry(db, e, reason, getattr(user, "name", "") or "")
+    audit_svc.log(db, user, "void", "client_entry", e.id,
+                  f"{cl.name} · {entries_svc.KIND_MN.get(e.kind, e.kind)} "
+                  f"{abs(e.amount):,.0f}₮ · {e.label} — ХҮЧИНГҮЙ: {reason}")
+    db.refresh(cl)
+    return {"ok": True, "entry": entries_svc.serialize(db, e),
+            "receivable": round(billing.client_receivable(cl)["total"])}
 
 
 # ---------------- Алданги НЭХЭХ (ил үйлдэл) ----------------

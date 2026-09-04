@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, fmt, money, sayaFmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit,
+         FormModal, ConfirmModal, Receipt, SubmitButton,
          FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
 import { PayModal } from "./ContractDetail";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 import { isVoided, voidRowClass, voidTitle } from "../lib/void";
+import { ClientEntry, ENTRY_KINDS, EntryKind, EntryMode, entryAmountText,
+         entryError, entryKindLabel, entryKindPill, entryModeLabel,
+         entrySubText, receivableAfter, signedAmount } from "../lib/entry";
 import { invoiceLabel } from "../lib/invoice";
 import { useDownload } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
@@ -25,6 +29,9 @@ export default function ClientProfile() {
   const [tab, setTab] = useState("overview");
   const [pay, setPay] = useState(false);
   const [voidPay, setVoidPay] = useState<any>(null);
+  /* ТҮРЭЭС БИШ бичилт (H11): шинэ бичилтийн цонх ба цуцлах гэж буй мөр. */
+  const [entryNew, setEntryNew] = useState(false);
+  const [voidEntry, setVoidEntry] = useState<ClientEntry | null>(null);
   const nav = useNavigate();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -68,6 +75,7 @@ export default function ClientProfile() {
       ["invoices", "Нэхэмжлэл", d.invoices.length],
       ["payments", "Төлбөр", d.payments.length],
       ["barter", "Бартер", d.barter?.length || 0],
+      ["entries", "Бусад бичилт", d.entries?.length || 0],
     ] : []),
     ["files", "Хавсралт", d.files.length],
   ]) as any[];
@@ -336,8 +344,10 @@ export default function ClientProfile() {
                       {money(p.amount)}
                     </td>
                     <td className="td">
-                      <span className={`${voidRowClass(p)} ${p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green" : "pill-blue"}`}>
-                        {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн" : "Данс"}
+                      <span className={`${voidRowClass(p)} ${p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green"
+                        : p.method === "CREDIT" ? "pill-grey" : "pill-blue"}`}>
+                        {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн"
+                         : p.method === "CREDIT" ? "Бичилтийн кредит" : "Данс"}
                       </span>
                       {isVoided(p) && (
                         <>
@@ -371,6 +381,77 @@ export default function ClientProfile() {
               </tbody>
             </table>
             {d.payments.length === 0 && <Empty title="Төлбөр алга" />}
+          </div>
+        )}
+
+        {/* ТҮРЭЭС БИШ БИЧИЛТ (H11 / P1-16) — олгосон зээл, ажилчдын цалин,
+            кран, харилцагч хоорондын тооцоо. Эдгээр нь ӨӨРИЙН үлдэгдэл
+            үүсгэхгүй: дебит нь дансны нэхэмжлэл, кредит нь төлбөр болж
+            АВЛАГЫН ХУУЧИН ЗАМААР явна (H9 — нэг факт, нэг тоо). */}
+        {tab === "entries" && (
+          <div>
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+              <p className="text-[13px] text-t2 max-w-2xl">
+                Түрээсийн мөчлөгт хамаарахгүй бичилтүүд — олгосон зээл, түүний
+                өмнөөс төлсөн цалин, кран, харилцагч хоорондын тооцоо. Бичилт бүр
+                харилцагчийн авлагад ЯГ тэр дүнгээрээ буудаг.
+              </p>
+              {canVoid && (
+                <button className="btn-primary !min-h-10" onClick={() => setEntryNew(true)}>
+                  + Бичилт
+                </button>
+              )}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px]">
+                <thead><tr><th className="th">Огноо</th><th className="th">Төрөл</th>
+                  <th className="th">Юуны төлөө</th><th className="th text-right">Дүн</th>
+                  {canVoid && <th className="th">Үйлдэл</th>}</tr></thead>
+                <tbody>
+                  {(d.entries || []).map((e: ClientEntry) => (
+                    <tr key={e.id} title={voidTitle(e)}>
+                      <td className={`td ${voidRowClass(e)}`}>{e.date}</td>
+                      <td className="td">
+                        <span className={`${entryKindPill(e.kind)} ${voidRowClass(e)}`}>
+                          {e.kind_mn || entryKindLabel(e.kind)}
+                        </span>
+                        {isVoided(e) && <> <span className="pill-red">ХҮЧИНГҮЙ</span></>}
+                      </td>
+                      <td className="td">
+                        <span className={`text-ink ${voidRowClass(e)}`}>{e.label}</span>
+                        {entrySubText(e) && (
+                          <span className="block text-[12px] text-t3">{entrySubText(e)}</span>
+                        )}
+                        {isVoided(e) && e.void_reason && (
+                          <span className="block text-[12px] text-danger">
+                            {e.void_reason}
+                            {e.voided_by && <span className="text-t3"> · {e.voided_by}</span>}
+                          </span>
+                        )}
+                      </td>
+                      {/* Тэмдэг нь ҮГТЭЙ хамт явна: улаан/ногооныг ялгадаггүй
+                          нүдэнд ч «+» «−» нь өөрөө уншигдана (UI-ЗАРЧИМ §4). */}
+                      <td className={`td text-right tabular-nums font-bold ${voidRowClass(e)} ${
+                            e.amount < 0 ? "text-money" : "text-ink"}`}>
+                        {entryAmountText(e.amount, money)}
+                      </td>
+                      {canVoid && (
+                        <td className="td">
+                          {isVoided(e)
+                            ? <span className="text-t3">—</span>
+                            : <VoidButton label={`${e.label} · ${money(Math.abs(e.amount))}`}
+                                          onClick={() => setVoidEntry(e)} />}
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {(d.entries || []).length === 0 && (
+                <Empty title="Бусад бичилт алга"
+                       sub="Олгосон зээл, ажилчдын цалин, кран, харилцагч хоорондын тооцоог энд бичнэ." />
+              )}
+            </div>
           </div>
         )}
 
@@ -442,7 +523,158 @@ export default function ClientProfile() {
       {pay && <PayModal client_id={d.id} d={null} invoices={d.invoices} onClose={() => setPay(false)} onDone={() => { setPay(false); load(); }} />}
       {voidPay && <VoidPaymentModal payment={voidPay} onClose={() => setVoidPay(null)}
                                     onDone={() => { setVoidPay(null); load(); }} />}
+      {entryNew && <EntryModal d={d} onClose={() => setEntryNew(false)}
+                               onDone={() => { setEntryNew(false); load(); }} />}
+      {voidEntry && <VoidEntryModal d={d} e={voidEntry} onClose={() => setVoidEntry(null)}
+                                    onDone={() => { setVoidEntry(null); load(); }} />}
     </div>
+  );
+}
+
+/* ---------- ТҮРЭЭС БИШ БИЧИЛТ (H11 / P1-16) ----------
+ *
+ * Отгоо эгч ХАСАХ ТЭМДЭГ БИЧДЭГГҮЙ: түүний хуудсан дээр «өгсөн» ба «авсан»
+ * нь хоёр багана. Тиймээс цонх нь «Дебит / Кредит» гэсэн сонголт өгч,
+ * тэмдгийг ӨӨРӨӨ зөөнө (`lib/entry.ts`). Мөнгө хөдөлдөг тул баталгаажуулах
+ * цонх нь авлагын БАЙХ ба БОЛОХ тоог navy Receipt дээр харуулна.
+ */
+function EntryModal({ d, onClose, onDone }: { d: any; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const uid = useId();
+  const f0 = { date: todayIso(), mode: "debit" as EntryMode, kind: "advance" as EntryKind,
+               amount: "", label: "", ref: "", note: "" };
+  const [f, setF] = useState(f0);
+  const [ask, setAsk] = useState(false);
+  const amount = Number(String(f.amount).replace(/[^\d.-]/g, "")) || 0;
+  const signed = signedAmount(f.mode, amount);
+  const err = f.amount.trim() || f.label.trim() ? entryError(f.label, Math.abs(amount)) : "";
+  const after = receivableAfter(d.receivable, signed);
+
+  const rows = [
+    { label: "Одоогийн авлага", value: money(d.receivable) },
+    { label: `${entryKindLabel(f.kind)} · ${f.label.trim() || "…"}`,
+      value: entryAmountText(signed, money),
+      accent: (signed < 0 ? "money" : "danger") as "money" | "danger" },
+  ];
+
+  const save = async () => {
+    await api(`/api/clients/${d.id}/entries`, { method: "POST", body: JSON.stringify({
+      date: f.date, amount: signed, kind: f.kind, label: f.label.trim(),
+      ref: f.ref.trim(), note: f.note.trim() }) });
+    toast("Бичилт хийгдлээ");
+    onDone();
+  };
+
+  if (ask) {
+    return (
+      <ConfirmModal title="Бичилт хийх"
+        intro={<><b className="text-ink">{d.name}</b> · {f.date} · {entryModeLabel(f.mode)}.
+                 Бичилт нь харилцагчийн дансанд{" "}
+                 {signed > 0 ? "нэхэмжлэл" : "кредит төлбөр"} болж бууна.</>}
+        rows={rows} total={{ label: "Авлага болно", value: money(after) }}
+        confirmLabel="Бичих" onClose={() => setAsk(false)}
+        onConfirm={async () => {
+          try { await save(); } catch (e: any) { toast(e.message, "err"); setAsk(false); }
+        }} />
+    );
+  }
+
+  return (
+    <FormModal title="Бусад бичилт" onClose={onClose} dirty={JSON.stringify(f) !== JSON.stringify(f0)}>
+      <p className="text-[13.5px] text-t2 mb-4">
+        <b className="text-ink">{d.name}</b> · одоогийн авлага{" "}
+        <b className="text-ink tabular-nums">{money(d.receivable)}</b>
+      </p>
+      <div className="grid grid-cols-2 gap-3.5">
+        <div><label className="lbl" htmlFor={`${uid}-kind`}>Төрөл</label>
+          <select id={`${uid}-kind`} className="inp" value={f.kind}
+                  onChange={(e) => setF({ ...f, kind: e.target.value as EntryKind })}>
+            {ENTRY_KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select></div>
+        <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+          <input id={`${uid}-date`} type="date" className="inp" value={f.date}
+                 onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
+      </div>
+      {/* ХАСАХ ТЭМДГИЙГ ТЭР БИЧИХГҮЙ — сонголт нь чиглэлээ ӨГҮҮЛБЭРЭЭР хэлнэ. */}
+      <fieldset className="mt-3.5">
+        <legend className="lbl">Чиглэл</legend>
+        <div className="flex gap-2 flex-wrap">
+          {(["debit", "credit"] as EntryMode[]).map((m) => (
+            <button key={m} type="button" onClick={() => setF({ ...f, mode: m })}
+                    aria-pressed={f.mode === m}
+                    className={`btn-secondary !min-h-10 text-[13px] ${
+                      f.mode === m ? "!bg-brand-50 !text-brand-ink !border-brand" : ""}`}>
+              {entryModeLabel(m)}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      <div className="grid grid-cols-2 gap-3.5 mt-3.5">
+        <div><label className="lbl" htmlFor={`${uid}-amt`}>Дүн ₮</label>
+          <input id={`${uid}-amt`} className="inp" inputMode="numeric" autoFocus
+                 value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-ref`}>Эх сурвалж</label>
+          <input id={`${uid}-ref`} className="inp" value={f.ref} placeholder="ж: акт №7"
+                 onChange={(e) => setF({ ...f, ref: e.target.value })} /></div>
+      </div>
+      <div className="mt-3.5">
+        <label className="lbl" htmlFor={`${uid}-label`}>
+          Юуны төлөө <span className="text-danger">*</span>
+        </label>
+        <input id={`${uid}-label`} className="inp" value={f.label}
+               placeholder="ж: 2025 онд бэлэн мөнгө зээлсэн"
+               onChange={(e) => setF({ ...f, label: e.target.value })} /></div>
+      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
+        <input id={`${uid}-note`} className="inp" value={f.note}
+               onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
+      {err && <p className="text-[12.5px] text-danger mt-2.5">⚠ {err}</p>}
+      <Receipt className="mt-4" rows={rows} total={{ label: "Авлага болно", value: money(after) }} />
+      <div className="flex justify-end gap-2.5 mt-5">
+        <button className="btn-secondary" onClick={onClose}>Болих</button>
+        <SubmitButton disabled={!!err || !(Math.abs(amount) > 0) || !f.label.trim()}
+                      onSubmit={() => setAsk(true)}>Үргэлжлүүлэх</SubmitButton>
+      </div>
+    </FormModal>
+  );
+}
+
+function VoidEntryModal({ d, e, onClose, onDone }: {
+  d: any; e: ClientEntry; onClose: () => void; onDone: () => void;
+}) {
+  const toast = useToast();
+  const [reason, setReason] = useState("");
+  const rid = useId();
+  const after = receivableAfter(d.receivable, -e.amount);
+  return (
+    <ConfirmModal title="Бичилт хүчингүй болгох"
+      intro={<>
+        {e.kind_mn || entryKindLabel(e.kind)} · <b className="text-ink">{e.label}</b>{" "}
+        {entryAmountText(e.amount, money)} — энэ мөр УСТАХГҮЙ: жагсаалтад «ХҮЧИНГҮЙ»
+        тэмдэгтэй, шалтгаантайгаа хамт үлдэнэ. Түүний{" "}
+        {e.amount > 0 ? "нэхэмжлэл" : "төлбөр"} нь хамт хүчингүй болж, авлага буцаж
+        засагдана. Энэ үйлдлийг буцаах боломжгүй.
+      </>}
+      rows={[{ label: "Одоогийн авлага", value: money(d.receivable) },
+             { label: "Бичилт хүчингүй", value: entryAmountText(-e.amount, money),
+               accent: "danger" }]}
+      total={{ label: "Авлага болно", value: money(after) }}
+      confirmLabel="Хүчингүй болгох" confirmDisabled={!reason.trim()} danger
+      onClose={onClose}
+      onConfirm={async () => {
+        try {
+          await api(`/api/client-entries/${e.id}/void`, {
+            method: "POST", body: JSON.stringify({ reason: reason.trim() }) });
+          toast("Бичилт хүчингүй болов");
+          onDone();
+        } catch (er: any) { toast(er.message, "err"); }
+      }}>
+      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+        Цуцлах шалтгаан <span className="text-danger">*</span>
+      </label>
+      <input id={rid} className="inp w-full" value={reason} autoFocus
+             placeholder="ж: хоёр удаа бичсэн"
+             onChange={(er) => setReason(er.target.value)} />
+    </ConfirmModal>
   );
 }
 
@@ -508,7 +740,8 @@ function ClientFinance({ d }: { d: any }) {
         ) : d.payments.map((p: any) => (
           <FinanceRow key={p.id} label={`${p.date} · ${
             p.method === "BARTER" ? `Бартер · ${p.barter_desc}`
-            : p.method === "CASH" ? "Бэлэн" : "Данс"}`}
+            : p.method === "CASH" ? "Бэлэн"
+            : p.method === "CREDIT" ? "Бичилтийн кредит" : "Данс"}`}
             sub={isVoided(p) ? "ХҮЧИНГҮЙ" : p.contract_no ? `Гэрээ №${p.contract_no}` : undefined}
             value={money(p.amount)} tone={isVoided(p) ? "dim" : undefined} />
         ))}

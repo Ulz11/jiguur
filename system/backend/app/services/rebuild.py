@@ -46,7 +46,7 @@ def _derivable(contract: models.Contract, inv: models.Invoice, spec_keys: set) -
     хэлбэртэй эсвэл түүний өвөрмөц түлхүүр шинэ жагсаалтад байгаа. "OB-" ямар
     ч тохиолдолд ҮГҮЙ — тэр нь гараар үүсгэсэн, дахин бодогдох боломжгүй.
     """
-    if inv.no.startswith("OB-"):
+    if inv.no.startswith("OB-") or not billing.invoice_active(inv):
         return False
     pat = re.compile(r"^[RS]-" + re.escape(contract.no) + r"-\d+$")
     if pat.match(inv.no):
