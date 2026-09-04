@@ -1792,6 +1792,7 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
     clients: list[dict] = []
     seen: set[str] = set()
     keep = set(TOP10) if clients_mode == "top10" else None
+    with_contract = {c["client"] for c in contracts}
     for name, row in board.items():
         if keep is not None and name not in keep:
             continue
@@ -1807,6 +1808,15 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
                 c_notes.append({
                     "text": f"ШИЙДВЭР ХЭРЭГТЭЙ — «{n['label']}»-ийн ӨӨР утга: "
                             f"{val:,.0f}₮ ({why}) · {ref}",
+                    "date": str(as_of_d), "flag": True, "ref": ref})
+        # WB1-д ХУУДАСГҮЙ топ-10 (Хурд групп · Голден лайт · Дархан Оюунаа) —
+        # гэрээ үүсэхгүй тул тэдний баримтжсан мөрүүд ХАРИЛЦАГЧ дээр буудаг.
+        if name not in with_contract:
+            for label, amount, ref in ACCOUNT_NOTES.get(name, []):
+                c_notes.append({
+                    "text": f"Түрээс БИШ мөр: {label} — {amount:,.0f}₮ · {ref} "
+                            f"(самбарын Үлдэгдэлд АЛЬ ХЭДИЙН орсон, "
+                            f"бичилт үүсгээгүй)",
                     "date": str(as_of_d), "flag": True, "ref": ref})
         contacts = sheet_contacts.get(name, [])
         clients.append({"name": name, "balance": round(row["balance"]),
