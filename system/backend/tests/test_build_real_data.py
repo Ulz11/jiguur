@@ -174,16 +174,25 @@ def test_negative_balance_written_in_the_deposit_column(caplog):
     ("Нийт", None),
     ("", None),
     (None, None),
-    ("1025", None),                                # каталогт байхгүй код
+    ("1025", ("Хэв хашмал 1025", "А")),            # каталогийн НҮХ — одоо нээгдэв
+    ("1м", ("Труба 1м", "А")),                     # Өнө Ордын 278ш
 ])
 def test_material_code(raw, want):
     assert B.material_of(raw) == want
 
 
-def test_catalog_gap_is_reported_not_dropped():
-    """Каталогт байхгүй SKU (1025, 2020, труба 5м, шат) — ЧИМЭЭГҮЙ алга
-    болохгүй, тайланд гарна."""
-    assert B.material_of("2020") is None
-    assert B.material_of("5м") is None
+def test_catalog_gap_is_opened_not_dropped():
+    """Каталогт байхгүй SKU (1025, 2020, труба 5м/1.5м/1м, шат) — ЧИМЭЭГҮЙ алга
+    болохгүй: КАТАЛОГТ НЭЭГДЭЖ, тайланд ч гарна (E3).
+
+    Урьд нь `material_of` эдгээрт None буцааж, Өнө Ордын «Труба 1м» 278ш
+    ачаалагдалгүй унадаг байв (түүний Нийт 5,855 − задлагч 5,577 = 278)."""
+    assert B.material_of("2020") == ("Хэв хашмал 2020", "А")
+    assert B.material_of("5м") == ("Труба 5м", "А")
+    assert B.material_of("Шат") == ("Шат", "А")
     assert "1025" in B.CATALOG_GAPS
     assert "Шат" in B.CATALOG_GAPS
+    # …ба каталогт нээгдэх мөр нь БҮГД тайлбартай
+    for name, spec in B.CATALOG_NEW.items():
+        assert spec["why"], name
+        assert spec["category"]
