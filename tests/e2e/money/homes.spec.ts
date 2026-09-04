@@ -4,7 +4,7 @@ import { ClientProfilePage } from '../../pages/ClientProfilePage';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
 import { clickToOpen, clickToExpand } from '../../support/interact';
 import { readReceipt } from '../../support/receipt';
-import { parseTugrik } from '../../support/money';
+import { parseTugrik, scaleOf } from '../../support/money';
 
 /**
  * ГУРВАН ШИНЭ БАЙР — Отгоо эгчийн дэвтрээс алдагдаж байсан гурван факт.
@@ -102,14 +102,15 @@ test('барьцаа БАЙРШУУЛАВ → СУУТГАВ: баримтын �
 
 test('олгосон зээл авлагыг ЯГ тэр дүнгээр, ХОЁР дэлгэц дээр ИЖИЛ хөдөлгөнө',
   async ({ managerPage, data }) => {
-    /* ⚠ ТООНЫ СОНГОЛТ САНААТАЙ. 400ш × 330₮ = 132,000₮/хоног, 70 хоногийн
-       өмнөх эхлэл → нэхэмжилсэн 7,920,000₮ ба нэхэгдээгүй 1,452,000₮:
-       ХОЁУЛАА «сая»-гийн шатанд. Бага тоотой гэрээн дээр 164 саяын бичилт
-       хийвэл НЭГ нүдэнд «168.5 сая₮» (толгой) ба «9,900₮» (дэд мөр) гэсэн
-       ХОЁР ӨӨР ХЭМЖҮҮР зэрэгцэнэ (`her/one-number.spec.ts`-ийн дүрэм) —
-       тэр нь ЭНЭ байрны асуудал БИШ, нягтралын шатны тусдаа нүх: `sayaFmt`
-       нь дэд мөрөө ӨӨРИЙНХӨӨ хэмжээгээр шатлуулдаг, толгойгоороо биш. */
-    const { client } = await data.rentSetup({ startDaysAgo: 70, qty: 400 });
+    /* ⚠ ТООНЫ СОНГОЛТ САНААТАЙ — ЗӨРҮҮТЭЙ ХЭМЖЭЭГ ЗОРИУДААР ТӨРҮҮЛНЭ.
+       30ш × 330₮ = 9,900₮/хоног: гэрээ өөрөө бүхэлдээ 1 саяас доогуур, харин
+       164,492,000₮ бичилтийн ДАРАА авлагын толгой нь «сая»-гийн шатанд
+       үсэрч, циклийн хуримтлал нь мянгаараа үлдэнэ — ЯГ тэр «толгой сая /
+       дэд мөр мянга» хос (бодит датад бараг мөр бүр дээр гардаг).
+       Урьд нь энэ тест 400ш дээр гүйж тэр хосыг ЗАЙЛСХИЙДЭГ байсан
+       (нэхэмжилсэн ба хуримтлал хоёул «сая»-д багтдаг) — дэд мөр нь
+       толгойныхоо шатыг дагадаг болсон учир одоо БАРЬДАГ болов. */
+    const { client } = await data.rentSetup({ startDaysAgo: 70, qty: 30 });
     const before = await receivableOnBothSurfaces(managerPage, client.name);
     expect(before.list, 'тулгах авлага 0 байна — тест юу ч баталахгүй').toBeGreaterThan(0);
     expect(before.profile, 'эхлэхдээ хоёр дэлгэц зөрлөө').toBe(before.list);
@@ -156,7 +157,31 @@ test('олгосон зээл авлагыг ЯГ тэр дүнгээр, ХОЁ�
       'Харилцагчийн профайл': promised,
     });
 
+    /* НЭГ НҮД — НЭГ ХЭМЖҮҮР. Бичилт авлагыг «сая»-гийн шатанд өргөсөн ч
+       циклийн хуримтлал нь мянгаараа үлдэнэ: тэр хоёр НЭГ нүдэнд зэрэгцэх
+       тул дэд мөр нь ТОЛГОЙНХОО шатаар бичигдэх ёстой («0.11 сая₮» гэдэг
+       богино ч бүрэн үнэн). Хуучин байдал: «165.2 сая₮» дээр «108,900₮». */
+    const clients = new ClientsPage(managerPage);
+    await clients.goto();
+    const cell = clients.row(client.name).getByRole('cell').nth(2);
+    const sub = cell.locator('[title^="Одоогийн цикл"]');
+    await expect(sub, 'нэхэгдээгүй хуримтлалын дэд мөр алга').toBeVisible();
+    const subExact = parseTugrik(await sub.getAttribute('title'), 'циклийн хуримтлал');
+    expect(promised, 'толгой 1 саяас доогуур — шалгах ХЭЛБЭР төрсөнгүй')
+      .toBeGreaterThanOrEqual(1_000_000);
+    expect(subExact, 'хуримтлал 1 саяас дээш — шалгах ХЭЛБЭР төрсөнгүй')
+      .toBeGreaterThan(0);
+    expect(subExact, 'хуримтлал 1 саяас дээш — шалгах ХЭЛБЭР төрсөнгүй')
+      .toBeLessThan(1_000_000);
+    const head = (await cell.innerText()).split('\n')[0].trim();
+    expect(scaleOf(head), `толгой «${head}» «сая»-гаар зурагдсангүй`).toBe('сая');
+    expect(scaleOf((await sub.innerText()).trim()),
+      `«${head}» дээр «${(await sub.innerText()).trim()}» — НЭГ нүдэнд ХОЁР хэмжүүр`)
+      .toBe(scaleOf(head));
+
     /* Мөр нь дэвтэр дээрээ шошготойгоо, ± тэмдэгтэйгээ үлдэнэ. */
+    await clients.openProfile(client.name);
+    await profile.expectLoaded();
     await managerPage.getByRole('button', { name: /^Бусад бичилт/ }).click();
     const row = managerPage.getByRole('row')
       .filter({ hasText: '2025 онд бэлэн мөнгө зээлсэн' });

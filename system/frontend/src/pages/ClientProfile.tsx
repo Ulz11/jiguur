@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, fmt, money, sayaFmt, user } from "../api";
+import { api, fmt, money, sayaFmt, sayaFmtLike, user } from "../api";
 import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit,
          FormModal, ConfirmModal, Receipt, SubmitButton,
          FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
@@ -134,10 +134,14 @@ export default function ClientProfile() {
             {seesMoney && (<>
             {/* АВЛАГА = нэхэмжилсэн + одоогийн циклийн хуримтлал (H9b) — энэ
                 тоо жагсаалт, дашбоард, Авлага цуглуулах дээр ЯГ ИЖИЛ. Дундах
-                хуримтлалыг доор нь нэрлэнэ: нуувал «тоо зөрж байна» болно. */}
+                хуримтлалыг доор нь нэрлэнэ: нуувал «тоо зөрж байна» болно.
+                Дэд бичиг нь ТОЛГОЙН шатаар (`sayaFmtLike`) — толгой «1.2 сая₮»
+                байхад «13,200₮» гэж бичвэл нэг үзүүлэлт дотор хоёр хэмжүүр
+                зэрэгцэнэ. «0.01 сая₮» гэдэг нь богино ч БҮРЭН үнэн; яг дүн нь
+                доорх бүтэн ₮ мөр ба hover дээр хэвээр. */}
             <Stat label="Авлага" val={sayaFmt(d.receivable) + "₮"} exact={money(d.receivable)}
                   danger={d.overdue}
-                  note={uninvoicedLine(d.receivable_uninvoiced, sayaFmt) || undefined} />
+                  note={uninvoicedLine(d.receivable_uninvoiced, d.receivable) || undefined} />
             {/* АЛДАНГИ ХОЁР НҮҮРТЭЙ (R25 / H2): нэхэгдсэн нь ӨР (улаан),
                 нэхэгдээгүй нь зөвхөн ТООЦООЛОЛ — ≈ угтвартай, бүдэг, доор нь
                 «нэхэгдээгүй» гэж бичигдэнэ. Нэг тоо болгож нийлүүлбэл Отгоо
@@ -148,7 +152,7 @@ export default function ClientProfile() {
                 ? <Stat label="Нэхэгдсэн алданги" val={sayaFmt(pen.booked) + "₮"}
                         exact={money(pen.booked)} danger
                         note={pen.showUnbooked
-                          ? `≈${sayaFmt(pen.unbooked)}₮ ${UNCHARGED}` : undefined} />
+                          ? `≈${sayaFmtLike(pen.unbooked, pen.booked)}₮ ${UNCHARGED}` : undefined} />
                 : <Stat label="Алдангийн тооцоолол"
                         val={pen.showUnbooked ? "≈" + sayaFmt(pen.unbooked) + "₮" : "—"}
                         exact={pen.showUnbooked ? money(pen.unbooked) : undefined}

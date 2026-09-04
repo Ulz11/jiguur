@@ -5,7 +5,7 @@ import { CollectionsPage } from '../../pages/CollectionsPage';
 import { ContractsPage } from '../../pages/ContractsPage';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
 import { DashboardPage } from '../../pages/DashboardPage';
-import { fullText, sayaText, scaleOf } from '../../support/money';
+import { fullText, parseTugrik, sayaText, scaleOf } from '../../support/money';
 import { HER_ROUTES, openHerPage } from '../../support/routes';
 
 /**
@@ -118,9 +118,77 @@ test('нэг гэрээний ҮЛДЭГДЭЛ жагсаалт ба дэлгэ�
 
    Бодит уналт (2026-09): Удирдлагын төвийн «Хүлээгдэж буй төлбөр» хүснэгтэд
    толгой нь бүтэн ₮, дэд мөр нь «сая»-гаар бичигдэж байв.
+
+   ХОЁР ДАХЬ УНАЛТ (мөн 2026-09) нь бүр өргөн: дэд мөр `sayaFmt`-аар
+   бичигдэхэд өөрийнхөө хэмжээгээр шатладаг тул ТОЛГОЙ нь ≥1 сая, дэд мөр
+   нь <1 сая байхад л ХОЁР хэмжүүр төрдөг байв — бодит датад авлага нь зуун
+   сая, циклийн хуримтлал нь мянгаар хэмжигддэг тул БАРАГ МӨР БҮР дээр.
+   Тэр яг хосыг доорх «≥1 сая / <1 сая» тест зориудаар төрүүлж барина.
    ===================================================================== */
 test.describe('дэд мөрийн хэмжүүр', () => {
   const SUB = 'үүнээс нэхэмжлэгдээгүй';
+
+  /**
+   * НЭГ НҮД — толгой ба дэд мөр нэг ХЭМЖҮҮРТЭЙ юу.
+   *
+   * ХЭЛБЭРИЙГ нь эхлээд батална: толгой нь ҮНЭХЭЭР ≥1 сая, дэд мөр нь
+   * ҮНЭХЭЭР <1 сая байх ёстой — эс бөгөөс тест ямар ч зөрчил төрөхгүй
+   * хэмжээн дээр гүйж, ХООСОН ногоон болно (яг тэрийг хийж байсан хоёр
+   * тестийг энэ засварын хамт буцааж өргөсгөв).
+   */
+  async function expectOneScale(cell: import('@playwright/test').Locator,
+                                headExact: number, where: string) {
+    const sub = cell.locator('[title^="Одоогийн цикл"]');
+    await expect(sub, `${where}: «${SUB}» дэд мөр огт зурагдсангүй`).toBeVisible();
+    const subExact = parseTugrik(await sub.getAttribute('title'), `${where} · хуримтлал`);
+    expect(headExact, `${where}: толгой 1 саяас доогуур — шалгах ХЭЛБЭР төрсөнгүй`)
+      .toBeGreaterThanOrEqual(1_000_000);
+    expect(subExact, `${where}: хуримтлал 1 саяас дээш — шалгах ХЭЛБЭР төрсөнгүй`)
+      .toBeGreaterThan(0);
+    expect(subExact, `${where}: хуримтлал 1 саяас дээш — шалгах ХЭЛБЭР төрсөнгүй`)
+      .toBeLessThan(1_000_000);
+
+    const head = (await cell.innerText()).split('\n')[0].trim();
+    const subText = (await sub.innerText()).trim();
+    expect(scaleOf(head), `${where}: толгой «${head}» «сая»-гаар зурагдсангүй`).toBe('сая');
+    expect(scaleOf(subText),
+      `${where}: «${head}» дээр «${subText}» тогтжээ — НЭГ нүдэнд ХОЁР хэмжүүр`)
+      .toBe(scaleOf(head));
+  }
+
+  /**
+   * ЯГ ТЭР ХЭЛБЭР: толгой «сая», хуримтлал саяас БАГА.
+   *
+   * 60 хоног × 60ш × 330₮ = өдөрт 19,800₮. Хоёр цикл (60 хоног) нэхэгдэж
+   * 1,188,000₮ болох ба гурав дахь цикл 1 хоног хуримтлана (19,800₮):
+   * ТОЛГОЙ нь «сая»-гийн шатанд, ДЭД мөр нь бүтэн ₮-ийн хэмжээнд. Урьд нь
+   * энэ нүд «1.2 сая₮» дээр «үүнээс нэхэмжлэгдээгүй: 19,800₮» гэж бичигдэж
+   * байв — Отгоо эгчийн хувьд НЭГ нүдэнд хоёр өөр нэгж.
+   */
+  test('ТОЛГОЙ нь «сая», хуримтлал нь саяас БАГА — дэд мөр ч «сая»-гаар',
+    async ({ managerPage, data }) => {
+      const { client } = await data.rentSetup({ startDaysAgo: 60, qty: 60 });
+
+      const clients = new ClientsPage(managerPage);
+      await clients.goto();
+      await expectOneScale(clients.row(client.name).getByRole('cell').nth(2),
+                           await clients.receivableExact(client.name), 'Харилцагч жагсаалт');
+
+      const collections = new CollectionsPage(managerPage);
+      await collections.goto();
+      await expectOneScale(collections.row(client.name).getByRole('cell').nth(2),
+                           await collections.receivableExact(client.name), 'Авлага цуглуулах');
+
+      /* Профайлын үзүүлэлт нь ЗОРИУДААР хоёр мөртэй («1.2 сая₮» ба доор нь
+         бүтэн ₮) — дэд мөр нь тэдгээрийн ДУГУЙЛСАН нь дагана. */
+      const profile = new ClientProfilePage(managerPage);
+      await profile.goto(client.id);
+      const lines = (await profile.stat('Авлага').innerText()).split('\n').map((l) => l.trim());
+      const note = lines.find((l) => l.includes(SUB));
+      expect(note, 'профайл дээр нэхэгдээгүй хуримтлалын дэд мөр алга').toBeTruthy();
+      expect(scaleOf(note!), `профайл: «${lines[1]}» дээр «${note}» — ХОЁР хэмжүүр`)
+        .toBe(scaleOf(lines[1]));
+    });
 
   /**
    * Нэг хуудсан дээрх толгой↔дэд мөрийн хосуудыг уншина.
@@ -177,7 +245,11 @@ test.describe('дэд мөрийн хэмжүүр', () => {
    */
   test('нэхэгдээгүй хуримтлал ГУРВАН дэлгэц дээр хосоороо, ижил хэмжүүрээр',
     async ({ managerPage, data }) => {
-      await data.rentSetup({ startDaysAgo: 60, qty: 20 });
+      /* 60ш (20 биш) — толгой нь «сая»-гийн шатанд гарч, хуримтлал нь
+         түүнээс доогуур үлдэнэ: шүүлт нь ЗӨРЧИЛ ТӨРӨХ хэмжээн дээр гүйнэ.
+         20ш дээр бүх тоо 1 саяас доогуур байсан тул толгой ба дэд мөр
+         хоёул бүтэн ₮-өөр бичигдэж, дүрэм эвдэрсэн ч ногоон болох байв. */
+      await data.rentSetup({ startDaysAgo: 60, qty: 60 });
 
       for (const path of ['/', '/clients', '/collections']) {
         const route = HER_ROUTES.find((r) => r.path === path)!;

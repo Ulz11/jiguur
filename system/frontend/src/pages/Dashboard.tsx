@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, fmt, money, sayaFmt, user } from "../api";
+import { api, fmt, money, sayaFmt, sayaFmtLike, user } from "../api";
 import { Spinner, Prog, useToast, ConfirmModal, Refreshing, Empty, Chevron } from "../ui";
 import { disclosureProps } from "../lib/disclosure";
 import { useScope, ScopeSwitch } from "../App";
@@ -315,11 +315,15 @@ export default function Dashboard() {
           {/* НЭГ АВЛАГА (H9b): энэ тоо = нэхэмжилсэн + одоогийн циклийн
               хуримтлал, харилцагчийн жагсаалт/профайл/Авлага цуглуулах дээрхтэй
               ЯГ ИЖИЛ. Дундах хуримтлалыг доор нь нэрлэнэ — «яагаад тэр
-              хуудсанд өөр тоо байна вэ» гэсэн асуулт бүтцээрээ үгүй болно. */}
-          {uninvoicedLine(k.receivable_uninvoiced, sayaFmt) && (
+              хуудсанд өөр тоо байна вэ» гэсэн асуулт бүтцээрээ үгүй болно.
+              Картны БҮХ дэд бичиг (хуримтлал, алдангийн хоёр тэмдэг) нь
+              толгойн ЯГ тэр шатаар (`sayaFmtLike`): компанийн авлага тэрбум,
+              хуримтлал нь сая байхад тус тусынхаараа шатлуулбал нэг картан
+              дээр гурван өөр хэмжүүр зэрэгцэнэ. */}
+          {uninvoicedLine(k.receivable_uninvoiced, k.receivable) && (
             <div className="text-[12px] text-white/70 tabular-nums mt-1"
                  title={`Одоогийн цикл — ${money(k.receivable_uninvoiced)}`}>
-              {uninvoicedLine(k.receivable_uninvoiced, sayaFmt)}
+              {uninvoicedLine(k.receivable_uninvoiced, k.receivable)}
             </div>)}
           {/* АЛДАНГИ ХОЁР ТЭМДЭГ (R25 / H2). Дүүрэн тэмдэг = НЭХЭГДСЭН, өр —
               «+». Тасархай хүрээтэй, ≈ угтвартай нь ТООЦООЛОЛ: Отгоо хэдийг
@@ -332,12 +336,12 @@ export default function Dashboard() {
           <div className="mt-2 flex gap-1.5 flex-wrap">
             {k.penalty_booked > 0 && (
               <span className="pill bg-white/10 text-white/80"
-                    title={money(k.penalty_booked)}>алданги +{sayaFmt(k.penalty_booked)}₮</span>
+                    title={money(k.penalty_booked)}>алданги +{sayaFmtLike(k.penalty_booked, k.receivable)}₮</span>
             )}
             {k.penalty_unbooked > 0 && (
               <span className="pill pill-estimate text-white/70"
                     title={`Тооцоолол — ${money(k.penalty_unbooked)} · нэхэгдээгүй`}>
-                ≈{sayaFmt(k.penalty_unbooked)}₮ {UNCHARGED}
+                ≈{sayaFmtLike(k.penalty_unbooked, k.receivable)}₮ {UNCHARGED}
               </span>
             )}
           </div>
@@ -511,13 +515,11 @@ export default function Dashboard() {
                     <td className={`td text-right tabular-nums ${s.receivable > 0 ? "text-danger font-semibold" : "text-t3"}`}>
                       {s.receivable > 0 ? money(s.receivable) : "—"}
                       {/* Харилцагчийн мөртэй ЯГ ижил тоо, ижил задаргаа (H9b).
-                          ⚠ Дэд мөр `sayaFmt`-ээр бичигдэж байсан нь ТОЛГОЙТОЙГОО
-                          ЗӨРНӨ: нэг нүдэнд «2,345,678₮» дээр «үүнээс
-                          нэхэмжлэгдээгүй: 1.2 сая₮» тогтож, хоёр өөр хэмжүүр
-                          дараалан уншигдана. Отгоо эгч тэр хоёрыг НЭМЭХ гэж
-                          оролдоод зөрөх болохоор нь тоог тань үл итгэнэ.
-                          Дүрэм (Clients.tsx-д ч ижил): дэд мөр нь толгойныхоо
-                          нягтралаар — толгой бүтэн ₮ бол дэд мөр ч бүтэн ₮. */}
+                          Толгой нь ЭНД бүтэн ₮ (`money`) тул дэд мөр ч бүтэн ₮:
+                          `uninvoicedLine`-д толгойн дүн ДАМЖУУЛАХГҮЙ гэдэг нь
+                          «толгой минь дугуйлагдаагүй» гэсэн үг. Дамжуулбал
+                          «2,345,678₮» дээр «1.2 сая₮» тогтож, нэг нүдэнд хоёр
+                          өөр хэмжүүр дараалан уншигдана. */}
                       {uninvoicedLine(s.receivable_uninvoiced) && (
                         <span className="block text-[12px] text-t3 font-normal"
                               title={`Одоогийн цикл — ${money(s.receivable_uninvoiced)}`}>

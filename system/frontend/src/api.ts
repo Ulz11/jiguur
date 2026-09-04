@@ -82,6 +82,6 @@ export async function downloadFile(path: string, filename: string) {
 /* Тоо форматлах ГАНЦ эх сурвалж нь `lib/num.ts` (тестээр барьцаалагдсан,
    сүлжээ/localStorage-гүй тул шууд гүйдэг). Энд зөвхөн дахин экспортлоно —
    хуудсууд өмнөх шигээ `../api`-аас авна. */
-export { fmt, sayaFmt } from "./lib/num";
+export { fmt, sayaFmt, sayaFmtLike } from "./lib/num";
 import { fmt as _fmt } from "./lib/num";
 export const money = (n: number) => _fmt(n) + "₮";

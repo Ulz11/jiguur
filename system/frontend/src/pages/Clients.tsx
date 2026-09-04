@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, money, sayaFmt, user } from "../api";
+import { api, money, sayaFmt, sayaFmtLike, user } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty,
          FinanceDisclosure, FinanceBlock } from "../ui";
 import { formDirty } from "../lib/dirty";
@@ -99,20 +99,22 @@ export default function Clients() {
                   {/* АВЛАГА = нэхэмжилсэн + одоогийн циклийн хуримтлал (H9b).
                       Энэ тоо дашбоард, профайл, Авлага цуглуулах дээр ЯГ ижил.
                       Задаргаа нь доор — «үүнээс нэхэмжлэгдээгүй».
-                      Дэд мөр нь толгойтойгоо ИЖИЛ нягтралтай («сая»): бүтэн
-                      төгрөгөөр хэвлэвэл «12.3 сая₮» дээр «2,345,678₮» тогтож,
-                      нэг мөрөнд хоёр өөр хэмжүүр уншигдана. */}
+                      НҮДНИЙ БҮХ ДЭД МӨР ТОЛГОЙНХОО шатаар (`sayaFmtLike`):
+                      авлага нь сая, циклийн хуримтлал/алданги нь мянгаар
+                      хэмжигддэг тул тус тусынхаараа шатлуулбал «1.2 сая₮»
+                      дээр «13,200₮» тогтож, нэг нүдэнд ХОЁР хэмжүүр
+                      уншигдана. «0.01 сая₮» гэдэг нь богино ч БҮРЭН үнэн. */}
                   {receivableSplit(c.receivable, c.receivable_invoiced).showUninvoiced && (
                     <span className="block text-[12px] text-t3"
                           title={`Одоогийн цикл — ${money(c.receivable_uninvoiced)}`}>
-                      {uninvoicedLine(c.receivable_uninvoiced, sayaFmt)}</span>)}
+                      {uninvoicedLine(c.receivable_uninvoiced, c.receivable)}</span>)}
                   {/* Нэхэгдсэн нь ӨР (улаан «+»); нэхэгдээгүй нь зөвхөн
                       тооцоолол (бүдэг «≈» + шошго) — нийлүүлж болохгүй (H2). */}
                   {c.penalty_booked > 0 && <span className="block text-[12px] text-danger"
-                                          title={money(c.penalty_booked)}>+ алданги {sayaFmt(c.penalty_booked)}₮</span>}
+                                          title={money(c.penalty_booked)}>+ алданги {sayaFmtLike(c.penalty_booked, c.receivable)}₮</span>}
                   {c.penalty_unbooked > 0 && <span className="block text-[12px] text-t3"
                                           title={`Тооцоолол — ${money(c.penalty_unbooked)} · ${UNCHARGED}`}>
-                    ≈{sayaFmt(c.penalty_unbooked)}₮ {UNCHARGED}</span>}
+                    ≈{sayaFmtLike(c.penalty_unbooked, c.receivable)}₮ {UNCHARGED}</span>}
                 </td>
                 <td className="td text-right tabular-nums" title={c.deposit > 0 ? money(c.deposit) : undefined}>
                   {c.deposit > 0 ? sayaFmt(c.deposit) + "₮" : "—"}</td>

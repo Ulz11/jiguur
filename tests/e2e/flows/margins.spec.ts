@@ -2,6 +2,7 @@ import { test, expect } from '../../fixtures';
 import { ClientProfilePage } from '../../pages/ClientProfilePage';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
 import { clickToOpen, clickToExpand } from '../../support/interact';
+import { parseTugrik, scaleOf } from '../../support/money';
 
 /**
  * ХУУДСЫН ЗАХАД БИЧСЭН ЗҮЙЛС — Отгоо эгчийн дэвтрийн гурав дахь давхарга.
@@ -108,10 +109,12 @@ test('гурван гарын үсэгтэн ХАРИЛЦАГЧИЙН хуудс
   async ({ managerPage, data }) => {
     /* `startDaysAgo: 60` — эхний цикл хэтэрсэн тул харилцагч «Авлага
        цуглуулах» жагсаалтад заавал орно (тэнд л ☎ холбоос амьдардаг).
-       ⚠ Хэмжээ нь `her/one-number.spec.ts`-ийнхтэй ЯГ ижил (60 хоног × 20ш):
-       нийт нь 1 саяас доогуур үлдэх тул тэр хуудсан дээрх толгой ба
-       «үүнээс нэхэмжлэгдээгүй» дэд мөр НЭГ хэмжүүрээр бичигдэнэ. */
-    const { client } = await data.rentSetup({ startDaysAgo: 60, qty: 20 });
+       ⚠ 60ш: авлагын толгой нь «сая»-гийн шатанд гарч, циклийн хуримтлал
+       нь мянгаараа үлдэнэ. Урьд нь 20ш байсан — бүх тоо 1 саяас доогуур
+       үлдэж, «нэг нүдэнд хоёр хэмжүүр» гэсэн хэлбэрийг ЗАЙЛСХИЙДЭГ байв.
+       Дэд мөр нь толгойныхоо шатаар бичигддэг болсон тул одоо тэр хэлбэрийг
+       зориудаар төрүүлж, мөрөн дээрээ шалгана (доор). */
+    const { client } = await data.rentSetup({ startDaysAgo: 60, qty: 60 });
     const profile = new ClientProfilePage(managerPage);
     await profile.goto(client.id);
 
@@ -155,6 +158,25 @@ test('гурван гарын үсэгтэн ХАРИЛЦАГЧИЙН хуудс
     await expect(row.getByRole('link', { name: `☎ ${people[1][2]}` }))
       .toHaveAttribute('href', `tel:${people[1][2]}`);
     await expect(row.getByRole('link', { name: `☎ ${people[2][2]}` })).toHaveCount(0);
+
+    /* …БАС: залгахаас өмнө хардаг АВЛАГЫН нүд нь НЭГ хэмжүүртэй. Толгой нь
+       «сая»-гийн шатанд, циклийн хуримтлал нь саяас доогуур — тэр хоёр
+       нэг нүдэнд зэрэгцэнэ (`her/one-number.spec.ts`-ийн дүрэм). Хуучин
+       байдал: «1.2 сая₮» дээр «үүнээс нэхэмжлэгдээгүй: 19,800₮». */
+    const cell = row.getByRole('cell').nth(2);
+    const sub = cell.locator('[title^="Одоогийн цикл"]');
+    await expect(sub, 'нэхэгдээгүй хуримтлалын дэд мөр алга').toBeVisible();
+    const subExact = parseTugrik(await sub.getAttribute('title'), 'циклийн хуримтлал');
+    const headExact = parseTugrik(await cell.getAttribute('title'), 'авлагын нийт');
+    expect(headExact, 'толгой 1 саяас доогуур — шалгах ХЭЛБЭР төрсөнгүй')
+      .toBeGreaterThanOrEqual(1_000_000);
+    expect(subExact, 'хуримтлал 1 саяас дээш — шалгах ХЭЛБЭР төрсөнгүй')
+      .toBeLessThan(1_000_000);
+    const head = (await cell.innerText()).split('\n')[0].trim();
+    const subText = (await sub.innerText()).trim();
+    expect(scaleOf(head), `толгой «${head}» «сая»-гаар зурагдсангүй`).toBe('сая');
+    expect(scaleOf(subText), `«${head}» дээр «${subText}» — НЭГ нүдэнд ХОЁР хэмжүүр`)
+      .toBe(scaleOf(head));
   });
 
 // ---------- 3. Талбай: нэг гэрээ, гурван талбай ----------

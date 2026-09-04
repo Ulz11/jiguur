@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { api, money, sayaFmt, user } from "../api";
+import { api, money, sayaFmt, sayaFmtLike, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Empty, Refreshing, useToast,
          FinanceDisclosure, FinanceBlock } from "../ui";
 import { cycleShortLabel } from "../lib/cycle";
@@ -164,12 +164,14 @@ export default function Contracts() {
                           title={money(c.balance)}>
                       {sayaFmt(c.balance)}₮
                     </span>
-                    {/* Нэхэгдсэн нь ӨР; нэхэгдээгүй нь ХӨШҮҮРЭГ — тусдаа мөр (H2) */}
+                    {/* Нэхэгдсэн нь ӨР; нэхэгдээгүй нь ХӨШҮҮРЭГ — тусдаа мөр (H2).
+                        Хоёулаа ТОЛГОЙН (үлдэгдлийн) шатаар: «12.3 сая₮» дээр
+                        «+ алданги 13,200₮» тогтвол нэг нүдэнд хоёр хэмжүүр. */}
                     {c.penalty_booked > 0 && <span className="block text-[12px] text-danger"
-                                            title={money(c.penalty_booked)}>+ алданги {sayaFmt(c.penalty_booked)}₮</span>}
+                                            title={money(c.penalty_booked)}>+ алданги {sayaFmtLike(c.penalty_booked, c.balance)}₮</span>}
                     {c.penalty_unbooked > 0 && <span className="block text-[12px] text-t3"
                                             title={`Тооцоолол — ${money(c.penalty_unbooked)} · ${UNCHARGED}`}>
-                      ≈{sayaFmt(c.penalty_unbooked)}₮ {UNCHARGED}</span>}
+                      ≈{sayaFmtLike(c.penalty_unbooked, c.balance)}₮ {UNCHARGED}</span>}
                   </td>
                   </>)}
                   <td className="td"><StatePill state={c.state} /></td>

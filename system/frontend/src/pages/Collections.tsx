@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, money, sayaFmt } from "../api";
+import { api, money, sayaFmt, sayaFmtLike } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty } from "../ui";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
@@ -161,22 +161,30 @@ export default function Collections() {
                     зөв — харин залгахын өмнө нэхэх дүнгээ бүтнээр нь хардаг. */}
                 <td className="td text-right tabular-nums font-bold text-danger" title={money(r.overdue)}>{sayaFmt(r.overdue)}₮</td>
                 {/* Авлагын НИЙТ дүн — бусад дэлгэцтэй ЯГ ижил, задаргаатайгаа */}
+                {/* Дэд мөр нь ТОЛГОЙНХОО шатаар (`sayaFmtLike`): авлага нь
+                    сая, циклийн хуримтлал нь мянгаар хэмжигддэг тул дэд мөрийг
+                    өөрийнх нь хэмжээгээр шатлуулбал «1.2 сая₮» дээр «13,200₮»
+                    тогтож, нэг нүдэнд хоёр өөр хэмжүүр уншигдана. */}
                 <td className="td text-right tabular-nums font-bold text-ink" title={money(r.balance)}>
                   {sayaFmt(r.balance)}₮
-                  {uninvoicedLine(r.balance_uninvoiced, sayaFmt) && (
+                  {uninvoicedLine(r.balance_uninvoiced, r.balance) && (
                     <span className="block text-[12px] text-t3 font-normal"
                           title={`Одоогийн цикл — ${money(r.balance_uninvoiced)}`}>
-                      {uninvoicedLine(r.balance_uninvoiced, sayaFmt)}</span>)}
+                      {uninvoicedLine(r.balance_uninvoiced, r.balance)}</span>)}
                 </td>
                 {/* Утсаар ярихад ХОЁР өөр зэвсэг: нэхсэн нь өр, нэхээгүй нь
                     хөшүүрэг. Отгоо хэдийг өршөөж байгаагаа энд харна (R25). */}
+                {/* Нүдний ТОЛГОЙ нь нэхэгдсэн алданги; нэхэгдээгүй тооцоолол нь
+                    ТҮҮНИЙ шатаар бичигдэнэ. Нэхэгдсэн нь 0 (толгой нь «—») бол
+                    тооцоолол өөрөө толгой болно — өөрийнхөө шатаар. */}
                 <td className="td text-right tabular-nums text-t2"
                     title={r.penalty_booked > 0 ? money(r.penalty_booked) : undefined}>
                   {r.penalty_booked > 0 ? sayaFmt(r.penalty_booked) + "₮" : "—"}
                   {r.penalty_unbooked > 0 && (
                     <span className="block text-[12px] text-t3"
                           title={`Тооцоолол — ${money(r.penalty_unbooked)} · ${UNCHARGED}`}>
-                      ≈{sayaFmt(r.penalty_unbooked)}₮ {UNCHARGED}</span>)}
+                      ≈{sayaFmtLike(r.penalty_unbooked,
+                                    r.penalty_booked > 0 ? r.penalty_booked : r.penalty_unbooked)}₮ {UNCHARGED}</span>)}
                 </td>
                 <td className="td">
                   <span className={r.oldest_days >= 90 ? "pill-red" : r.oldest_days >= 30 ? "pill-amber" : "pill-grey"}>
