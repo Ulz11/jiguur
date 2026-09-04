@@ -95,10 +95,21 @@ def _rebuild_locked(db: Session, contract: models.Contract, today: date) -> dict
 
     # 1) ХУУЧИН БАЙДЛЫГ ГЭРЭЛ ЗУРАГЛАХ (устгахаас өмнө — дараа нь оройтоно)
     old: dict = {}
+    # «ТООЦОО НИЙЛСЭН» гэж тэмдэглэсэн нэхэмжлэл дахин бодогдвол ХОЁР ТАЛЫН
+    # гарын үсэг зурсан тоо өөрчлөгдөнө (№69 / P1-5). Чимээгүй өнгөрөх нь
+    # түүний итгэлийг эвдэнэ — засварын хаалга үүнийг НЭРЛЭЖ хэлнэ. Тэмдгийг
+    # ЭНД, устгахаас ӨМНӨ уншина: дараа нь мөр нь session-оос гарсан байна.
+    agreed_warnings: list[str] = []
     for inv in doomed:
         old[_key(contract, inv.cycle_start, inv.cycle_end, inv.no)] = {
             "no": inv.no, "cycle_start": inv.cycle_start, "cycle_end": inv.cycle_end,
             "total": inv.total, "paid": inv.paid}
+        if getattr(inv, "agreed_at", None):
+            agreed_warnings.append(
+                f"«Тооцоо нийлсэн» гэж тэмдэглэсэн нэхэмжлэл {inv.no} "
+                f"({inv.agreed_at}"
+                + (f" · {inv.agreed_by}" if inv.agreed_by else "")
+                + ") дахин бодогдож байна")
 
     alloc_snap: list[dict] = []
     if doomed_ids:
@@ -156,7 +167,7 @@ def _rebuild_locked(db: Session, contract: models.Contract, today: date) -> dict
     # ХҮЧИНГҮЙ болсон төлбөр энд ОРОХГҮЙ: replay нь хуваарилалтыг тэглээд шинээр
     # хийдэг тул цуцлагдсан төлбөр орвол сулласан алдаа засвар хийх бүрд ӨӨРӨӨ
     # амилж, «цуцалсан мөнгө буцаад ирлээ» гэсэн итгэл эвдэх алдаа болно.
-    warnings: list[str] = []
+    warnings: list[str] = list(agreed_warnings)
     payments = (db.query(models.Payment).filter_by(client_id=contract.client_id)
                 .filter(billing.LIVE_PAYMENT)
                 .order_by(models.Payment.date, models.Payment.id).all())

@@ -8,7 +8,7 @@ import { panelId, disclosureProps } from "../lib/disclosure";
 import { allocationPreview } from "../lib/alloc";
 import { CYCLE_MODES, cycleModeHint, cycleModeLabel, endDateLabel } from "../lib/contract";
 import { cycleLabel } from "../lib/cycle";
-import { invoiceLabel } from "../lib/invoice";
+import { agreedMark, agreedTitle, invoiceLabel, isAgreed } from "../lib/invoice";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
@@ -79,6 +79,9 @@ export default function ContractDetail() {
   const [voidRate, setVoidRate] = useState<any>(null);
   /* Цуцлах гэж буй алдангийн НЭХЭЛТ (R25 / H2) — хөшүүрэг суларна. */
   const [voidCharge, setVoidCharge] = useState<any>(null);
+  /* «Тооцоо нийлсэн» (№69) — тэмдэглэх ба цуцлах гэж буй нэхэмжлэл. */
+  const [agree, setAgree] = useState<any>(null);
+  const [unagree, setUnagree] = useState<any>(null);
   const toast = useToast();
   const pdf = usePdf();
   const u = user();
@@ -647,6 +650,15 @@ export default function ContractDetail() {
                       {/* Үеийн огноо хоёр мөр болж таслагдвал уншихад хүнд */}
                       <span className="font-semibold text-ink whitespace-nowrap">{lb.title}</span>
                       {lb.sub && <span className="block text-[12px] text-t3">{lb.sub}</span>}
+                      {/* ХАМТАРСАН ГАРЫН ҮСГИЙН ТӨЛӨВ (№69): «энэ тоог хоёр тал
+                          баталсан». Тэмдэггүй мөр чимээгүй үлдэнэ — «нийлээгүй»
+                          гэдэг нь анхны төлөв тул шошго хэрэггүй. */}
+                      {isAgreed(inv) && (
+                        <span className="block text-[12px] text-money font-semibold"
+                              title={agreedTitle(inv)}>
+                          ✓ {agreedMark(inv)}
+                        </span>
+                      )}
                     </td>
                     <td className="td text-right tabular-nums">
                       {money(inv.total)}
@@ -674,6 +686,16 @@ export default function ContractDetail() {
                         {d.type === "rent" && (
                           <PdfButton pdf={pdf} className="btn-ghost btn-row"
                                      path={`/api/invoices/${inv.id}/appendix-pdf`}>Хавсралт</PdfButton>
+                        )}
+                        {/* «Тооцоо нийлсэн» нь МӨНГӨ хөдөлгөхгүй — баталгаажуулна
+                            (ConfirmModal, danger БИШ: улаан бол «хэтэрсэн · акт ·
+                            устгах»-ын өнгө, UI-ЗАРЧИМ §4). */}
+                        {seesMoney && u?.role !== "factory" && (
+                          isAgreed(inv)
+                            ? <button className="btn-row text-t2"
+                                      onClick={() => setUnagree(inv)}>Нийлснийг цуцлах</button>
+                            : <button className="btn-row text-money"
+                                      onClick={() => setAgree(inv)}>Нийлсэн гэж тэмдэглэх</button>
                         )}
                       </div>
                     </td>
@@ -946,6 +968,10 @@ export default function ContractDetail() {
       {modal === "pay" && <PayModal d={d} invoices={d.invoices} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "extend" && <ExtendModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
       {modal === "deposit" && <DepositModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+      {agree && <AgreeModal d={d} inv={agree} onClose={() => setAgree(null)}
+                            onDone={() => { setAgree(null); load(); }} />}
+      {unagree && <UnagreeModal inv={unagree} onClose={() => setUnagree(null)}
+                                onDone={() => { setUnagree(null); load(); }} />}
       {modal === "penalty" && <ChargePenaltyModal d={d} onClose={() => setModal("")}
                                                   onDone={() => { setModal(""); load(); }} />}
       {/* ХААЛТЫН ЁСЛОЛ (H7) — нэг товчийн баталгаажуулалт байсныг СОЛИВ:
@@ -3029,6 +3055,93 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
         <DepositModal d={d} onClose={() => setSub(null)} onDone={refresh} />
       )}
     </>
+  );
+}
+
+/* ---------- «ТООЦОО НИЙЛСЭН» — хамтарсан гарын үсгийн ТӨЛӨВ (№69 / P1-5) ----------
+ *
+ * Отгоо эгчийн арван харилцагчийн хуудас бүр гарын үсгийн блокоор дуусдаг:
+ * «Тооцоо нийлсэн: / Жигүүр Зам ХХК / Ч.Отгонцэцэг … / түрээслэгч: БЛҮҮМ ХХК /
+ * Н.Манлай …». Тэр бол чимэг БИШ, ТӨЛӨВ: энэ тоон дээр маргаан ДУУССАН.
+ *
+ * Мөнгө ХӨДӨЛДӨГГҮЙ тул `danger` АВАХГҮЙ (улаан бол «хэтэрсэн · акт · устгах»-ын
+ * өнгө — UI-ЗАРЧИМ §4), гэвч баталгаажуулалт нь ЗААВАЛ: хоёр талын гарын үсгийг
+ * санамсаргүй товшилтоор зурж болохгүй.
+ */
+function AgreeModal({ d, inv, onClose, onDone }: {
+  d: any; inv: any; onClose: () => void; onDone: () => void;
+}) {
+  const toast = useToast();
+  const uid = useId();
+  /* Гарын үсэгтэн нь ХАРИЛЦАГЧИЙН тал (хуудсан дээр «түрээслэгч: … Н.Манлай»)
+     — урьдчилж бөглөхгүй: буруу нэрийг санамсаргүй баталгаажуулах нь
+     хоосон талбараас ДОР. */
+  const [by, setBy] = useState("");
+  const [day, setDay] = useState(today());
+  const lb = invoiceLabel(inv);
+  return (
+    <ConfirmModal title="Тооцоо нийлсэн гэж тэмдэглэх"
+      intro={<>Гэрээ №{d.no} · <b className="text-ink">{d.client}</b> — энэ нэхэмжлэлийн
+               дүнг ХОЁР ТАЛ баталсан гэж тэмдэглэнэ. Мөнгө хөдлөхгүй; дүн нь
+               хаана ч өөрчлөгдөхгүй.</>}
+      rows={[{ label: lb.title, sub: lb.sub, value: money(inv.total) },
+             { label: "Төлсөн", value: money(inv.paid), accent: "money" }]}
+      total={{ label: "Үлдэгдэл", value: money(inv.outstanding) }}
+      note="Тэмдэглэсэн нэхэмжлэл дахин бодогдох гэвэл засварын цонх сануулна."
+      confirmLabel="Тэмдэглэх" confirmDisabled={!by.trim()}
+      onClose={onClose}
+      onConfirm={async () => {
+        try {
+          await api(`/api/invoices/${inv.id}/agree`, { method: "POST",
+            body: JSON.stringify({ date: day, by: by.trim() }) });
+          toast("Тооцоо нийлсэн гэж тэмдэглэв");
+          onDone();
+        } catch (e: any) { toast(e.message, "err"); }
+      }}>
+      <div className="grid grid-cols-2 gap-3.5">
+        <div>
+          <label className="lbl" htmlFor={`${uid}-by`}>
+            Хэн гарын үсэг зурсан <span className="text-danger">*</span>
+          </label>
+          <input id={`${uid}-by`} className="inp" value={by} autoFocus
+                 placeholder="ж: Н.Манлай"
+                 onChange={(e) => setBy(e.target.value)} />
+        </div>
+        <div><label className="lbl" htmlFor={`${uid}-day`}>Огноо</label>
+          <input id={`${uid}-day`} type="date" className="inp" value={day}
+                 onChange={(e) => setDay(e.target.value)} /></div>
+      </div>
+    </ConfirmModal>
+  );
+}
+
+function UnagreeModal({ inv, onClose, onDone }: {
+  inv: any; onClose: () => void; onDone: () => void;
+}) {
+  const toast = useToast();
+  const [reason, setReason] = useState("");
+  const rid = useId();
+  return (
+    <ConfirmModal title="Нийлсэн тэмдгийг цуцлах"
+      intro={<>{agreedMark(inv)} — энэ тэмдгийг авна. Дүн нь өөрчлөгдөхгүй;
+               зөвхөн «хоёр тал баталсан» гэсэн төлөв арилна.</>}
+      confirmLabel="Цуцлах" confirmDisabled={!reason.trim()}
+      onClose={onClose}
+      onConfirm={async () => {
+        try {
+          await api(`/api/invoices/${inv.id}/unagree`, { method: "POST",
+            body: JSON.stringify({ reason: reason.trim() }) });
+          toast("Нийлсэн тэмдэг цуцлагдлаа");
+          onDone();
+        } catch (e: any) { toast(e.message, "err"); }
+      }}>
+      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+        Шалтгаан <span className="text-danger">*</span>
+      </label>
+      <input id={rid} className="inp w-full" value={reason} autoFocus
+             placeholder="ж: тоо зөрж байсан"
+             onChange={(e) => setReason(e.target.value)} />
+    </ConfirmModal>
   );
 }
 

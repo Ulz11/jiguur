@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { invoiceLabel } from "./invoice";
+import { agreedMark, agreedTitle, invoiceLabel, isAgreed } from "./invoice";
 
 // Нэг нэхэмжлэлийг хоёр өөр нэрээр дуудвал Отгоо тэднийг хоёр өөр объект гэж
 // уншина. Тиймээс нэр нь НЭГ дүрмээс гарна: түрээсийнх — үе, бусад нь — №.
@@ -25,5 +25,30 @@ describe("invoiceLabel", () => {
 
   it("үеийн огноо алга бол № рүү унана", () => {
     expect(invoiceLabel({ no: "R-9" })).toEqual({ title: "№R-9" });
+  });
+});
+
+describe("«Тооцоо нийлсэн» тэмдэг", () => {
+  it("огноо ба гарын үсэгтний нэрийг НЭГ өгүүлбэр болгоно", () => {
+    expect(agreedMark({ agreed_at: "2026-07-20", agreed_by: "Н.Манлай" }))
+      .toBe("Тооцоо нийлсэн 2026-07-20 · Н.Манлай");
+  });
+
+  it("гарын үсэгтэн бичигдээгүй бол огноо ганцаараа зогсоно", () => {
+    expect(agreedMark({ agreed_at: "2026-07-20", agreed_by: "" }))
+      .toBe("Тооцоо нийлсэн 2026-07-20");
+  });
+
+  it("тэмдэглэгээгүй нэхэмжлэл ХООСОН — хий шошго нэмэхгүй", () => {
+    expect(agreedMark({ agreed_at: null, agreed_by: "" })).toBe("");
+    expect(agreedMark(undefined)).toBe("");
+    expect(isAgreed({ agreed_at: null })).toBe(false);
+    expect(isAgreed({ agreed_at: "2026-07-20" })).toBe(true);
+  });
+
+  it("tooltip нь зөвхөн батлагдсан мөрөнд гарна", () => {
+    expect(agreedTitle({ agreed_at: null })).toBeUndefined();
+    expect(agreedTitle({ agreed_at: "2026-07-20", agreed_by: "Н.Манлай" }))
+      .toBe("Тооцоо нийлсэн 2026-07-20 · Н.Манлай");
   });
 });

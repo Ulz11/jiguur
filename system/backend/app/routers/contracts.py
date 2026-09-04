@@ -1572,6 +1572,67 @@ def gen_invoices(cid: int, db: Session = Depends(get_db), user=Depends(auth.curr
     return {"created": len(created)}
 
 
+# ---------------- «ТООЦОО НИЙЛСЭН» — хамтарсан гарын үсгийн ТӨЛӨВ ----------------
+#
+# Отгоо эгчийн арван харилцагчийн хуудас бүр гарын үсгийн блокоор дуусдаг:
+# «Тооцоо нийлсэн: / Жигүүр Зам ХХК / Ч.Отгонцэцэг … / түрээслэгч: БЛҮҮМ ХХК /
+# Н.Манлай …». Энэ бол чимэг БИШ, ТӨЛӨВ: тэр дүн дээр маргаан ДУУССАН (№69).
+# Систем баталгаажсан ба батлагдаагүй тоог ялгадаггүй байсан — түүний бүх
+# итгэл ЯГ тэнд байдаг.
+
+class AgreeIn(_BM):
+    date: _date_t | None = None
+    by: str = ""
+
+
+class UnagreeIn(_BM):
+    reason: str = ""
+
+
+@router.post("/invoices/{iid}/agree")
+def agree_invoice(iid: int, body: AgreeIn, db: Session = Depends(get_db),
+                  user=Depends(auth.require_roles("manager", "finance"))):
+    inv = db.get(models.Invoice, iid)
+    if not inv:
+        raise HTTPException(404, "Нэхэмжлэл олдсонгүй")
+    if inv.agreed_at is not None:
+        raise HTTPException(409, f"Энэ нэхэмжлэл дээр {inv.agreed_at}-нд аль хэдийн "
+                                 f"тооцоо нийлсэн байна")
+    by = (body.by or "").strip()
+    if not by:
+        raise HTTPException(400, "Хэн гарын үсэг зурснаа бичнэ үү — «✓» дангаараа "
+                                 "хэнийг ч нэрлэхгүй")
+    inv.agreed_at = body.date or date.today()
+    inv.agreed_by = by
+    db.commit()
+    audit.log(db, user, "agree", "invoice", inv.id,
+              f"{inv.contract.client.name} · гэрээ №{inv.contract.no} · "
+              f"нэхэмжлэл {inv.no} ({inv.total:,.0f}₮) — тооцоо нийлсэн "
+              f"{inv.agreed_at} · {by}")
+    return serializers.invoice(inv, date.today())
+
+
+@router.post("/invoices/{iid}/unagree")
+def unagree_invoice(iid: int, body: UnagreeIn, db: Session = Depends(get_db),
+                    user=Depends(auth.require_roles("manager", "finance"))):
+    inv = db.get(models.Invoice, iid)
+    if not inv:
+        raise HTTPException(404, "Нэхэмжлэл олдсонгүй")
+    if inv.agreed_at is None:
+        raise HTTPException(409, "Энэ нэхэмжлэл дээр тооцоо нийлээгүй байна")
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "Шалтгаан заавал бичигдэнэ")
+    was, was_by = inv.agreed_at, inv.agreed_by
+    inv.agreed_at = None
+    inv.agreed_by = ""
+    db.commit()
+    audit.log(db, user, "unagree", "invoice", inv.id,
+              f"{inv.contract.client.name} · нэхэмжлэл {inv.no} — {was} · {was_by} "
+              f"гэсэн нийлсэн тэмдгийг цуцлав: {reason}")
+    return serializers.invoice(inv, date.today())
+
+
 @router.get("/invoices/{iid}/pdf")
 def invoice_pdf(iid: int, db: Session = Depends(get_db), user=Depends(auth.current_user)):
     inv = db.get(models.Invoice, iid)

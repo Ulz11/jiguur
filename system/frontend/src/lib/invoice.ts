@@ -22,3 +22,31 @@ export function invoiceLabel(inv: InvoiceNaming): { title: string; sub?: string 
   if (s && e && s !== e) return { title: cycleLabel(s, e), sub: `№${no}` };
   return { title: `№${no}` };
 }
+
+/* ---------- «ТООЦОО НИЙЛСЭН» — хамтарсан гарын үсгийн ТӨЛӨВ (№69) ----------
+ *
+ * Отгоо эгчийн арван харилцагчийн хуудас бүр гарын үсгийн блокоор дуусдаг:
+ * «Тооцоо нийлсэн: / Жигүүр Зам ХХК / Ч.Отгонцэцэг … / түрээслэгч: БЛҮҮМ ХХК /
+ * Н.Манлай …». Энэ бол чимэг БИШ, ТӨЛӨВ: тэр дүн дээр маргаан ДУУССАН.
+ * Систем баталгаажсан ба батлагдаагүй тоог ялгадаггүй байсан.
+ */
+
+export type Agreeable = { agreed_at?: string | null; agreed_by?: string };
+
+export function isAgreed(inv: Agreeable | undefined | null): boolean {
+  return !!inv?.agreed_at;
+}
+
+/** Мөрөн дэх ЖИЖИГ тэмдэг: «Тооцоо нийлсэн 2026.07.20 · Н.Манлай».
+ *  Тэмдэглэгээгүй бол ХООСОН — хий «нийлээгүй» гэсэн шошго нэмэхгүй
+ *  (жагсаалт дээр утга нь ЯЛГАА, чимээгүй байдал нь анхны төлөв). */
+export function agreedMark(inv: Agreeable | undefined | null): string {
+  if (!isAgreed(inv)) return "";
+  const by = (inv!.agreed_by || "").trim();
+  return `Тооцоо нийлсэн ${inv!.agreed_at}` + (by ? ` · ${by}` : "");
+}
+
+/** Хулганы tooltip — тэмдэг таслагдсан ч бүтнээрээ уншигдана. */
+export function agreedTitle(inv: Agreeable | undefined | null): string | undefined {
+  return isAgreed(inv) ? agreedMark(inv) : undefined;
+}

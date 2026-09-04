@@ -72,6 +72,24 @@ def _detail_note(detail_json: str | None) -> str:
     return " · ".join(str(x) for x in parts if x)
 
 
+def agreed_line(inv) -> str:
+    """«Тооцоо нийлсэн: 2026.07.20 · Н.Манлай» — ХУУДАСНЫХТАЙ ИЖИЛ өгүүлбэр.
+
+    Отгоо эгчийн хуудас бүр гарын үсгийн блокоор дуусдаг (№69). Тэмдэглэгээгүй
+    бол мөр нь ОГТ гарахгүй: хий «Тооцоо нийлсэн: ____» гэсэн мөр нь батлагдсан
+    ба батлагдаагүй тоог дахин ялгагдахгүй болгоно.
+    """
+    at = getattr(inv, "agreed_at", None)
+    if not at:
+        return ""
+    by = (getattr(inv, "agreed_by", "") or "").strip()
+    return "Тооцоо нийлсэн: " + _dotted(at) + (f" · {by}" if by else "")
+
+
+def _dotted(d) -> str:
+    return f"{d.year}.{d.month:02d}.{d.day:02d}"
+
+
 def invoice_pdf(db: Session, inv: models.Invoice, gmap: dict, mmap: dict) -> bytes:
     c = inv.contract
     p = _pdf()
@@ -463,6 +481,13 @@ def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
         p.cell(w[3], 7, _money(o), border=1, align="R")
         p.cell(w[4], 7, _money(pen) if pen else "-", border=1, align="R")
         p.ln()
+        # Батлагдсан мөр нь ӨӨРИЙГӨӨ хэлнэ — «энэ тоог хоёр тал зурсан» (№69)
+        line = agreed_line(inv)
+        if line:
+            p.set_font("dejavu", "", 8)
+            p.cell(sum(w), 6, "    ✓ " + line, border=1)
+            p.ln()
+            p.set_font("dejavu", "", 9)
         tot += inv.total; paid += inv.paid; out += o; pen_t += pen
     cur = billing.current_cycle_accrual(c, today)
     if cur:

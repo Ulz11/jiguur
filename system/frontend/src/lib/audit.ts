@@ -36,6 +36,10 @@ export const ACTIONS: Record<string, [label: string, pill: string]> = {
   book_penalty: ["Алданги нэхсэн", "pill-amber"],
   /* Хүнгүй зам (`services/cron.py`). Саарал: хүний ШИЙДВЭР биш, суурь явц. */
   cron: ["Автоматаар үүсгэсэн", "pill-grey"],
+  /* ХАМТАРСАН ГАРЫН ҮСЭГ (№69) — «энэ тоог хоёр тал баталсан». Ногоон:
+     батлагдсан тоо; цуцлалт нь шар («анхаар»), улаан БИШ (мөнгө хөдлөөгүй). */
+  agree: ["Тооцоо нийлсэн", "pill-green"],
+  unagree: ["Нийлснийг цуцалсан", "pill-amber"],
 };
 
 /** Биетийн монгол нэр — мөрөн дээр ба ШҮҮЛТҮҮРИЙН товчин дээр хоёуланд нь. */
@@ -58,6 +62,7 @@ export const ENTITIES: Record<string, string> = {
 export const BACKEND_ACTIONS = [
   "create", "update", "delete", "void", "stocktake",
   "settle_deposit", "rebuild", "close", "book_penalty", "cron",
+  "agree", "unagree",
 ] as const;
 
 /** Backend-ийн `audit.log(db, user, action, ENTITY, …)` дуудлагад гардаг биетүүд. */
