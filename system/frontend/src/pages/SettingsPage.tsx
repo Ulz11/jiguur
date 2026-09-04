@@ -1,7 +1,10 @@
 import { useEffect, useId, useState } from "react";
 import { api, fmt } from "../api";
-import { Spinner, FormModal, SubmitButton, useToast } from "../ui";
-import { formDirty } from "../lib/dirty";
+import { Spinner, SubmitButton, useToast } from "../ui";
+/* Каталогийн хоёр цонх нь ЭНД амьдардаг байв. Отгоо шинэ материал нэмэхдээ
+   АГУУЛАХ дээр зогсдог тул тэндээс ч нээгддэг болов — цонх нь НЭГ хэвээр
+   (`components/CatalogModals.tsx`), энэ хуудас нь ХЭВЭЭР ажиллана. */
+import { GradeModal, MaterialModal } from "../components/CatalogModals";
 
 export default function SettingsPage() {
   const toast = useToast();
@@ -130,97 +133,5 @@ export default function SettingsPage() {
                        onDone={() => { setMatModal(null); load(); }} />
       )}
     </div>
-  );
-}
-
-function GradeModal({ g, onClose, onDone }: any) {
-  const toast = useToast();
-  const f0 = { code: g.code || "", name: g.name || "", sort: g.sort ?? 0 };
-  const [f, setF] = useState(f0);
-  const uid = useId();
-  return (
-    <FormModal title={g.id ? "Зэрэглэл засах" : "Шинэ зэрэглэл"} onClose={onClose} dirty={formDirty(f0, f)}>
-      <label className="lbl" htmlFor={`${uid}-code`}>Код (богино)</label>
-      <input id={`${uid}-code`} className="inp mb-3.5" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="ж: С" autoFocus />
-      <label className="lbl" htmlFor={`${uid}-name`}>Нэр</label>
-      <input id={`${uid}-name`} className="inp mb-3.5" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="ж: С зэрэглэл" />
-      <label className="lbl" htmlFor={`${uid}-sort`}>Эрэмбэ</label>
-      <input id={`${uid}-sort`} type="number" className="inp mb-5" value={f.sort} onChange={(e) => setF({ ...f, sort: +e.target.value })} />
-      <div className="flex justify-end gap-2.5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <SubmitButton disabled={!f.code.trim()} onSubmit={async () => {
-          try {
-            if (g.id) await api(`/api/grades/${g.id}`, { method: "PUT", body: JSON.stringify(f) });
-            else await api("/api/grades", { method: "POST", body: JSON.stringify(f) });
-            toast("Хадгалагдлаа"); onDone();
-          } catch (e: any) { toast(e.message, "err"); }
-        }}>Хадгалах</SubmitButton>
-      </div>
-    </FormModal>
-  );
-}
-
-function MaterialModal({ m, grades, onClose, onDone }: any) {
-  const toast = useToast();
-  const base0 = { name: m.name || "", category: m.category || "Хэв",
-                  base_rate: m.base_rate ?? 0, repair_fee: m.repair_fee ?? 0 };
-  const prices0 = grades.map((g: any) => {
-    const ex = (m.prices || []).find((p: any) => p.grade_id === g.id);
-    return { grade_id: g.id, grade: g.code, nb_price: ex?.nb_price ?? 0, sale_price: ex?.sale_price ?? 0 };
-  });
-  const [f, setF] = useState({ ...base0, prices: prices0 });
-  const uid = useId();
-  // Зэрэглэл бүрийн үнэ нь МӨР бүхий хэсэг тул өөрийн харьцуулалттай:
-  // 6 зэрэглэлийн НБҮнэ бөглөчихөөд санамсаргүй хаах нь бүгдийг устгана.
-  const dirty = formDirty(base0, { name: f.name, category: f.category,
-                                   base_rate: f.base_rate, repair_fee: f.repair_fee })
-    || f.prices.some((p: any, i: number) =>
-         p.nb_price !== prices0[i]?.nb_price || p.sale_price !== prices0[i]?.sale_price);
-  return (
-    <FormModal title={m.id ? "Материал засах" : "Шинэ материал"} onClose={onClose} wide dirty={dirty}>
-      <div className="grid grid-cols-2 gap-3.5 max-sm:grid-cols-1">
-        <div><label className="lbl" htmlFor={`${uid}-name`}>Нэр *</label>
-          <input id={`${uid}-name`} className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="ж: Хэв хашмал 2020" autoFocus /></div>
-        <div><label className="lbl" htmlFor={`${uid}-cat`}>Категори</label>
-          <select id={`${uid}-cat`} className="inp" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>
-            {["Хэв", "Тулаас", "Труба", "Механизм", "Бусад"].map((c) => <option key={c}>{c}</option>)}
-          </select></div>
-        <div><label className="lbl" htmlFor={`${uid}-rate`}>Суурь тариф ₮/ш/хоног</label>
-          <input id={`${uid}-rate`} type="number" className="inp" value={f.base_rate} onChange={(e) => setF({ ...f, base_rate: +e.target.value })} /></div>
-        <div><label className="lbl" htmlFor={`${uid}-fee`}>Засварын фикс үнэ ₮/ш</label>
-          <input id={`${uid}-fee`} type="number" className="inp" value={f.repair_fee} onChange={(e) => setF({ ...f, repair_fee: +e.target.value })} /></div>
-      </div>
-      <h4 className="font-bold text-[13.5px] mt-5 mb-2">Зэрэглэл бүрийн үнэ</h4>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[420px]">
-          <thead><tr><th className="th">Зэрэглэл</th><th className="th text-right">НБҮнэ (актын үнэ)</th>
-            <th className="th text-right">Худалдах үнэ</th></tr></thead>
-          <tbody>
-            {f.prices.map((p: any, i: number) => (
-              <tr key={p.grade_id}>
-                <td className="td"><span className="pill-blue">{p.grade}</span></td>
-                <td className="td text-right"><input type="number" className="inp !min-h-9 !py-1.5 w-32 text-right"
-                  aria-label={`${p.grade} зэрэглэл — НБҮнэ (актын үнэ) ₮`}
-                  value={p.nb_price} onChange={(e) => setF({ ...f, prices: f.prices.map((x: any, j: number) => j === i ? { ...x, nb_price: +e.target.value } : x) })} /></td>
-                <td className="td text-right"><input type="number" className="inp !min-h-9 !py-1.5 w-32 text-right"
-                  aria-label={`${p.grade} зэрэглэл — худалдах үнэ ₮`}
-                  value={p.sale_price} onChange={(e) => setF({ ...f, prices: f.prices.map((x: any, j: number) => j === i ? { ...x, sale_price: +e.target.value } : x) })} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <SubmitButton disabled={!f.name.trim()} onSubmit={async () => {
-          try {
-            const body = { ...f, prices: f.prices.filter((p: any) => p.nb_price || p.sale_price) };
-            if (m.id) await api(`/api/materials/${m.id}`, { method: "PUT", body: JSON.stringify(body) });
-            else await api("/api/materials", { method: "POST", body: JSON.stringify(body) });
-            toast("Хадгалагдлаа"); onDone();
-          } catch (e: any) { toast(e.message, "err"); }
-        }}>Хадгалах</SubmitButton>
-      </div>
-    </FormModal>
   );
 }

@@ -51,6 +51,32 @@ def test_factory_cannot_manage_grades_403(client, as_role):
     assert r.status_code == 403
 
 
+def test_factory_cannot_manage_materials_403(client, as_role):
+    """Каталогийн ЗУРААС нь СЕРВЕР дээр — товч нуусан нь хамгаалалт БИШ.
+
+    Каталог нэмэх цонх нь Тохиргооноос гадна АГУУЛАХ дээрээс ч нээгддэг
+    болов. Агуулах бол ДАРГЫН өдөр тутмын дэлгэц: товчийг зөвхөн менежерт
+    зурдаг ч тэр нь ЗӨВХӨН эмх цэгц. Хэн нэг нь хүсэлтийг шууд илгээвэл
+    сервер өөрөө татгалзаж байх ёстой — НБҮнэ (акт) ба худалдах үнэ хоёр
+    харилцагчийн тооцоог хөдөлгөдөг.
+    """
+    h = as_role("darga")
+    body = {"name": "Даргын материал", "category": "Хэв", "base_rate": 1, "repair_fee": 1}
+    assert client.post("/api/materials", json=body, headers=h).status_code == 403
+    mid = client.get("/api/materials", headers=as_role("otgoo")).json()[0]["id"]
+    assert client.put(f"/api/materials/{mid}", json=body, headers=h).status_code == 403
+    # Санхүүч ч мөн адил — тэр мөнгө хардаг ч каталог тогтоодоггүй.
+    assert client.post("/api/materials", json=body, headers=as_role("sanhuu")).status_code == 403
+
+
+def test_factory_cannot_edit_grades_403(client, as_role):
+    """PUT нь POST-той ижил хаалттай — зэрэглэлийн код бол актын мөрийн нэр."""
+    gid = client.get("/api/grades", headers=as_role("otgoo")).json()[0]["id"]
+    r = client.put(f"/api/grades/{gid}", json={"code": "X", "name": "X"},
+                   headers=as_role("darga"))
+    assert r.status_code == 403
+
+
 def test_finance_cannot_create_contract_403(client, as_role):
     r = client.post("/api/contracts", headers=as_role("sanhuu"), json={
         "client_id": 1, "type": "rent", "start_date": iso(0), "items": []})

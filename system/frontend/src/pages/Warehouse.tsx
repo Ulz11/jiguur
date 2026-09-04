@@ -6,19 +6,36 @@ import { Spinner, FormModal, SubmitButton, useToast, Prog, Receipt, Empty,
 import { parseMoney } from "../lib/num";
 import { rowClickProps } from "../lib/rowClick";
 import { materialHref } from "../lib/links";
+import { GradeModal, MaterialModal } from "../components/CatalogModals";
 
 export default function Warehouse() {
   const [d, setD] = useState<any>(null);
+  const [grades, setGrades] = useState<any[] | null>(null);
   const [adjust, setAdjust] = useState<any>(null);   // {m, s} — тооллогын залруулга
   const [repair, setRepair] = useState<any>(null);   // {m, s} — засвар дуусгах
+  const [matModal, setMatModal] = useState<any>(null);   // {} = шинэ, {id..} = засах
+  const [gradeModal, setGradeModal] = useState<any>(null);
   const [q, setQ] = useState("");
   const toast = useToast();
   const nav = useNavigate();
   const u = user();
+  /* КАТАЛОГ ЭНД ЧУХАЛ БАЙХ ШАЛТГААН. Отгоо шинэ материал бүртгэх хэрэгтэй
+     болохдоо ЭНЭ хуудсан дээр, яг тэр материалуудыг ширтэж зогсдог. Каталог
+     засах цонх нь Тохиргоо (цэсний 13 дахь мөр) дотор нуугдсан байсан тул
+     «энд нэмэх газар алга» гэсэн нь ҮНЭН байв. Одоо хоёр хаалга, НЭГ өрөө:
+     цонх нь `components/CatalogModals.tsx` дээр ганц хэрэгжилттэй хэвээр.
+     Сервер тал `require_roles("manager")` — товчийг зөвхөн менежерт зурна. */
+  const isManager = u?.role === "manager";
 
-  const load = () => api("/api/stock").then(setD);
+  const load = () => {
+    api("/api/stock").then(setD);
+    /* Зэрэглэлийн жагсаалт нь ЗӨВХӨН каталогийн цонхонд хэрэгтэй (үнийн мөр
+       бүр нэг зэрэглэл). Тиймээс дарга/санхүүчийн хуудас нэмэлт хүсэлт
+       илгээхгүй — тэдэнд тэр цонх нээгддэггүй. */
+    if (isManager) api("/api/grades").then(setGrades);
+  };
   useEffect(() => { load(); }, []);
-  if (!d) return <Spinner />;
+  if (!d || (isManager && !grades)) return <Spinner />;
 
   /* Санхүүч тооллого залруулж чадахгүй. Гэсэн ч зэрэглэлийн үлдэгдэл нь бүх
      хүнд <button> хэлбэрээр, хулгана хүрэхэд өнгө нь солигдож, «Тооллогын
@@ -41,9 +58,22 @@ export default function Warehouse() {
           <h1 className="dashboard-title">Агуулах</h1>
           <p className="dashboard-subtitle">Амьд үлдэгдэл — хөдөлгөөн бүртгэгдэнгүүт шинэчлэгдэнэ.</p>
         </div>
-        {/* Материалын дэлгэрэнгүй хуудастай ИЖИЛ — тооллого руу ХОЛБООС */}
-        {u?.role !== "finance" && (
-          <Link to="/warehouse/stocktake" className="btn-primary command-action">▣ Тооллого хийх</Link>
+        {/* UI-ЗАРЧИМ §2 — гол үйлдэл БАРУУН дээд булан; хоёрдогч нь
+            `btn-secondary`, зүүн талд нь. Тооллого нь өдөр тутмынх тул ГОЛ
+            хэвээр; каталогийн хоёр товч түүний зүүнээс нэмэгдэнэ. */}
+        {(isManager || u?.role !== "finance") && (
+          <div className="flex items-center gap-2 flex-wrap command-action">
+            {isManager && (
+              <>
+                <button className="btn-secondary" onClick={() => setGradeModal({})}>+ Зэрэглэл</button>
+                <button className="btn-secondary" onClick={() => setMatModal({})}>+ Материал нэмэх</button>
+              </>
+            )}
+            {/* Материалын дэлгэрэнгүй хуудастай ИЖИЛ — тооллого руу ХОЛБООС */}
+            {u?.role !== "finance" && (
+              <Link to="/warehouse/stocktake" className="btn-primary">▣ Тооллого хийх</Link>
+            )}
+          </div>
         )}
       </div>
 
@@ -111,6 +141,17 @@ export default function Warehouse() {
                       боловч ил сум (Гэрээнүүдийн жагсаалттай ижил). */}
                   <td className="td">
                     <div className="flex items-center justify-end gap-2">
+                      {/* «БАЙГАА МАТЕРИАЛ ДЭЭР ШИНЭ ТӨРӨЛ НЭМЭХ» гэдгийн зам.
+                          Тэр цонхонд зэрэглэл БҮР мөртэй нээгддэг тул шинэ
+                          зэрэглэлд үнэ бичихэд энэ материал түүнийг авна.
+                          Мөрөн ДЭЭР нь байх нь чухал: Отгоо тэр материалыг
+                          ширтэж байхдаа асуудаг болохоос өөр хуудас руу
+                          явахаар бодохгүй. */}
+                      {isManager && (
+                        <button className="btn-ghost btn-row"
+                          aria-label={`${m.name} — материал засах (категори, тариф, зэрэглэлийн үнэ)`}
+                          onClick={(e) => { e.stopPropagation(); setMatModal(m); }}>Материал засах</button>
+                      )}
                       {repair > 0 && canAdjust && (
                         <button className="btn-ghost btn-row text-money"
                           onClick={(e) => {
@@ -131,7 +172,15 @@ export default function Warehouse() {
         {shown.length === 0 && (q.trim()
           ? <Empty title="Илэрц алга" sub={`«${q}» гэсэн материал, ангилал байхгүй.`}
                    action={{ label: "Хайлт цэвэрлэх", onClick: () => setQ("") }} />
-          : <Empty title="Материал бүртгэгдээгүй" sub="Тохиргооноос материал нэмнэ." />)}
+          /* Хоосон каталог дээр «Тохиргооноос нэмнэ» гэж заадаг байв — тэр
+             зам нь дарга, санхүүчид ХААЛТТАЙ (Тохиргоо зөвхөн менежерт).
+             Одоо менежер эндээсээ эхлүүлнэ, бусад нь хэнээс асуухаа мэднэ. */
+          : <Empty title="Материал бүртгэгдээгүй"
+                   sub={isManager ? "Эхний материалаа энд бүртгэнэ."
+                                  : "Каталогийг Отгоо эгч бүртгэнэ."}
+                   action={isManager
+                     ? { label: "+ Материал нэмэх", onClick: () => setMatModal({}) }
+                     : undefined} />)}
       </div>
 
       {/* САНХҮҮ — зөвхөн даргад, нөөцийнх нь ХОЙНО. ХУРААНГУЙ ТОО ЭНД
@@ -170,6 +219,17 @@ export default function Warehouse() {
       {repair && (
         <RepairModal m={repair.m} s={repair.s} onClose={() => setRepair(null)}
                      onDone={() => { setRepair(null); load(); }} />
+      )}
+      {/* Хадгалсны дараа ЭНЭ хуудас өөрөө шинэчлэгдэнэ — Отгоо шинэ материалаа
+          жагсаалтад ХАРНА, дахин ачаалах гэж бодохгүй. `load()` нь нөөцийг ба
+          (шинэ зэрэглэл нэмэгдсэн бол) зэрэглэлийн жагсаалтыг хоёуланг татна. */}
+      {isManager && matModal !== null && (
+        <MaterialModal m={matModal} grades={grades} onClose={() => setMatModal(null)}
+                       onDone={() => { setMatModal(null); load(); }} />
+      )}
+      {isManager && gradeModal !== null && (
+        <GradeModal g={gradeModal} onClose={() => setGradeModal(null)}
+                    onDone={() => { setGradeModal(null); load(); }} />
       )}
     </div>
   );
