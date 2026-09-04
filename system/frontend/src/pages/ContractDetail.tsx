@@ -20,6 +20,9 @@ import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED,
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { daysBetween, todayIso } from "../lib/schedule";
 import { isVoided, movementStockRows, voidRowClass, voidTitle } from "../lib/void";
+import { DEPOSIT_ACTIONS, DepositEvent, DepositKind, DepositLedger, depositActions,
+         depositAfter, depositAmountText, depositError, depositKindLabel,
+         depositMovesMoney, depositSign, depositStatusText } from "../lib/deposit";
 import { AKT_KINDS, AktKind, aktAmountText, aktCycle, aktCycleLabel, aktKind,
          aktLandingText, aktSigned, aktTotal } from "../lib/akt";
 import { EffKey, RATE_RESTATE_WARN, effectiveDate, effectiveOptions,
@@ -909,38 +912,9 @@ export default function ContractDetail() {
           </div>
           )}
 
-          {seesMoney && d.deposit > 0 && (
-            <div className="card p-5">
-              <h2 className="font-bold text-ink text-[15.5px] mb-3">Барьцаа</h2>
-              <div className="flex justify-between items-baseline py-1.5">
-                <span className="text-[13px] text-t2">Авсан барьцаа</span>
-                <b className="tabular-nums">{money(d.deposit)}</b>
-              </div>
-              {d.deposit_status === "settled" ? (
-                <>
-                  {d.deposit_applied > 0 && (
-                    <div className="flex justify-between items-baseline py-1.5 border-t border-line">
-                      <span className="text-[13px] text-t2">Авлагад суутгасан</span>
-                      <b className="tabular-nums text-money">{money(d.deposit_applied)}</b>
-                    </div>
-                  )}
-                  {d.deposit_returned > 0 && (
-                    <div className="flex justify-between items-baseline py-1.5 border-t border-line">
-                      <span className="text-[13px] text-t2">Буцаасан</span>
-                      <b className="tabular-nums">{money(d.deposit_returned)}</b>
-                    </div>
-                  )}
-                  <div className="mt-2"><span className="pill-green">
-                    {d.deposit_settled_date}-нд тооцоо хийгдсэн</span></div>
-                </>
-              ) : (
-                <>
-                  <div className="mt-1 mb-3"><span className="pill-amber">Тооцоо хийгдээгүй</span></div>
-                  <button className="btn-primary w-full justify-center"
-                          onClick={() => setModal("deposit")}>Барьцааны тооцоо хийх</button>
-                </>
-              )}
-            </div>
+          {seesMoney && (
+            <DepositCard d={d} canWrite={u?.role !== "factory"}
+                         onSettle={() => setModal("deposit")} onDone={load} />
           )}
 
           {u?.role === "manager" && d.status === "active" && (
@@ -1073,7 +1047,9 @@ function ContractFinance({ d, cyc, pen, aktSum }: {
         {d.vat_percent > 0 && (
           <FinanceRow label="НӨАТ" value={`${fmt(d.vat_percent)}%`} tone="dim" />
         )}
-        {d.deposit > 0 && (
+        {/* Барьцаа нь ДЭВТРЭЭС (H8): «байршуулаагүй» нь 0₮ БИШ тул явдалгүй
+            гэрээнд мөр огт гарахгүй — «0 барьцаатай» гэж уншуулахгүй. */}
+        {d.deposit_status !== "none" && (
           <FinanceRow label="Барьцаа" value={money(d.deposit)}
                       sub={d.deposit_status === "settled"
                         ? `${d.deposit_settled_date}-нд тооцоо хийгдсэн` : "тооцоо хийгдээгүй"} />
@@ -3049,6 +3025,268 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
         <DepositModal d={d} onClose={() => setSub(null)} onDone={refresh} />
       )}
     </>
+  );
+}
+
+/* ---------- БАРЬЦААНЫ ГҮЙДЭГ ДЭВТЭР (H8 / P1-11) ----------
+ *
+ * Зулаа-3!G30 нь `«=20000000-8265000+3000000+3000000+10000000»` — барьцаа нь
+ * НЭГ НҮД биш, ТАВАН ШИЙДВЭР. Карт нь өнөөдрийн ҮЛДЭГДЛИЙГ дээр нь тавьж,
+ * шийдвэрүүдийг ХУМИГДСАН түүх болгож доор нь зогсооно (UI-ЗАРЧИМ §4-ийн
+ * задрах тэмдэг). Дүрэм нь `lib/deposit.ts`-д, тесттэйгээ.
+ */
+function DepositCard({ d, canWrite, onSettle, onDone }: {
+  d: any; canWrite: boolean; onSettle: () => void; onDone: () => void;
+}) {
+  const led: DepositLedger = d.deposit_ledger
+    ?? { events: [], balance: d.deposit || 0, lodged: 0, applied: d.deposit_applied || 0,
+         returned: d.deposit_returned || 0, status: d.deposit_status || "none" };
+  const [open, setOpen] = useState(false);
+  const [add, setAdd] = useState<DepositKind | null>(null);
+  const [voidEv, setVoidEv] = useState<DepositEvent | null>(null);
+  const st = depositStatusText(led);
+  const pid = panelId("deposit", String(d.id));
+  const rows = [...led.events].reverse();   // сүүлийн бичилт ДЭЭР
+
+  return (
+    <div className="card p-5">
+      <h2 className="font-bold text-ink text-[15.5px] mb-3">Барьцаа</h2>
+      <div className="flex justify-between items-baseline py-1.5">
+        <span className="text-[13px] text-t2">
+          {led.status === "none" ? "Барьцаа" : "Барьцааны үлдэгдэл"}
+        </span>
+        <b className="tabular-nums">{led.status === "none" ? "—" : money(led.balance)}</b>
+      </div>
+      {led.applied > 0 && (
+        <div className="flex justify-between items-baseline py-1.5 border-t border-line">
+          <span className="text-[13px] text-t2">Авлагад суутгасан</span>
+          <b className="tabular-nums text-money">{money(led.applied)}</b>
+        </div>
+      )}
+      {led.returned > 0 && (
+        <div className="flex justify-between items-baseline py-1.5 border-t border-line">
+          <span className="text-[13px] text-t2">Буцаасан</span>
+          <b className="tabular-nums">{money(led.returned)}</b>
+        </div>
+      )}
+      <div className="mt-2 mb-3 flex items-center gap-2 flex-wrap">
+        <span className={st.pill}>{st.label}</span>
+        {led.status === "settled" && led.settled_date && (
+          <span className="text-[12px] text-t3">{led.settled_date}-нд</span>
+        )}
+      </div>
+
+      {canWrite && d.status === "active" && (
+        <div className="flex gap-2 flex-wrap">
+          {depositActions(led).map((a) => (
+            <button key={a.kind} className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]"
+                    title={a.title} onClick={() => setAdd(a.kind)}>
+              + {a.button}
+            </button>
+          ))}
+        </div>
+      )}
+      {/* Түүний ЁСЛОЛ хэвээр: «суутга + буцаа»-г нэг дороо хийдэг хаалга
+          (гэрээ хаах wizard ч эндээс дуудна). Дэвтэрт хоёр мөр болж бичигдэнэ. */}
+      {canWrite && led.status === "held" && d.status === "active" && (
+        <button className="btn-primary w-full justify-center mt-2.5" onClick={onSettle}>
+          Барьцааны тооцоо хийх
+        </button>
+      )}
+
+      {rows.length > 0 && (
+        <div className="mt-3.5 pt-3 border-t border-line">
+          <button type="button" {...disclosureProps(open, pid)}
+                  className="tap flex items-center gap-2 w-full text-left text-[13px] font-semibold text-t2"
+                  onClick={() => setOpen(!open)}>
+            <Chevron open={open} />
+            Барьцааны түүх
+            <span className="ml-auto text-t3 font-medium">{rows.length} бичилт</span>
+          </button>
+          {open && (
+            <div id={pid} className="mt-2.5 space-y-2">
+              {rows.map((ev) => (
+                <div key={ev.id} className="flex items-baseline gap-2 flex-wrap text-[13px]">
+                  <span className={`text-t3 tabular-nums ${voidRowClass(ev)}`}>{ev.date}</span>
+                  <span className={voidRowClass(ev)} title={voidTitle(ev)}>
+                    {depositKindLabel(ev.kind)}
+                  </span>
+                  <b className={`ml-auto tabular-nums ${voidRowClass(ev)} ${
+                       depositSign(ev.kind) > 0 ? "text-money" : "text-warn"}`}>
+                    {depositAmountText(ev, money)}
+                  </b>
+                  {ev.balance_after !== null && ev.balance_after !== undefined && (
+                    <span className="basis-full text-[12px] text-t3 tabular-nums">
+                      үлдэгдэл {money(ev.balance_after)}
+                      {ev.note && <span className="text-t2"> · {ev.note}</span>}
+                    </span>
+                  )}
+                  {ev.voided && (
+                    <span className="basis-full text-[12px] text-danger">
+                      ХҮЧИНГҮЙ{ev.void_reason ? `: ${ev.void_reason}` : ""}
+                      {ev.voided_by && <span className="text-t3"> · {ev.voided_by}</span>}
+                    </span>
+                  )}
+                  {canWrite && !ev.voided && (
+                    <span className="basis-full">
+                      <VoidButton label={`${depositKindLabel(ev.kind)} ${money(ev.amount)} · ${ev.date}`}
+                                  onClick={() => setVoidEv(ev)} />
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {add && <DepositEventModal d={d} led={led} kind={add}
+                                 onClose={() => setAdd(null)}
+                                 onDone={() => { setAdd(null); onDone(); }} />}
+      {voidEv && <VoidDepositEventModal d={d} led={led} ev={voidEv}
+                                        onClose={() => setVoidEv(null)}
+                                        onDone={() => { setVoidEv(null); onDone(); }} />}
+    </div>
+  );
+}
+
+/* Нэг бичилт. Талбартай тул `FormModal` (dirty ЗААВАЛ); мөнгө хөдөлгөдөг
+   хоёр төрөлд (суутгах, буцаах) баталгаажуулах цонх + Receipt нэмэгдэнэ —
+   UI-ЗАРЧИМ §4: «болох гэж буйгаа navy Receipt дээр ЭХЛЭЭД харуулаад л асууна». */
+function DepositEventModal({ d, led, kind, onClose, onDone }: {
+  d: any; led: DepositLedger; kind: DepositKind; onClose: () => void; onDone: () => void;
+}) {
+  const toast = useToast();
+  const uid = useId();
+  const act = DEPOSIT_ACTIONS.find((a) => a.kind === kind)!;
+  const f0 = { date: today(), amount: "", note: "" };
+  const [f, setF] = useState(f0);
+  const [ask, setAsk] = useState(false);
+  const amount = parseMoney(f.amount);
+  const err = f.amount.trim() ? depositError(kind, amount, led.balance) : "";
+  const after = depositAfter(led.balance, kind, amount);
+  const moves = depositMovesMoney(kind);
+  const debt = Math.max(d.balance, 0);
+
+  const save = async () => {
+    await api(`/api/contracts/${d.id}/deposit-events`, {
+      method: "POST",
+      body: JSON.stringify({ kind, date: f.date, amount, note: f.note.trim() }) });
+    toast(`${act.title} — ${money(amount)}`);
+    onDone();
+  };
+
+  const receipt = (
+    <Receipt className="mt-4"
+      rows={[
+        { label: "Одоогийн барьцаа", value: money(led.balance) },
+        { label: act.title, value: depositAmountText({ kind, amount }, money),
+          accent: moves ? "danger" : "money" },
+        ...(kind === "apply"
+          ? [{ label: "Авлага үүнээс буурна", sub: "зөвхөн үндсэн өр",
+               value: money(debt) + " → " + money(Math.max(debt - amount, 0)),
+               accent: "money" as const }] : []),
+      ]}
+      total={{ label: "Бичилтийн дараа барьцаа", value: money(after),
+               accent: after > 0 ? undefined : "dim" }} />
+  );
+
+  if (ask) {
+    return (
+      <ConfirmModal title={act.title}
+        intro={<>Гэрээ №{d.no} · <b className="text-ink">{d.client}</b> · {f.date}.
+                 {kind === "apply"
+                   ? " Суутгал нь ЖИНХЭНЭ төлбөрийн бичилт болж, авлагыг яг энэ дүнгээр бууруулна."
+                   : " Буцаалт нь харилцагчид өгсөн мөнгө — авлагыг ОГТ хөндөхгүй."}</>}
+        rows={[{ label: "Одоогийн барьцаа", value: money(led.balance) },
+               { label: act.title, value: depositAmountText({ kind, amount }, money),
+                 accent: "danger" }]}
+        total={{ label: "Бичилтийн дараа барьцаа", value: money(after) }}
+        confirmLabel={act.button}
+        onClose={() => setAsk(false)}
+        onConfirm={async () => {
+          try { await save(); } catch (e: any) { toast(e.message, "err"); setAsk(false); }
+        }} />
+    );
+  }
+
+  return (
+    <FormModal title={act.title} onClose={onClose} dirty={formDirty(f0, f)}>
+      <p className="text-[13.5px] text-t2 mb-4">
+        Гэрээ №{d.no} · <b className="text-ink">{d.client}</b>
+        {led.status !== "none" && <> · барьцаанд{" "}
+          <b className="text-ink tabular-nums">{money(led.balance)}</b></>}
+      </p>
+      <div className="grid grid-cols-2 gap-3.5">
+        <div><label className="lbl" htmlFor={`${uid}-amt`}>Дүн ₮</label>
+          <input id={`${uid}-amt`} className="inp" inputMode="numeric" autoFocus
+                 value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></div>
+        <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
+          <input id={`${uid}-date`} type="date" className="inp" value={f.date}
+                 onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
+      </div>
+      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
+        <input id={`${uid}-note`} className="inp" value={f.note}
+               placeholder="ж: 2025 оны гэрээгээр"
+               onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
+      {err && <p className="text-[12.5px] text-danger mt-2.5">⚠ {err}</p>}
+      {receipt}
+      <div className="flex justify-end gap-2.5 mt-5">
+        <button className="btn-secondary" onClick={onClose}>Болих</button>
+        <SubmitButton disabled={!!err || !(amount > 0)}
+                      onSubmit={async () => {
+                        if (moves) { setAsk(true); return; }
+                        try { await save(); } catch (e: any) { toast(e.message, "err"); }
+                      }}>
+          {moves ? "Үргэлжлүүлэх" : act.button}
+        </SubmitButton>
+      </div>
+    </FormModal>
+  );
+}
+
+/* Бичилтийг ХҮЧИНГҮЙ болгох. Суутгал бол түүний ТӨЛБӨР нь хамт цуцлагдана —
+   Отгоо дарахаасаа өмнө ЯГ юу буцаж ирэхийг уншина (H1-ийн тэгш хэм). */
+function VoidDepositEventModal({ d, led, ev, onClose, onDone }: {
+  d: any; led: DepositLedger; ev: DepositEvent; onClose: () => void; onDone: () => void;
+}) {
+  const toast = useToast();
+  const [reason, setReason] = useState("");
+  const rid = useId();
+  const back = depositAfter(led.balance, ev.kind === "apply" || ev.kind === "return"
+                                        ? "topup" : "apply", ev.amount);
+  return (
+    <ConfirmModal title="Барьцааны бичилт хүчингүй болгох"
+      intro={<>
+        {depositKindLabel(ev.kind)} <b className="text-ink">{money(ev.amount)}</b> · {ev.date} —
+        энэ мөр УСТАХГҮЙ: дэвтэр дээр «ХҮЧИНГҮЙ» тэмдэгтэй, шалтгаантайгаа хамт үлдэж,
+        зөвхөн нийлбэрээс гарна.
+        {ev.kind === "apply" && " Суутгалын төлбөр нь хамт хүчингүй болж, авлага буцаж нээгдэнэ."}
+        {" "}Энэ үйлдлийг буцаах боломжгүй.
+      </>}
+      rows={[{ label: "Одоогийн барьцаа", value: money(led.balance) },
+             { label: depositKindLabel(ev.kind) + " — хүчингүй",
+               value: depositAmountText({ kind: ev.kind === "apply" || ev.kind === "return"
+                                                ? "topup" : "apply", amount: ev.amount }, money),
+               accent: "danger" }]}
+      total={{ label: "Барьцаа болно", value: money(back) }}
+      confirmLabel="Хүчингүй болгох" confirmDisabled={!reason.trim()} danger
+      onClose={onClose}
+      onConfirm={async () => {
+        try {
+          await api(`/api/deposit-events/${ev.id}/void`, {
+            method: "POST", body: JSON.stringify({ reason: reason.trim() }) });
+          toast("Барьцааны бичилт хүчингүй болов");
+          onDone();
+        } catch (e: any) { toast(e.message, "err"); }
+      }}>
+      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+        Цуцлах шалтгаан <span className="text-danger">*</span>
+      </label>
+      <input id={rid} className="inp w-full" value={reason} autoFocus
+             placeholder="ж: дүнг буруу бичсэн"
+             onChange={(e) => setReason(e.target.value)} />
+    </ConfirmModal>
   );
 }
 

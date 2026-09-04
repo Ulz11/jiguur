@@ -9,6 +9,7 @@ from ..db import get_db
 from .. import models, schemas, serializers, auth
 from ..services import billing, pdfappendix, pdfgen
 from ..services import audit
+from ..services import deposit as deposit_svc
 from ..services import rebuild as rebuild_svc
 
 router = APIRouter(prefix="/api")
@@ -92,6 +93,10 @@ def create_contract(body: schemas.ContractIn, db: Session = Depends(get_db),
                                    grade_id=it.grade_id, qty=it.qty,
                                    rate=it.unit_price if c.type == "sale" else it.daily_rate))
     db.commit()
+    # Гэрээнд БИЧСЭН барьцаа нь дэвтрийн ЭХНИЙ мөр болно (H8) — «байршуулаагүй»
+    # (явдал огт алга) ба «0 байршуулсан» хоёр цаашид ялгагдана.
+    if body.deposit:
+        deposit_svc.set_lodged(db, c, body.deposit, getattr(user, "name", "") or "")
     audit.log(db, user, "create", "contract", c.id,
               f"№{c.no} · {client.name} · {'түрээс' if c.type == 'rent' else 'худалдаа'} · "
               f"{len(body.items)} мөр")
@@ -185,6 +190,9 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
                             for rc in sorted(c.rate_changes,
                                              key=lambda r: (r.effective_from, r.id),
                                              reverse=True)],
+           # БАРЬЦААНЫ ГҮЙДЭГ ДЭВТЭР (H8) — хүчингүй болсон мөр ч ХАРАГДАНА.
+           # Дүн нь `contract_row`-ийн `deposit`-той нэг эх сурвалжтай.
+           "deposit_ledger": deposit_svc.ledger(c),
            # Алданги НЭХСЭН явдлууд (R25 / H2) — «гаргасан шийдвэрүүдийнх нь
            # жагсаалт» ХАРАГДАХ ёстой. `live_only=False`: хүчингүй болсон нь ч
            # мөрөндөө үлдэнэ (H1) — хэдийг өршөөснөө тэр эндээс уншина.
@@ -421,7 +429,14 @@ def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
         raise HTTPException(400, "Циклийн хоног 1-ээс бага байж болохгүй")
     if heavy.get("cycle_mode") is not None and heavy["cycle_mode"] not in billing.CYCLE_MODES:
         raise HTTPException(400, CYCLE_MODE_ERR)
+    # БАРЬЦАА нь цаашид ДЭВТРЭЭС бодогдоно (H8): талбарыг шууд бичвэл кэш ба
+    # дэвтэр хоёр сална. Дарж засах нь «байршуулсан дүнг зас» гэсэн утгатай
+    # хэвээр — дэвтэрт ЖИНХЭНЭ түүх (нэмэлт/суутгал/буцаалт) бичигдсэн бол
+    # `set_lodged` татгалзаж, бичилтээр өөрчлүүлнэ.
+    new_deposit = data.pop("deposit", None)
     fields = {**data, **heavy}
+    if new_deposit is not None:
+        fields["deposit"] = new_deposit
     before = {k: getattr(c, k) for k in fields}
 
     def mutate():
@@ -437,6 +452,11 @@ def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
                                   "гэрээний огноо/мөчлөг")
         if preview:
             return preview
+        if new_deposit is not None:
+            try:
+                deposit_svc.set_lodged(db, c, new_deposit, getattr(user, "name", "") or "")
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
         audit.log(db, user, "update", "contract", c.id,
                   f"№{c.no}: " + (audit.changes_text(before, fields) or "дуусах огноог цэвэрлэв"))
         row = serializers.contract_row(c, date.today())
@@ -444,6 +464,11 @@ def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
 
     mutate()
     db.commit()
+    if new_deposit is not None:
+        try:
+            deposit_svc.set_lodged(db, c, new_deposit, getattr(user, "name", "") or "")
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
     audit.log(db, user, "update", "contract", c.id,
               f"№{c.no}: " + (audit.changes_text(before, fields) or "дуусах огноог цэвэрлэв"))
     return serializers.contract_row(c, date.today())

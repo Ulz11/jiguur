@@ -9,6 +9,32 @@ import json
 from datetime import date
 from sqlalchemy.orm import Session
 from .. import models
+from . import deposit as deposit_svc
+
+
+def account_contract(db: Session, client: models.Client, as_of: date | None = None,
+                     note: str = "") -> models.Contract:
+    """ХАРИЛЦАГЧИЙН ДАНС — `OB-{id}` синтетик гэрээ. Байхгүй бол үүсгэнэ.
+
+    Энэ гэрээ нь ЗӨВХӨН эхний үлдэгдлийнх БИШ: түрээсийн МӨЧЛӨГТ ХАМААРАХГҮЙ
+    бүх бичилт (хуучин үлдэгдэл, олгосон зээл, ажилчдын цалин, кран, харилцагч
+    хоорондын шилжүүлэг — P1-16/H11) энд суудаг. Түүнийг ингэж сонгосон нь
+    санаатай: `rebuild_contract_invoices` нь OB гэрээнд ХЭЗЭЭ Ч хүрдэггүй,
+    `derivable_invoice_specs` нь түүнд юу ч гаргадаггүй тул ГАРААР үүсгэсэн
+    нэхэмжлэл эндээс хэзээ ч арчигдахгүй. Алданги 0 — шилжүүлсэн үлдэгдэлд
+    автомат хөшүүрэг зэвсэглэхгүй (H2).
+    """
+    no = f"OB-{client.id}"
+    c = db.query(models.Contract).filter_by(no=no).first()
+    if c is not None:
+        return c
+    c = models.Contract(no=no, client_id=client.id, type="rent",
+                        start_date=as_of or date.today(), cycle_days=30,
+                        penalty_percent=0, status="active",
+                        note=note or "Харилцагчийн данс — түрээсийн мөчлөгт хамаарахгүй бичилтүүд")
+    db.add(c)
+    db.flush()
+    return c
 
 
 def create_opening_balance(db: Session, client: models.Client, amount: float,
@@ -30,14 +56,14 @@ def create_opening_balance(db: Session, client: models.Client, amount: float,
         # зорилгоор нээнэ; нэхэмжлэл үүсэхгүй.
     # penalty 0: шилжүүлсэн хуучин үлдэгдэлд автомат алданги тооцохгүй
     # (шаардлагатай бол гэрээ дээр нь гараар асаана)
-    c = models.Contract(no=f"OB-{client.id}", client_id=client.id, type="rent",
-                        start_date=as_of, cycle_days=30, penalty_percent=0,
-                        deposit=deposit, status="active",
-                        note="Үлдэгдэл шилжүүлэлт — хуучин системээс"
-                             + (" (илүү төлөлттэй, барьцаа хадгалав)"
-                                if credit is not None else ""))
-    db.add(c)
-    db.flush()
+    c = account_contract(
+        db, client, as_of,
+        note="Үлдэгдэл шилжүүлэлт — хуучин системээс"
+             + (" (илүү төлөлттэй, барьцаа хадгалав)" if credit is not None else ""))
+    if deposit:
+        # Барьцаа нь дэвтрийн ЭХНИЙ мөр болж орно (H8) — «байршуулаагүй»
+        # (явдалгүй) ба «0 байршуулсан» хоёр цаашид ялгагдана.
+        deposit_svc.set_lodged(db, c, deposit, "Шилжүүлэлт")
     inv = None
     if amount > 0:
         inv = models.Invoice(contract_id=c.id, no=f"OB-{client.id}",

@@ -106,9 +106,19 @@ class Contract(Base):
     # %/хоног. Анхны утга 0 — алданги нь Отгоогийн ХӨШҮҮРЭГ, машины автомат
     # төлбөр биш (R25 / H2). Зэвсэглэх нь гэрээ бүрд ГАРААР хийгдэх шийдвэр.
     penalty_percent: Mapped[float] = mapped_column(Float, default=0)
-    deposit: Mapped[float] = mapped_column(Float, default=0)
-    # Барьцааны мөчлөг: held → returned / applied / settled (хэсэгчлэн хоёулаа)
-    deposit_status: Mapped[str] = mapped_column(String(12), default="held")
+    # ---- БАРЬЦАА: доорх ДӨРВӨН талбар нь `DepositEvent` дэвтрийн КЭШ (H8) ----
+    # Урьд нь барьцаа нь ГАНЦ нүд байв. Зулаагийн хуудсан дээр тэр нүд нь
+    # «=20000000-8265000+3000000+3000000+10000000» гэсэн ТАВАН ШИЙДВЭРИЙН
+    # гинж — «аль нь суутгагдсан, аль нь буцаагдсан» гэдэг нь нэг тоонд
+    # нурж алга болдог тул гэрээний хаалт нь ХУДАЛ болно (P1-11).
+    #
+    # Одоо ЭХ СУРВАЛЖ нь `deposit_events` мөрүүд; эдгээр багана нь бичилт
+    # бүрийн дараа ДАХИН БОДОГДОЖ (services/deposit.py::recompute) суудаг
+    # тул хуучин уншигч бүр (serializers, PDF, дашбоард, хаалтын wizard)
+    # ЯГ хэвээрээ ажиллана.
+    deposit: Mapped[float] = mapped_column(Float, default=0)          # = ОДООГИЙН үлдэгдэл
+    # none (явдал огт алга — «байршуулаагүй», 0 БИШ) | held | settled
+    deposit_status: Mapped[str] = mapped_column(String(12), default="none")
     deposit_returned: Mapped[float] = mapped_column(Float, default=0)
     deposit_applied: Mapped[float] = mapped_column(Float, default=0)
     deposit_settled_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -131,6 +141,45 @@ class Contract(Base):
     akt_entries: Mapped[list["AktEntry"]] = relationship(back_populates="contract")
     # Тарифын дахин тохиролт (R3 / H6) — «шинэ тариф ДАРААГИЙН ЦИКЛЭЭС»
     rate_changes: Mapped[list["RateChange"]] = relationship(back_populates="contract")
+    # Барьцааны ЯВДЛЫН дэвтэр (H8) — дээрх дөрвөн багана эндээс бодогдоно
+    deposit_events: Mapped[list["DepositEvent"]] = relationship(back_populates="contract")
+
+
+class DepositEvent(Base):
+    """БАРЬЦААНЫ ЯВДАЛ — байршуулав / нэмэв / суутгав / буцаав.
+
+    Зулаа-3!G30 нь `«=20000000-8265000+3000000+3000000+10000000»` = 27,735,000₮
+    гэсэн ГҮЙДЭГ ДЭВТЭР: 20 сая байршуулаад, 8,265,000-ыг авлагад суутгаад,
+    дараа нь 3 + 3 + 10 саяг нэмж байршуулсан ТАВАН шийдвэр. `Contract.deposit`
+    гэсэн ганц float тэднээс зөвхөн үр дүнг барьдаг байв (H8).
+
+    ДҮРЭМ:
+      · `amount` ҮРГЭЛЖ ЭЕРЭГ — тэмдгийг `kind` зөөнө (тэр хэзээ ч хасах
+        тэмдэг бичдэггүй);
+      · `lodge`/`topup` нэмнэ, `apply`/`return` хасна;
+      · `apply` нь ЖИНХЭНЭ төлбөрийн бичилт төрүүлнэ (`payment_id`) — авлага
+        яг тэр дүнгээр буурна. `return` нь авлагыг ОГТ хөндөхгүй: тэр бол
+        харилцагчид буцаасан мөнгө, түүний өр биш;
+      · цуцлалт нь УСТГАЛ БИШ (H1): мөр нь ХҮЧИНГҮЙ тэмдэгтэй үлдэж,
+        нийлбэрээс л гарна. `apply`-г цуцлахад түүний төлбөр нь өнөөдрийн
+        `void_payment` замаараа хамт цуцлагдана.
+    """
+    __tablename__ = "deposit_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int] = mapped_column(ForeignKey("contracts.id"))
+    date: Mapped[date] = mapped_column(Date)
+    kind: Mapped[str] = mapped_column(String(10))    # lodge | topup | apply | return
+    amount: Mapped[float] = mapped_column(Float)     # ҮРГЭЛЖ > 0
+    note: Mapped[str] = mapped_column(Text, default="")
+    # `apply` нь төрүүлсэн synthetic төлбөрөө өөртөө зангидна — цуцлалт тэгш хэмтэй
+    payment_id: Mapped[int | None] = mapped_column(ForeignKey("payments.id"), nullable=True)
+    user_name: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_by: Mapped[str] = mapped_column(String(100), default="")
+
+    contract: Mapped["Contract"] = relationship(back_populates="deposit_events")
 
 
 class ContractItem(Base):

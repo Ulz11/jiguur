@@ -85,9 +85,88 @@ def backfill_penalty_charges(engine):
         """)
 
 
+def backfill_deposit_events(engine):
+    """Үе H8 (барьцаа = гүйдэг дэвтэр): хуучин НЭГ НҮДИЙГ явдал болгоно.
+
+    Урьд нь барьцаа нь `contracts.deposit` гэсэн ганц float байв. Дэвтэр
+    (`deposit_events`) нээгдмэгц тэр тоо нь ЭХ СУРВАЛЖ байхаа болих тул
+    нөхөхгүй бол хуучин DB дээрх БҮХ барьцаа ЧИМЭЭГҮЙ 0 болно.
+
+    Гэрээ бүрд:
+      · `deposit` (эсвэл суутгасан/буцаасан дүн) тэгээс ялгаатай бол
+        БАЙРШУУЛАЛТ нэг мөр — гэрээний эхлэх өдрөөр, «хуучин системээс»;
+      · хуучин системд аль хэдийн суутгасан/буцаасан бол тэдгээр нь ч
+        мөрөө авна (тооцоо хийгдсэн гэрээний үлдэгдэл 0 хэвээр үлдэнэ).
+        ⚠ Эдгээр `apply` мөр нь ТӨЛБӨР ТӨРҮҮЛЭХГҮЙ: тэр төлбөр хуучин
+        `settle-deposit` замаар аль хэдийн бичигдсэн — давхарлавал авлага
+        хоёр дахин буурна.
+      · явдалгүй үлдсэн гэрээний төлөв `none` болно — «байршуулаагүй» (№55)
+        ба «0 байршуулсан» хоёр ЯЛГААТАЙ.
+
+    Дахин ажиллуулахад аюулгүй: явдалтай гэрээг алгасна.
+    """
+    with engine.begin() as conn:
+        if not _has_tables(conn, "deposit_events", "contracts"):
+            return
+        # Хуучин `deposit` нь БАЙРШУУЛСАН дүн байв — тооцоо хийгдсэн ч
+        # хэзээ ч буурдаггүй (`settle-deposit` зөвхөн applied/returned бичдэг).
+        # Тиймээс байршуулалт нь ЯГ тэр тоо; суутгал/буцаалт нь доор хасна.
+        conn.exec_driver_sql("""
+            INSERT INTO deposit_events (contract_id, date, kind, amount, note,
+                                        user_name, created_at,
+                                        void_reason, voided_by)
+            SELECT c.id, c.start_date, 'lodge', COALESCE(c.deposit,0),
+                   'хуучин системээс', '(хуучин системээс)',
+                   c.start_date || ' 00:00:00', '', ''
+              FROM contracts c
+             WHERE COALESCE(c.deposit,0) <> 0
+               AND NOT EXISTS (SELECT 1 FROM deposit_events e WHERE e.contract_id = c.id)
+        """)
+        for kind, col in (("apply", "deposit_applied"), ("return", "deposit_returned")):
+            conn.exec_driver_sql(f"""
+                INSERT INTO deposit_events (contract_id, date, kind, amount, note,
+                                            user_name, created_at,
+                                            void_reason, voided_by)
+                SELECT c.id, COALESCE(c.deposit_settled_date, c.start_date), '{kind}',
+                       c.{col}, 'хуучин системээс', '(хуучин системээс)',
+                       COALESCE(c.deposit_settled_date, c.start_date) || ' 00:00:00', '', ''
+                  FROM contracts c
+                 WHERE COALESCE(c.{col},0) > 0
+                   AND NOT EXISTS (SELECT 1 FROM deposit_events e
+                                    WHERE e.contract_id = c.id AND e.kind = '{kind}')
+            """)
+        # Кэш баганууд ДЭВТЭРТЭЙГЭЭ тэнцэнэ (services/deposit.py::recompute-ийн
+        # SQL хувилбар) — эс бөгөөс дараагийн бичилт хүртэл хуучин тоо зогсоно.
+        live = "e.contract_id = contracts.id AND e.voided_at IS NULL"
+        conn.exec_driver_sql(f"""
+            UPDATE contracts SET
+              deposit = COALESCE((SELECT SUM(CASE WHEN e.kind IN ('lodge','topup')
+                                                  THEN e.amount ELSE -e.amount END)
+                                    FROM deposit_events e WHERE {live}), 0),
+              deposit_applied = COALESCE((SELECT SUM(e.amount) FROM deposit_events e
+                                           WHERE {live} AND e.kind = 'apply'), 0),
+              deposit_returned = COALESCE((SELECT SUM(e.amount) FROM deposit_events e
+                                            WHERE {live} AND e.kind = 'return'), 0)
+             WHERE EXISTS (SELECT 1 FROM deposit_events e WHERE e.contract_id = contracts.id)
+        """)
+        conn.exec_driver_sql(f"""
+            UPDATE contracts
+               SET deposit_status = CASE WHEN deposit > 0.005 THEN 'held' ELSE 'settled' END
+             WHERE EXISTS (SELECT 1 FROM deposit_events e WHERE {live})
+        """)
+        # Явдалгүй гэрээ = «байршуулаагүй». Хуучин анхны утга `held` байсан тул
+        # барьцаагүй гэрээ бүр «барьцаа хүлээж байна» гэж уншигдаж байв.
+        conn.exec_driver_sql(f"""
+            UPDATE contracts SET deposit_status = 'none'
+             WHERE deposit_status <> 'none'
+               AND NOT EXISTS (SELECT 1 FROM deposit_events e WHERE {live})
+        """)
+
+
 # Үе шат бүрийн дата нөхөлт энд бүртгэгдэнэ: fn(engine).
 # ALTER-үүд дууссаны ДАРАА дарааллаараа ажиллана. Функц бүр өөрөө idempotent байх ёстой.
-BACKFILLS: list = [backfill_movement_line_rates, backfill_penalty_charges]
+BACKFILLS: list = [backfill_movement_line_rates, backfill_penalty_charges,
+                   backfill_deposit_events]
 
 
 def _default_sql(col) -> str:
