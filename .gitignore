@@ -16,6 +16,10 @@ system/backend/migration/real_data.json
 system/backend/jiguur-real.db
 system/backend/jiguur-real.db-wal
 system/backend/jiguur-real.db-shm
+# Топ-10 харилцагчийн STAGING сан (ижил шалтгаанаар)
+system/backend/jiguur-top10.db
+system/backend/jiguur-top10.db-wal
+system/backend/jiguur-top10.db-shm
 # Тулгалтын тайлан — бодит харилцагч тус бүрийн ₮ агуулна
 docs/Тулгалтын тайлан.md
 docs/Тулгалтын тайлан.html

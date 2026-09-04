@@ -81,8 +81,12 @@ def collect(db_url: str, data: dict) -> dict:
             b = board.get(name)
             src = seed_map.get(name, {})
             if cl is None:
-                rows.append({"name": name, "missing": True, "her_bal": b["balance"]
-                             if b else None, "note": "СИСТЕМД ОРООГҮЙ"})
+                mode = data.get("clients_mode", "all")
+                rows.append({"name": name, "missing": True,
+                             "her_bal": b["balance"] if b else None,
+                             "note": ("энэ ачаалалтын ТОП-10-д ороогүй "
+                                      "(`--clients top10`)" if mode == "top10"
+                                      else "СИСТЕМД ОРООГҮЙ")})
                 continue
             r = billing.client_receivable(cl, as_of)
             credit = sum(billing.payment_unallocated(p)
@@ -112,13 +116,81 @@ def collect(db_url: str, data: dict) -> dict:
                 "note": src.get("note", ""),
                 "not_lodged": bool(b and b.get("deposit_not_lodged")),
             })
+            # ── v2: МӨНГӨНИЙ ЗАДАРГАА + ГЭРЭЭНИЙ ХЭЛБЭР + ЗУРГААН БАЙР ──
+            ob = next((ct for ct in cl.contracts if ct.no.startswith("OB-")), None)
+            ob_inv = sum(i.total for i in (ob.invoices if ob else [])
+                         if i.voided_at is None and i.no.startswith("OB-"))
+            ent = db.query(models.ClientEntry).filter(
+                models.ClientEntry.client_id == cl.id,
+                models.ClientEntry.voided_at.is_(None)).all()
+            live = [ct for ct in cl.contracts if not ct.no.startswith("OB-")]
+            notes = db.query(models.Note).filter(
+                models.Note.entity_type.in_(("client", "contract")),
+                models.Note.entity_id.in_(
+                    [cl.id] + [ct.id for ct in cl.contracts])).all()
+            n_all = [n for n in notes
+                     if (n.entity_type == "client" and n.entity_id == cl.id)
+                     or (n.entity_type == "contract"
+                         and n.entity_id in {ct.id for ct in cl.contracts})]
+            agreed = [i for ct in cl.contracts for i in ct.invoices if i.agreed_at]
+            rows[-1].update({
+                "ob_invoice": ob_inv,
+                "entries": [{"kind": e.kind, "amount": e.amount, "label": e.label,
+                             "ref": e.ref or ""} for e in ent],
+                "entries_sum": sum(e.amount for e in ent),
+                "shape": [{
+                    "no": ct.no, "start": str(ct.start_date),
+                    "mode": getattr(ct, "cycle_mode", "days") or "days",
+                    "vat": ct.vat_percent,
+                    "deposit": ct.deposit, "deposit_status": ct.deposit_status,
+                    "deposit_events": len([e for e in ct.deposit_events
+                                           if e.voided_at is None]),
+                    "sites": sorted({mv.site for mv in ct.movements if mv.site}),
+                } for ct in sorted(live, key=lambda c: c.no)],
+                "contacts": [f"{c.role or '—'} {c.name}"
+                             + (f" · {c.phone}" if c.phone else "")
+                             + (f" / {c.phone2}" if c.phone2 else "")
+                             for c in cl.contacts],
+                "notes": len(n_all),
+                "flagged": len([n for n in n_all if n.flag and n.voided_at is None]),
+                "agreed_at": str(agreed[0].agreed_at) if agreed else "",
+                "agreed_by": agreed[0].agreed_by if agreed else "",
+            })
             totals["her"] += her_bal or 0
             totals["sys"] += sys_net
             totals["dep_her"] += her_dep or 0
             totals["dep_sys"] += r["deposit"]
             totals["accrual"] += r["uninvoiced"]
+
+        # ── SKU-гийн тоо: ТҮҮНИЙ хуудас ↔ ачаалсан ↔ WB2 парк ──
+        sku: dict[str, list[dict]] = {}
+        park = data["audit"].get("park_now", {})
+        for row in data.get("contracts", []):
+            cl = by_name.get(row["client"])
+            if cl is None:
+                continue
+            ct = next((c for c in cl.contracts if c.no == row["no"]), None)
+            loaded: dict[tuple, float] = {}
+            for mv in (ct.movements if ct else []):
+                if mv.type != "ISSUE" or mv.voided_at is not None:
+                    continue
+                for ln in mv.lines:
+                    m = db.get(models.Material, ln.material_id)
+                    g = db.get(models.Grade, ln.grade_id)
+                    loaded[(m.name, g.code)] = loaded.get((m.name, g.code), 0) + ln.qty
+            her = {(i["material"], i["grade"]): 0.0 for i in row["items"]}
+            for i in row["items"]:
+                her[(i["material"], i["grade"])] += i["qty"]
+            wb2 = park.get(row["client"], {})
+            keys = sorted(set(her) | set(loaded)
+                          | {tuple(k.split("·")) for k in wb2})
+            sku[row["client"]] = [{
+                "sku": f"{k[0]} · {k[1]}",
+                "her": her.get(k, 0), "loaded": loaded.get(k, 0),
+                "wb2": wb2.get(f"{k[0]}·{k[1]}", 0),
+            } for k in keys]
     return {"rows": rows, "totals": totals, "counts": counts, "as_of": as_of,
-            "penalty_armed": armed}
+            "penalty_armed": armed, "sku": sku}
 
 
 def render(data: dict, res: dict, db_url: str) -> str:
@@ -267,7 +339,8 @@ def render(data: dict, res: dict, db_url: str) -> str:
               + (r["note"] or ""))
         A("")
     else:
-        A("**Зөрүүтэй харилцагч алга — 42/42 ₮ хүртэл таарав.**")
+        A(f"**Зөрүүтэй харилцагч алга — {len(exact)}/{len(live)} ₮ хүртэл "
+          f"таарав.**")
         A("")
     if dep_off:
         A("### 2.2 Барьцааны зөрүү")
@@ -277,7 +350,8 @@ def render(data: dict, res: dict, db_url: str) -> str:
               f"{money(r['sys_dep'])}")
         A("")
     if missing:
-        A("### 2.3 Системд ороогүй")
+        A("### 2.3 Энэ ачаалалтад ОРООГҮЙ харилцагчид"
+          if data.get("clients_mode") == "top10" else "### 2.3 Системд ороогүй")
         A("")
         for r in missing:
             A(f"- **{r['name']}** — {money(r['her_bal'])} ({r['note']})")
@@ -349,7 +423,7 @@ def render(data: dict, res: dict, db_url: str) -> str:
               "₮/өдөр", "Үр дүн"))
     A(_md_row("---", "---", "---", "---:", "---:", "---:", "---:", "---"))
     for s in audit["sheets"]:
-        if not s.get("client"):
+        if not s.get("client") or s.get("filtered"):
             continue
         d = s["wb1_qty"] - s["wb2_qty"]
         A(_md_row(s["sheet"], s["client"], s.get("no", "—"),
@@ -357,8 +431,8 @@ def render(data: dict, res: dict, db_url: str) -> str:
                   f"{d:+,.0f}" if d else "0",
                   f"{s.get('day_amount', 0):,.0f}", s.get("result", "")))
     A("")
-    skipped = [s for s in audit["sheets"] if s.get("client") and
-               s.get("result") not in ("гэрээ үүсэв",)]
+    skipped = [s for s in audit["sheets"] if s.get("client") and not s.get("filtered")
+               and s.get("result") not in ("гэрээ үүсэв",)]
     if skipped:
         A("**Гэрээ үүсээгүй хуудсууд — шалтгаан:**")
         A("")
@@ -371,18 +445,98 @@ def render(data: dict, res: dict, db_url: str) -> str:
                   for s in audit["sheets"] if not s.get("client")))
     A("")
 
+    # ── 5.1 SKU-гийн тоо: ГУРВАН дэвтэр зэрэгцээ ─────────────────────────
+    A("### 5.1 SKU тус бүрээр — таны хуудас ↔ систем ↔ паркийн дэвтэр")
+    A("")
+    A("**«Таны хуудас»** = харилцагчийн хуудасны сүүлийн циклд бичсэн тоо. "
+      "**«Ачаалсан»** = систем дээр ГАДАА байгаа тоо — энэ хоёр нь ЯГ тэнцэх "
+      "ёстой. **«Парк»** = «2026 шинэ» матриц; зөрвөл ТАНЫ шийдвэр (систем "
+      "хуудсыг сонгосон, учир нь тариф нь тэнд бий).")
+    A("")
+    for name in sorted(res.get("sku", {})):
+        lines = res["sku"][name]
+        bad = [x for x in lines if abs(x["her"] - x["loaded"]) > 0.5]
+        gap = [x for x in lines if abs(x["loaded"] - x["wb2"]) > 0.5]
+        A(f"**{name}** — {len(lines)} SKU · хуудас↔систем зөрүү "
+          f"{'ҮГҮЙ ✔' if not bad else f'{len(bad)} мөрд ⚠'} · паркийн зөрүү "
+          f"{len(gap)} мөрд")
+        A("")
+        A(_md_row("SKU", "Таны хуудас ш", "Ачаалсан ш", "Парк (WB2) ш", "Парк зөрүү"))
+        A(_md_row("---", "---:", "---:", "---:", "---:"))
+        for x in lines:
+            d = x["loaded"] - x["wb2"]
+            A(_md_row(x["sku"], f"{x['her']:,.0f}", f"{x['loaded']:,.0f}",
+                      f"{x['wb2']:,.0f}", f"{d:+,.0f} ⚠" if abs(d) > 0.5 else "0"))
+        tot_h = sum(x["her"] for x in lines)
+        tot_l = sum(x["loaded"] for x in lines)
+        tot_w = sum(x["wb2"] for x in lines)
+        A(_md_row("**НИЙТ**", f"**{tot_h:,.0f}**", f"**{tot_l:,.0f}**",
+                  f"**{tot_w:,.0f}**", f"**{tot_l - tot_w:+,.0f}**"))
+        A("")
+        sh = next((s for s in audit["sheets"] if s.get("client") == name
+                   and s.get("her_total") is not None), None)
+        if sh:
+            d = (sh["her_total"] or 0) - tot_l
+            A(f"*Түүний өөрийн «Нийт» нүд ({sh.get('total_ref', '?')}) = "
+              f"{sh['her_total']:,.0f}ш · ачаалсан {tot_l:,.0f}ш · "
+              + ("**ЯГ ТААРНА ✔**" if abs(d) < 0.5
+                 else f"**ЗӨРҮҮ {d:+,.0f}ш — ТАНЫ ШИЙДВЭР ⚠**") + "*")
+            A("")
+
+    # ── 5.2 Гэрээний хэлбэр ба зургаан шинэ байр ─────────────────────────
+    A("### 5.2 Гэрээний хэлбэр ба шинэ талбарууд")
+    A("")
+    A("Гэрээний **эхлэл** нь одооноос хойш таны ЖИНХЭНЭ гэрээний огноо "
+      "(хавсралтын толгойгоос). **Горим** «сар» бол 31 хоногтой сар ×31/30 "
+      "нэхэгдэнэ. **Барьцаа** нь одоо гүйдэг дэвтэр — «явдал» багана нь "
+      "хэдэн шийдвэр бичигдснийг хэлнэ («0 · none» = БАЙРШУУЛААГҮЙ, 0 биш).")
+    A("")
+    A(_md_row("Харилцагч", "Гэрээ", "Эхлэл", "Горим", "НӨАТ", "Барьцаа ₮",
+              "Явдал", "Талбай", "Хүн", "Тэмдэглэл", "Тугтай", "Тооцоо нийлсэн"))
+    A(_md_row("---", "---", "---", "---", "---:", "---:", "---:", "---", "---:",
+              "---:", "---:", "---"))
+    for r in sorted(live, key=lambda r: r["name"]):
+        shapes = r.get("shape") or [{}]
+        for i, s in enumerate(shapes):
+            A(_md_row(r["name"] if i == 0 else "",
+                      s.get("no", "—"), s.get("start", "—"),
+                      "САР" if s.get("mode") == "month" else "хоног",
+                      f"{s.get('vat', 0):g}%",
+                      f"{s.get('deposit', 0):,.0f}",
+                      f"{s.get('deposit_events', 0)} · {s.get('deposit_status', '—')}",
+                      " + ".join(s.get("sites") or []) or "—",
+                      len(r.get("contacts") or []) if i == 0 else "",
+                      r.get("notes", 0) if i == 0 else "",
+                      r.get("flagged", 0) if i == 0 else "",
+                      (r.get("agreed_at") or "—") if i == 0 else ""))
+    A("")
+    A("**Гарын үсэгтнүүд** (утсаар нь залгах хүн — захирал биш, нярав):")
+    A("")
+    for r in sorted(live, key=lambda r: r["name"]):
+        A(f"- **{r['name']}** — "
+          + ("; ".join(r.get("contacts") or []) or "*хуудсанд гарын үсэг олдсонгүй*"))
+    A("")
+
     # ── 6. Материал ───────────────────────────────────────────────────────
     A("## 6. Каталогт байхгүй материал")
     A("")
-    A("Дэвтэрт бий, системийн каталогт **алга**. Эдгээр мөр ачаалагдаагүй — "
-      "тоо нь системд ОРООГҮЙ. Каталогт нээх үү?")
+    A("Дэвтэрт бий, системийн каталогт **алга** байсан материалууд. Эдгээр нь "
+      "урьд нь чимээгүй унадаг байсан (Өнө Ордын «Труба 1м» 278ш) — одоо "
+      "**каталогт нээгдэв**. Тариф нь олдоогүй мөрүүд 0-оор орсон, тэдгээрт "
+      "тугтай тэмдэглэл үлдээв: та тарифыг нь тогтооно.")
+    A("")
+    A(_md_row("Материал", "Ангилал", "Тариф ₮/хоног", "Хаанаас гарав"))
+    A(_md_row("---", "---", "---:", "---"))
+    for m in audit.get("catalog_new", []):
+        A(_md_row(m["name"], m.get("category", "—"),
+                  f"{m.get('base_rate', 0):,.0f}"
+                  + ("" if m.get("base_rate") else " ⚠ ТОГТООХ"),
+                  m.get("note", "")))
     A("")
     if audit["catalog_gaps"]:
-        for g in audit["catalog_gaps"]:
-            A(f"- `{g}`")
-    else:
-        A("- байхгүй")
-    A("")
+        A("Паркийн дэвтрийн таних боломжгүй багана: "
+          + ", ".join(f"`{g}`" for g in audit["catalog_gaps"]))
+        A("")
 
     # ── 7. Задлагдаагүй, анхааруулга ──────────────────────────────────────
     A("## 7. Задлаж чадаагүй нүд")
@@ -399,7 +553,55 @@ def render(data: dict, res: dict, db_url: str) -> str:
         A(f"- {w}")
     A("")
 
-    # ── 9. Гарын үсэг ─────────────────────────────────────────────────────
+    # ── 9. ТАНЫ ШИЙДВЭРҮҮД ────────────────────────────────────────────────
+    A("## 9. Таны шийдвэрүүд — хоёр дэвтэр зөрсөн бүх газар")
+    A("")
+    A("Систем эдгээрийн аль нэгийг нь **сонгосонгүй**. Мөр бүрд аль тоо "
+      "үнэн болохыг тэмдэглээд өгвөл дараагийн ачаалалтад буулгана.")
+    A("")
+    A(_md_row("#", "Юу зөрсөн", "Утга А", "Утга Б", "Нүд", "Таны шийдвэр"))
+    A(_md_row("---:", "---", "---:", "---:", "---", "---"))
+    dec, n = [], 0
+    for r in sorted(live, key=lambda r: -abs(r["delta"])):
+        if abs(r["delta"]) >= TOL:
+            dec.append((f"{r['name']} — самбарын Үлдэгдэл ↔ системийн авлага",
+                        money(r["her_bal"]), money(r["sys_net"]),
+                        "Түрээс тооцоо-26!J", ""))
+    for s in audit["sheets"]:
+        if s.get("her_total") is None:
+            continue
+        loaded = sum(x["loaded"] for x in res.get("sku", {}).get(s["client"], []))
+        if abs((s["her_total"] or 0) - loaded) > 0.5:
+            dec.append((f"{s['client']} — түүний «Нийт» тоо ↔ ачаалсан тоо",
+                        f"{s['her_total']:,.0f}ш", f"{loaded:,.0f}ш",
+                        f"{s['sheet']}!{s.get('total_ref', '')}", ""))
+        if not s.get("filtered") and abs(s["wb1_qty"] - s["wb2_qty"]) > 0.5:
+            dec.append((f"{s['client']} — хуудасны тоо ↔ паркийн дэвтэр",
+                        f"{s['wb1_qty']:,.0f}ш", f"{s['wb2_qty']:,.0f}ш",
+                        f"{s['sheet']} ↔ 2026 шинэ", ""))
+    for d in audit.get("decisions", []):
+        dec.append((f"{d['client']} — «{d['what']}» хэдэн төгрөг вэ ({d['why']})",
+                    money(d["a"]), money(d["b"]),
+                    f"{d['a_ref']} ↔ {d['b_ref']}", ""))
+    for ct in data.get("contracts", []):
+        for nt in ct.get("notes", []):
+            if nt.get("flag") and "МАРГААНТАЙ" in nt.get("text", ""):
+                continue                       # улаан гар тоо — доор нэгтгэв
+            if nt.get("flag") and ("НӨАТ" in nt["text"] or "ТАЛБАЙН" in nt["text"]):
+                dec.append((f"{ct['client']} — {nt['text'][:70]}", "", "",
+                            nt.get("ref", ""), ""))
+    for i, (what, a, b, cell, _) in enumerate(dec, start=1):
+        n = i
+        A(_md_row(i, what, a or "—", b or "—", f"`{cell}`", "……………"))
+    if not dec:
+        A(_md_row("—", "зөрүү олдсонгүй", "—", "—", "—", "—"))
+    A("")
+    A(f"*Нийт {n} шийдвэр.* Мөн гэрээ бүр дээр **шар тугтай тэмдэглэл** "
+      "(«Анхаарах» самбар) байна — тэдгээр нь тус тусдаа хариулт хүлээж байгаа "
+      "захын тэмдэглэлүүд.")
+    A("")
+
+    # ── 10. Гарын үсэг ────────────────────────────────────────────────────
     A("---")
     A("")
     A("## Тооцоо нийлсэн")
