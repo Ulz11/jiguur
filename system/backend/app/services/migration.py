@@ -78,45 +78,69 @@ def create_opening_balance(db: Session, client: models.Client, amount: float,
 
 def create_active_contract(db: Session, client: models.Client, no: str, as_of: date,
                            items: list[dict], note: str = "", vat_percent: float = 0,
-                           warnings: list | None = None):
+                           warnings: list | None = None, *,
+                           start_date: date | None = None, cycle_mode: str = "days",
+                           sites: list[dict] | None = None):
     """Явж байгаа түрээсийн гэрээг шилжүүлнэ.
 
     Бараа нь аль хэдийн түрээсэнд гарчихсан тул агуулахын үлдэгдлээс ХАСАХГҮЙ —
-    on_rent-д шууд нэмнэ. Тооцоо (30 хоногийн цикл) шилжсэн өдрөөс эхэлж явна;
-    өмнөх бүх тооцоо OB үлдэгдэлд аль хэдийн орсон.
+    on_rent-д шууд нэмнэ. Тооцоо шилжсэн өдрөөс эхэлж явна; өмнөх бүх тооцоо
+    OB үлдэгдэлд аль хэдийн орсон.
+
+    `start_date` нь ГЭРЭЭНИЙ ЖИНХЭНЭ ОГНОО (Марч 2022.3.1) — `as_of` БИШ.
+    Хөдөлгүүр үүнийг тэвчинэ: олголт нь `as_of`-т буудаг тул түүнээс өмнөх
+    циклүүд БҮГД тэг хуримтлалтай бөгөөд `derivable_invoice_specs` тэдгээрийг
+    алгасдаг (`rent == 0 and charge == 0 → continue`). Циклийн дугаар нь
+    огнооноос гардаг тул том боловч ТОГТВОРТОЙ.
+
+    `sites` нь НЭГ олголтыг ТАЛБАЙ тус бүрийн падан болгож хуваана (№88, 97):
+    Блүүмийн 4,294ш нь `технологи · архангай · дарь эх` гурав болно, авлага
+    нь НЭГ хэвээр. Талбайн нийлбэр нь `items`-ийн нийлбэртэй ТЭНЦЭНЭ.
     """
     if db.query(models.Contract).filter_by(no=no).first():
         return None
     # penalty 0: тэр амьдралдаа алданги нэхээгүй — шилжүүлэлт хөшүүргийг
     # ЗЭВСЭГЛЭХГҮЙ (P0-10 «алданги=0», H2). Гэрээ дээр нь гараар асаана.
-    c = models.Contract(no=no, client_id=client.id, type="rent", start_date=as_of,
-                        cycle_days=30, penalty_percent=0, status="active",
+    c = models.Contract(no=no, client_id=client.id, type="rent",
+                        start_date=start_date or as_of,
+                        cycle_days=30, cycle_mode=cycle_mode or "days",
+                        penalty_percent=0, status="active",
                         vat_percent=vat_percent,
                         note=note or "Идэвхтэй гэрээ — хуучин системээс шилжүүлэв")
     db.add(c)
     db.flush()
-    mv = models.Movement(contract_id=c.id, type="ISSUE", date=as_of, status="done",
-                         note="Шилжүүлэлт — түрээсэнд байгаа үлдэгдэл")
-    db.add(mv)
-    db.flush()
-    for it in items:
-        m = db.query(models.Material).filter_by(name=it["material"]).first()
-        if not m:
-            if warnings is not None:
-                warnings.append(f"№{no}: материал каталогт алга — {it['material']} "
-                                f"({it['qty']:g}ш алгасав)")
-            continue
-        g = _grade(db, it.get("grade", "А"))
-        db.add(models.ContractItem(contract_id=c.id, material_id=m.id, grade_id=g.id,
-                                   daily_rate=float(it["daily_rate"])))
-        # Падан: шилжүүлсэн үлдэгдэл ч гэсэн өөрийн тарифтайгаа орж ирнэ
-        db.add(models.MovementLine(movement_id=mv.id, material_id=m.id, grade_id=g.id,
-                                   qty=float(it["qty"]), rate=float(it["daily_rate"])))
-        st = db.query(models.Stock).filter_by(material_id=m.id, grade_id=g.id).first()
-        if not st:
-            st = models.Stock(material_id=m.id, grade_id=g.id)
-            db.add(st)
-        st.on_rent = (st.on_rent or 0) + float(it["qty"])  # агуулахаас хасахгүй — аль хэдийн гадаа
+    groups = [{"site": s.get("site", ""), "items": s["items"]} for s in (sites or [])
+              if s.get("items")] or [{"site": "", "items": items}]
+    rates: dict[tuple, float] = {}
+    for g in groups:
+        mv = models.Movement(contract_id=c.id, type="ISSUE", date=as_of, status="done",
+                             site=g["site"],
+                             note="Шилжүүлэлт — түрээсэнд байгаа үлдэгдэл"
+                                  + (f" ({g['site']})" if g["site"] else ""))
+        db.add(mv)
+        db.flush()
+        for it in g["items"]:
+            m = db.query(models.Material).filter_by(name=it["material"]).first()
+            if not m:
+                if warnings is not None:
+                    warnings.append(f"№{no}: материал каталогт алга — {it['material']} "
+                                    f"({it['qty']:g}ш алгасав)")
+                continue
+            gr = _grade(db, it.get("grade", "А"))
+            rate = float(it["daily_rate"])
+            if (m.id, gr.id) not in rates:      # гэрээний мөр SKU тус бүрд НЭГ
+                rates[(m.id, gr.id)] = rate
+                db.add(models.ContractItem(contract_id=c.id, material_id=m.id,
+                                           grade_id=gr.id, daily_rate=rate))
+            # Падан: шилжүүлсэн үлдэгдэл ч гэсэн өөрийн тарифтайгаа орж ирнэ
+            db.add(models.MovementLine(movement_id=mv.id, material_id=m.id,
+                                       grade_id=gr.id, qty=float(it["qty"]), rate=rate))
+            st = db.query(models.Stock).filter_by(material_id=m.id, grade_id=gr.id).first()
+            if not st:
+                st = models.Stock(material_id=m.id, grade_id=gr.id)
+                db.add(st)
+            # агуулахаас хасахгүй — аль хэдийн гадаа
+            st.on_rent = (st.on_rent or 0) + float(it["qty"])
     db.commit()
     return c
 
@@ -130,11 +154,58 @@ def _grade(db: Session, code: str) -> models.Grade:
     return g
 
 
+def _note(db: Session, entity: str, entity_id: int, row: dict, as_of: date):
+    """Захын тэмдэглэл (P1-22). ШАР нүд → `flag=True` — «энэ рүү эргэж хар»."""
+    text = (row.get("text") or "").strip()
+    if not text:
+        return None
+    try:
+        day = date.fromisoformat(row.get("date") or str(as_of))
+    except ValueError:
+        day = as_of
+    n = models.Note(entity_type=entity, entity_id=entity_id, date=day, text=text,
+                    flag=bool(row.get("flag")), author="Шилжүүлэлт",
+                    void_reason="", voided_by="")
+    db.add(n)
+    return n
+
+
 def load_data(db: Session, data: dict) -> dict:
     """real_data.json-г DB руу. Буцна: тоолол + warnings."""
+    from . import entries as entries_svc      # тойрог импортоос зайлсхийв
     as_of = date.fromisoformat(data.get("as_of") or str(date.today()))
-    counts = {"clients": 0, "stock": 0, "loans": 0, "barter": 0, "contracts": 0, "skipped": 0}
+    counts = {"clients": 0, "stock": 0, "loans": 0, "barter": 0, "contracts": 0,
+              "skipped": 0, "materials": 0, "contacts": 0, "entries": 0, "notes": 0,
+              "deposit_events": 0, "agreed": 0, "sites": 0}
     warnings: list[str] = []
+
+    # ---- Каталогийн НҮХ: дэвтэрт бий, каталогт алга байсан материалууд ----
+    # ЧИМЭЭГҮЙ ХАЯХГҮЙ (E3): Өнө Ордын «Труба 1м» 278ш яг эндээс унадаг байв.
+    for row in data.get("catalog", []):
+        if db.query(models.Material).filter_by(name=row["name"]).first():
+            counts["skipped"] += 1
+            continue
+        m = models.Material(name=row["name"], category=row.get("category", "Бусад"),
+                            base_rate=float(row.get("base_rate", 0) or 0),
+                            repair_fee=float(row.get("repair_fee", 0) or 0))
+        db.add(m)
+        db.flush()
+        counts["materials"] += 1
+        if not row.get("base_rate"):
+            warnings.append(f"Каталогт нээв: «{row['name']}» — ТАРИФ 0 "
+                            f"({row.get('note', '')}) — ТЭР тогтооно")
+            _note(db, "material", m.id,
+                  {"text": f"Каталогт шилжүүлэлтээр нээв — тариф тогтоогоогүй "
+                           f"({row.get('note', '')})", "flag": True}, as_of)
+            counts["notes"] += 1
+    db.commit()
+
+    # ---- Барьцаа АЛЬ гэрээн дээр амьдрах вэ (H9 «нэг факт, нэг тоо») ----
+    # Түүний хуудсан дээрх барьцааны ГИНЖ нь ТҮРЭЭСИЙН гэрээнийх. Тэр гэрээ
+    # дэвтрээ авч явбал ДАНСНЫ (`OB-`) гэрээнд дахин байршуулах нь барьцааг
+    # ХОЁР ДАХИН харуулна (Зулаа 27,735,000 → 55,470,000).
+    dep_on_contract = {c["client"] for c in data.get("contracts", [])
+                       if c.get("deposit_events")}
 
     # ---- Харилцагч + эхний үлдэгдэл ----
     existing = {c.name.strip().lower() for c in db.query(models.Client).all()}
@@ -149,9 +220,60 @@ def load_data(db: Session, data: dict) -> dict:
         db.add(cl)
         db.flush()
         existing.add(name.lower())
-        create_opening_balance(db, cl, float(row.get("balance", 0)), as_of,
-                               deposit=float(row.get("deposit", 0)))
+        # ТҮРЭЭС БИШ бичилт (H11) нь самбарын мөрөөс ГАРААД өөрийн баримт болно
+        # — эс тэгвэл нэг мөнгө хоёр удаа: OB-д нэг, бичилтэд нэг.
+        extra = sum(float(e.get("amount", 0)) for e in row.get("entries", []))
+        balance = float(row.get("balance", 0)) - extra
+        deposit = 0.0 if name in dep_on_contract else float(row.get("deposit", 0))
+        if name in dep_on_contract and row.get("deposit"):
+            warnings.append(f"«{name}»: барьцаа {float(row['deposit']):,.0f}₮ нь "
+                            f"ТҮРЭЭСИЙН гэрээний дэвтэрт бичигдэв (дансны гэрээнд "
+                            f"давхардуулаагүй)")
+        ob = create_opening_balance(db, cl, balance, as_of, deposit=deposit)
         counts["clients"] += 1
+
+        # ГАРЫН ҮСЭГТНҮҮД (№72, 73) — тэр ЗАХИРАЛ руу залгадаггүй, НЯРАВ руу
+        for p in row.get("contacts", []):
+            if not (p.get("name") or "").strip():
+                continue
+            db.add(models.ClientContact(client_id=cl.id, name=p["name"].strip(),
+                                        role=p.get("role", ""), phone=p.get("phone", ""),
+                                        phone2=p.get("phone2", ""),
+                                        note=p.get("ref", ""), active=True))
+            counts["contacts"] += 1
+        if not cl.person and row.get("contacts"):
+            cl.person = row["contacts"][0]["name"]
+            cl.phone = cl.phone or row["contacts"][0].get("phone", "")
+
+        # ТҮРЭЭС БИШ БИЧИЛТ (H11) — самбарын Үлдэгдэлд ОРООГҮЙ мөнгө л энд орно
+        for e in row.get("entries", []):
+            try:
+                day = date.fromisoformat(e.get("date") or str(as_of))
+            except ValueError:
+                day = as_of
+            try:
+                entries_svc.create_entry(db, cl, day, float(e["amount"]),
+                                         e.get("kind", "adjustment"), e["label"],
+                                         note="Шилжүүлэлт — хуучин системээс",
+                                         ref=e.get("ref", ""), user_name="Шилжүүлэлт")
+                counts["entries"] += 1
+            except ValueError as ex:
+                warnings.append(f"«{name}» бичилт нэмэгдсэнгүй: {ex}")
+
+        for n in row.get("notes", []):
+            if _note(db, "client", cl.id, n, as_of) is not None:
+                counts["notes"] += 1
+
+        # «ТООЦОО НИЙЛСЭН» огноо → эхний үлдэгдлийн нэхэмжлэлийн ТӨЛӨВ (№69)
+        ag = row.get("agreed")
+        if ag and ob is not None:
+            try:
+                ob.agreed_at = date.fromisoformat(ag["date"])
+            except (ValueError, KeyError, TypeError):
+                ob.agreed_at = as_of
+            ob.agreed_by = (ag.get("by") or "")[:100]
+            counts["agreed"] += 1
+        db.commit()
 
     # ---- Нөөц (тооллогоор — үнэмлэхүй утга) ----
     for row in data.get("stock", []):
@@ -207,14 +329,50 @@ def load_data(db: Session, data: dict) -> dict:
         if not cl:
             warnings.append(f"Гэрээний харилцагч олдсонгүй: {row['client']}")
             continue
+        start = as_of
+        if row.get("start_date"):
+            try:
+                start = date.fromisoformat(row["start_date"])
+            except ValueError:
+                warnings.append(f"№{row['no']}: гэрээний огноо уншигдсангүй "
+                                f"«{row['start_date']}» — {as_of} болов")
         c = create_active_contract(db, cl, row["no"], as_of, row["items"],
                                    note=row.get("note", ""),
                                    vat_percent=float(row.get("vat_percent", 0)),
-                                   warnings=warnings)
+                                   warnings=warnings, start_date=start,
+                                   cycle_mode=row.get("cycle_mode", "days"),
+                                   sites=row.get("sites"))
         if c is None:
             counts["skipped"] += 1
-        else:
-            counts["contracts"] += 1
+            continue
+        counts["contracts"] += 1
+        counts["sites"] += len(row.get("sites") or [])
+
+        # ---- БАРЬЦААНЫ ГҮЙДЭГ ДЭВТЭР (H8) ----
+        # ⚠ `apply` нь ТӨЛБӨР ТӨРҮҮЛЭХГҮЙ (`payment_id=None`): самбарын
+        # `Үлдэгдэл` тэр суутгалыг АЛЬ ХЭДИЙН цэвэрлэсэн. Синтетик төлбөр
+        # үүсгэвэл авлага ХОЁР ДАХИН буурна (давхар тооцоолол).
+        for ev in row.get("deposit_events", []):
+            try:
+                day = date.fromisoformat(ev.get("date") or str(as_of))
+            except ValueError:
+                day = as_of
+            if ev.get("kind") not in deposit_svc.KINDS or float(ev["amount"]) <= 0:
+                warnings.append(f"№{c.no}: барьцааны бичилт алгасав — {ev}")
+                continue
+            db.add(models.DepositEvent(contract_id=c.id, date=day, kind=ev["kind"],
+                                       amount=round(float(ev["amount"]), 2),
+                                       note=ev.get("note", ""), payment_id=None,
+                                       user_name="Шилжүүлэлт"))
+            counts["deposit_events"] += 1
+        db.commit()
+        db.refresh(c)
+        deposit_svc.recompute(db, c)
+
+        for n in row.get("notes", []):
+            if _note(db, "contract", c.id, n, as_of) is not None:
+                counts["notes"] += 1
+        db.commit()
 
     counts["warnings"] = warnings
     return counts
