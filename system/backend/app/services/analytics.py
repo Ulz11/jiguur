@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 from .. import models
 from . import billing
+from . import contacts as contacts_svc
 from . import loans as loans_svc
 
 STALE_DAYS = 180          # бартер хөрөнгө хэдэн хоног хэвтвэл «зогсонги» гэх вэ
@@ -272,6 +273,11 @@ def collections(db: Session, today: date | None = None):
         promise = next((n for n in reversed(notes) if n.status == "open" and n.promise_date), None)
         rows.append({
             "client_id": cl.id, "client": cl.name, "person": cl.person, "phone": cl.phone,
+            # ГАРЫН ҮСЭГТНҮҮД (№72, 73) — тэр ЗАХИРАЛ руу залгадаггүй, тооцоо
+            # нийлдэг хүн нь НЯРАВ. Мөр нь хэнд залгахаа мэдэхийн тулд ИДЭВХТЭЙ
+            # хүмүүсээ авч явна; аль нь давуу вэ гэдгийг дэлгэц шийднэ
+            # (`lib/contact.ts` — цэвэр, тесттэй дүрэм).
+            "contacts": contacts_svc.contacts_of(db, cl.id, active_only=True),
             "overdue": round(overdue), "penalty": round(penalty),
             # НЭГ авлага (H9b) — `/api/clients`, `/api/clients/{id}`,
             # дашбоардын хуваарийн мөртэй ЯГ ижил тоо, задаргаатайгаа.

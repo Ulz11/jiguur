@@ -88,6 +88,46 @@ class Client(Base):
     contracts: Mapped[list["Contract"]] = relationship(back_populates="client")
     # Түрээсийн мөчлөгт хамаарахгүй бичилтүүд (H11 / P1-16)
     entries: Mapped[list["ClientEntry"]] = relationship(back_populates="client")
+    # Гарын үсгийн блокийн 2-4 хүн (№72, 73) — `person`/`phone` нь ҮНДСЭН нэг
+    # хос болж ХЭВЭЭР үлдэнэ, энэ жагсаалт нь НЭМЭЛТ.
+    contacts: Mapped[list["ClientContact"]] = relationship(back_populates="client")
+
+
+class ClientContact(Base):
+    """ХАРИЛЦАГЧИЙН ГАРЫН ҮСЭГТНҮҮД — 2-4 хүн, албан тушаал, утас (№72, 73).
+
+    Отгоо эгчийн хуудас бүр гарын үсгийн блокоор дуусдаг, тэнд НЭГ биш ОЛОН
+    хүн зогсоно:
+
+        Бутангууд-7!E79 = 'Төслийн менежер: Н.Батцоож ……'  H79 = 96590908
+                     D80 = 'Нярав :'  E80 = 'Н.Соль'       H80 = 99966285
+                     D81 = 'Захирал:' E81 = 'С.Лхагвасүрэн' H81 = 99113579
+
+    Грэйт нь 4 хүн, Марч 2 хүн + 2 утас, Ашид 1 хүн 2 утастай. `Client.person`
+    (1) + `Client.phone` (1) нь тэднээс ЗӨВХӨН НЭГИЙГ барьдаг тул үлдсэн нь
+    бүгд унана; албан тушаалын нэршил ОГТ хадгалагдахгүй байв.
+
+    ⚠ Тэр ЗАХИРАЛ руу залгадаггүй — тооцоо нийлдэг хүн нь НЯРАВ. Тиймээс
+    `role` нь чимэг БИШ: «Авлага цуглуулах» жагсаалтын ☎ холбоос түүгээр л
+    зөв хүнийг олно.
+
+    УСТГАЛ БАЙХГҮЙ (H1-ийн ижил зарчим): ажлаас гарсан хүн `active=False`
+    болно — тэр мөр «Захирал байсан Лхагвасүрэн» гэж түүхэндээ үлдэнэ.
+    """
+    __tablename__ = "client_contacts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
+    name: Mapped[str] = mapped_column(String(100))
+    #: 'нярав' · 'Төслийн менежер' · 'Захирал' · 'Талбайн менежер' · … (№73)
+    role: Mapped[str] = mapped_column(String(60), default="")
+    phone: Mapped[str] = mapped_column(String(50), default="")
+    #: Хоёр дахь дугаар — «88111935  99991491» нэг нүдэнд байдаг (Ашид Донж)
+    phone2: Mapped[str] = mapped_column(String(50), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    client: Mapped["Client"] = relationship(back_populates="contacts")
 
 
 class ClientEntry(Base):

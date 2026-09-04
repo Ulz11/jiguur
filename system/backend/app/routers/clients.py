@@ -1,14 +1,18 @@
 """Харилцагч + бүрэн профайл."""
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..db import get_db
 from .. import models, schemas, serializers, auth
 from ..services import billing
+from ..services import audit as audit_svc
+from ..services import contacts as contacts_svc
 from ..services import entries as entries_svc
 from .barter import ser as barter_ser
 
 router = APIRouter(prefix="/api")
+fin = auth.require_roles("manager", "finance")
 
 
 @router.get("/clients")
@@ -39,6 +43,95 @@ def edit_client(cid: int, body: schemas.ClientIn, db: Session = Depends(get_db),
         setattr(c, k, v)
     db.commit()
     return serializers.client_row(c, date.today())
+
+
+# ---------------- ГАРЫН ҮСЭГТНҮҮД (№72, 73) ----------------
+#
+# Бутангууд: Төслийн менежер Н.Батцоож 96590908 · Нярав Н.Соль 99966285 ·
+# Захирал С.Лхагвасүрэн 99113579 — ГУРАВ. `Client.person`/`phone` нь тэднээс
+# ЗӨВХӨН НЭГИЙГ барьдаг тул үлдсэн нь унадаг байв.
+#
+# ⚠ ЭНЭ МОДУЛЬД урьд нь audit ОГТ байгаагүй: харилцагч үүсгэх/засах нь
+# бүртгэлгүй өнгөрдөг. Холбоо барих хүмүүс нь эндээс эхэлж бүртгэгдэнэ
+# (`client` биетийн create/edit нь ХЭВЭЭР — тусад нь засварлах ажил).
+
+class ContactIn(BaseModel):
+    name: str
+    role: str = ""
+    phone: str = ""
+    phone2: str = ""
+    note: str = ""
+
+
+def _client_or_404(db: Session, cid: int) -> models.Client:
+    c = db.get(models.Client, cid)
+    if not c:
+        raise HTTPException(404, "Харилцагч олдсонгүй")
+    return c
+
+
+def _contact_or_404(db: Session, kid: int) -> models.ClientContact:
+    c = db.get(models.ClientContact, kid)
+    if not c:
+        raise HTTPException(404, "Холбоо барих хүн олдсонгүй")
+    return c
+
+
+@router.get("/clients/{cid}/contacts")
+def list_contacts(cid: int, db: Session = Depends(get_db), user=Depends(fin)):
+    _client_or_404(db, cid)
+    return contacts_svc.contacts_of(db, cid)
+
+
+@router.post("/clients/{cid}/contacts")
+def add_contact(cid: int, body: ContactIn, db: Session = Depends(get_db),
+                user=Depends(fin)):
+    cl = _client_or_404(db, cid)
+    if not body.name.strip():
+        raise HTTPException(400, "Хүний нэр заавал бичигдэнэ")
+    k = models.ClientContact(client_id=cid, name=body.name.strip(),
+                             role=body.role.strip(), phone=body.phone.strip(),
+                             phone2=body.phone2.strip(), note=body.note, active=True)
+    db.add(k)
+    db.commit()
+    db.refresh(k)
+    audit_svc.log(db, user, "create", "client_contact", k.id,
+                  f"{cl.name} · {contacts_svc.detail(k)}")
+    return contacts_svc.serialize(k)
+
+
+@router.put("/contacts/{kid}")
+def edit_contact(kid: int, body: ContactIn, db: Session = Depends(get_db),
+                 user=Depends(fin)):
+    k = _contact_or_404(db, kid)
+    if not body.name.strip():
+        raise HTTPException(400, "Хүний нэр заавал бичигдэнэ")
+    before = contacts_svc.detail(k)
+    k.name = body.name.strip()
+    k.role = body.role.strip()
+    k.phone = body.phone.strip()
+    k.phone2 = body.phone2.strip()
+    k.note = body.note
+    db.commit()
+    db.refresh(k)
+    audit_svc.log(db, user, "update", "client_contact", k.id,
+                  f"{k.client.name} · {before} → {contacts_svc.detail(k)}")
+    return contacts_svc.serialize(k)
+
+
+@router.post("/contacts/{kid}/deactivate")
+def deactivate_contact(kid: int, db: Session = Depends(get_db), user=Depends(fin)):
+    """УСТГАЛ БАЙХГҮЙ: ажлаас гарсан хүн мөрөндөө үлдэж, зөвхөн залгах
+    жагсаалтаас гарна («Захирал байсан Лхагвасүрэн» гэдэг нь түүх)."""
+    k = _contact_or_404(db, kid)
+    if not k.active:
+        raise HTTPException(409, "Энэ хүн аль хэдийн идэвхгүй болсон байна")
+    k.active = False
+    db.commit()
+    db.refresh(k)
+    audit_svc.log(db, user, "deactivate", "client_contact", k.id,
+                  f"{k.client.name} · {contacts_svc.detail(k)} — идэвхгүй болгов")
+    return contacts_svc.serialize(k)
 
 
 @router.get("/clients/{cid}")
@@ -125,6 +218,9 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
 
     row = serializers.client_row(c, today)
     return {**row, "since": str(c.created_at)[:10],
+            # ГАРЫН ҮСЭГТНҮҮД (№72, 73) — карт нь тусдаа хүсэлт хийхгүй.
+            # Идэвхгүй болсон нь ч ХАРАГДАНА (устгал байхгүй).
+            "contacts": contacts_svc.contacts_of(db, cid),
             "contracts": contracts, "invoices": invoices, "upcoming": upcoming,
             "payments": payments, "files": files, "barter": barter, "notes": notes,
             # ТҮРЭЭС БИШ бичилтүүд (H11 / P1-16) — олгосон зээл, ажилчдын

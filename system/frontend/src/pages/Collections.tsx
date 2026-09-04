@@ -7,6 +7,7 @@ import { formDirty } from "../lib/dirty";
 import { useLive } from "../lib/live";
 import { nextSort, ariaSort, sortByNumber, type SortState } from "../lib/sort";
 import { clientHref } from "../lib/links";
+import { contactRolePill, preferredContact, telHref } from "../lib/contact";
 import { todayIso } from "../lib/schedule";
 import { UNCHARGED } from "../lib/penalty";
 import { uninvoicedLine } from "../lib/receivable";
@@ -14,8 +15,6 @@ import { uninvoicedLine } from "../lib/receivable";
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
 // хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
 const today = () => todayIso();
-/** «9911-2233» → «tel:99112233» — зай, зураас утасны програмыг төөрөгдүүлнэ. */
-const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;
 const KINDS: [string, string][] = [["call", "Утсаар"], ["visit", "Уулзсан"],
                                    ["message", "Мессеж"], ["other", "Бусад"]];
 
@@ -127,7 +126,15 @@ export default function Collections() {
             <th className="th"></th>
           </tr></thead>
           <tbody>
-            {rows.map((r: any) => (
+            {rows.map((r: any) => {
+              /* ХЭНД ЗАЛГАХ ВЭ (№72, 73). Тэр ЗАХИРАЛ руу залгадаггүй —
+                 тооцоо нийлж, актад гарын үсэг зурдаг хүн нь НЯРАВ. Гарын
+                 үсэгтнүүд бүртгэгдсэн бол мөр нь тэр хүнийг нэрлэнэ; эс
+                 бөгөөс хуучин `person`/`phone` хос хэвээр. */
+              const pick = preferredContact(r.contacts);
+              const name = pick?.name || r.person;
+              const phone = pick?.phone || r.phone;
+              return (
               <tr key={r.client_id} className="hover:bg-canvas transition">
                 <td className="td">
                   {/* Нэр нь ӨӨРИЙН баганадаа зогсож байгаа тул холбоос:
@@ -138,11 +145,14 @@ export default function Collections() {
                   {/* Энэ бол залгах жагсаалт — дугаар нь дарахад залгадаг байх
                       ёстой. Отгоо дугаарыг гараар хуулж бичихээ болино. */}
                   <span className="block text-xs text-t3">
-                    {r.person || "—"}
-                    {r.phone && (
-                      <> · <a href={telHref(r.phone)} title={`${r.phone} руу залгах`}
+                    {name || "—"}
+                    {pick?.role && (
+                      <> <span className={contactRolePill(pick.role)}>{pick.role}</span></>
+                    )}
+                    {phone && (
+                      <> · <a href={telHref(phone)} title={`${phone} руу залгах`}
                               className="text-t2 font-semibold hover:text-brand-ink hover:underline">
-                            ☎ {r.phone}
+                            ☎ {phone}
                           </a></>
                     )}
                   </span>
@@ -194,7 +204,8 @@ export default function Collections() {
                           onClick={() => setNote(r)}>+ Тэмдэглэл</button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         {rows.length === 0 && (
@@ -229,8 +240,19 @@ function NoteModal({ r, onClose, onDone }: any) {
           <> (<span className="tabular-nums">{uninvoicedLine(r.balance_uninvoiced)}</span>)</>)}
         {r.penalty_booked > 0 && <> · нэхэгдсэн алданги <b className="tabular-nums">{money(r.penalty_booked)}</b></>}
         {r.penalty_unbooked > 0 && <> · тооцоолол <b className="tabular-nums text-t3">≈{money(r.penalty_unbooked)}</b> ({UNCHARGED})</>}
-        {r.phone && <> · <a href={telHref(r.phone)} title={`${r.phone} руу залгах`}
-                            className="font-bold text-ink hover:text-brand-ink hover:underline">☎ {r.phone}</a></>}
+        {/* Залгах хүн нь мөрөн дээрхтэй ЯГ ижил дүрмээр (`lib/contact.ts`) —
+            цонх өөр дугаар үзүүлбэл аль нь зөв бэ гэсэн асуулт төрнө. */}
+        {(() => {
+          const pick = preferredContact(r.contacts);
+          const who = pick?.name || r.person;
+          const phone = pick?.phone || r.phone;
+          return phone ? (
+            <> · {who ? `${who} · ` : ""}
+              <a href={telHref(phone)} title={`${phone} руу залгах`}
+                 className="font-bold text-ink hover:text-brand-ink hover:underline">☎ {phone}</a>
+            </>
+          ) : null;
+        })()}
       </div>
 
       {/* Товчны бүлэг — ганц талбар биш тул `label` биш, нэрлэсэн бүлэг */}

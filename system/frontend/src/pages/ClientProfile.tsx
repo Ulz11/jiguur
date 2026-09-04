@@ -7,6 +7,7 @@ import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit,
 import { PayModal } from "./ContractDetail";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 import { NotesStrip } from "../components/Notes";
+import { ContactsCard } from "../components/Contacts";
 import { isVoided, voidRowClass, voidTitle } from "../lib/void";
 import { ClientEntry, ENTRY_KINDS, EntryKind, EntryMode, entryAmountText,
          entryError, entryKindLabel, entryKindPill, entryModeLabel,
@@ -514,6 +515,14 @@ export default function ClientProfile() {
             <button className="btn-secondary mt-4" onClick={() => fileRef.current?.click()}>+ Файл хавсаргах</button>
           </div>
         )}
+      </div>
+
+      {/* ХОЛБОО БАРИХ (№72, 73) — гарын үсгийн блокийн 2-4 хүн. Дээрх
+          «Хариуцагч / Утас» нь ҮНДСЭН хос болж хэвээр үлдэнэ; тэр нярав руу
+          залгадаг гэдгийг энэ карт мэднэ. */}
+      <div className="mt-4">
+        <ContactsCard clientId={d.id} contacts={d.contacts} canWrite={seesMoney}
+                      onChanged={load} />
       </div>
 
       {/* ЗАХЫН ТЭМДЭГЛЭЛ (P1-22) — «модонд», «нөат шивсэн», «хаав». Табны

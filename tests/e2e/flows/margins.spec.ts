@@ -1,4 +1,5 @@
 import { test, expect } from '../../fixtures';
+import { ClientProfilePage } from '../../pages/ClientProfilePage';
 import { ContractDetailPage } from '../../pages/ContractDetailPage';
 import { clickToOpen, clickToExpand } from '../../support/interact';
 
@@ -99,4 +100,59 @@ test('ХҮЧИНГҮЙ болсон тэмдэглэл мөрөндөө үлдэ
     await managerPage.goto('/');
     await expect(managerPage.getByRole('heading', { name: 'Анхаарах' })).toBeVisible();
     await expect(managerPage.getByText(mark, { exact: true })).toBeHidden();
+  });
+
+// ---------- 2. Холбоо барих: тэр ЗАХИРАЛ руу залгадаггүй ----------
+
+test('гурван гарын үсэгтэн ХАРИЛЦАГЧИЙН хуудсан дээр, НЯРАВ нь залгах жагсаалтад',
+  async ({ managerPage, data }) => {
+    /* `startDaysAgo: 60` — эхний цикл хэтэрсэн тул харилцагч «Авлага
+       цуглуулах» жагсаалтад заавал орно (тэнд л ☎ холбоос амьдардаг).
+       ⚠ Хэмжээ нь `her/one-number.spec.ts`-ийнхтэй ЯГ ижил (60 хоног × 20ш):
+       нийт нь 1 саяас доогуур үлдэх тул тэр хуудсан дээрх толгой ба
+       «үүнээс нэхэмжлэгдээгүй» дэд мөр НЭГ хэмжүүрээр бичигдэнэ. */
+    const { client } = await data.rentSetup({ startDaysAgo: 60, qty: 20 });
+    const profile = new ClientProfilePage(managerPage);
+    await profile.goto(client.id);
+
+    /* Бутангуудын гарын үсгийн блок — ГУРАВ. Утас нь ДАВТАГДАШГҮЙ: зэрэгцээ
+       гүйж буй проектууд нэг backend дээр бичдэг. */
+    const tail = String(client.id).padStart(4, '0');
+    const people: [string, string, string][] = [
+      ['Н.Батцоож', 'Төслийн менежер', `9659${tail}`],
+      ['Н.Соль', 'Нярав', `9996${tail}`],
+      ['С.Лхагвасүрэн', 'Захирал', `9911${tail}`],
+    ];
+    for (const [name, role, phone] of people) {
+      const modal = await clickToOpen(
+        managerPage.getByRole('button', { name: '+ Хүн нэмэх' }),
+        profile.page.getByRole('dialog', { name: 'Холбоо барих хүн нэмэх' }),
+        'Хүн нэмэх цонх');
+      await modal.getByLabel(/^Нэр/).fill(name);
+      await modal.getByLabel('Албан тушаал').fill(role);
+      await modal.getByLabel('Утас', { exact: true }).fill(phone);
+      await modal.getByRole('button', { name: 'Хадгалах' }).click();
+      await expect(modal, `«${name}» цонх хаагдсангүй`).toBeHidden();
+    }
+
+    /* Гурав нь ГУРАВ хэвээр, дугаар бүр ДАРАГДАНА (`tel:`). */
+    const card = managerPage.getByRole('heading', { name: 'Холбоо барих' })
+      .locator('xpath=ancestor::div[contains(@class,"card")][1]');
+    for (const [, , phone] of people) {
+      await expect(card.getByRole('link', { name: `☎ ${phone}` }))
+        .toHaveAttribute('href', `tel:${phone}`);
+    }
+
+    /* ЗАЛГАХ ЖАГСААЛТ нь НЯРАВЫГ мэднэ — захирлын дугаар БИШ. */
+    await managerPage.goto('/collections');
+    await expect(managerPage.getByRole('heading', { level: 1, name: 'Авлага цуглуулах' }))
+      .toBeVisible();
+    const row = managerPage.getByRole('row').filter({
+      has: managerPage.getByRole('link', { name: client.name, exact: true }),
+    });
+    await expect(row, `«${client.name}» авлага цуглуулах жагсаалтад алга`).toBeVisible();
+    await expect(row).toContainText('Н.Соль');
+    await expect(row.getByRole('link', { name: `☎ ${people[1][2]}` }))
+      .toHaveAttribute('href', `tel:${people[1][2]}`);
+    await expect(row.getByRole('link', { name: `☎ ${people[2][2]}` })).toHaveCount(0);
   });

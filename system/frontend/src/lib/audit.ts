@@ -40,6 +40,9 @@ export const ACTIONS: Record<string, [label: string, pill: string]> = {
      батлагдсан тоо; цуцлалт нь шар («анхаар»), улаан БИШ (мөнгө хөдлөөгүй). */
   agree: ["Тооцоо нийлсэн", "pill-green"],
   unagree: ["Нийлснийг цуцалсан", "pill-amber"],
+  /* ХОЛБОО БАРИХ ХҮН (№72, 73) — устгал БАЙХГҮЙ: ажлаас гарсан хүн мөрөндөө
+     үлдэж, зөвхөн залгах жагсаалтаас гарна. Тиймээс «Устгасан» БИШ. */
+  deactivate: ["Идэвхгүй болгосон", "pill-grey"],
 };
 
 /** Биетийн монгол нэр — мөрөн дээр ба ШҮҮЛТҮҮРИЙН товчин дээр хоёуланд нь. */
@@ -60,13 +63,15 @@ export const ENTITIES: Record<string, string> = {
      `collection_note` («Тэмдэглэл» — авлагын яриа) -тай ЯЛГААТАЙ үгтэй байх
      ёстой: шүүлтүүрийн хоёр товч ижил нэртэй бол аль нь юу вэ гэдэг алга. */
   note: "Захын тэмдэглэл",
+  /* Гарын үсэгтнүүд (№72, 73) — нярав, менежер, захирал. */
+  client_contact: "Холбоо барих хүн",
 };
 
 /** Backend-ийн `audit.log(db, user, ACTION, …)` дуудлагад БОДИТООР гардаг үйлдлүүд. */
 export const BACKEND_ACTIONS = [
   "create", "update", "delete", "void", "stocktake",
   "settle_deposit", "rebuild", "close", "book_penalty", "cron",
-  "agree", "unagree",
+  "agree", "unagree", "deactivate",
 ] as const;
 
 /** Backend-ийн `audit.log(db, user, action, ENTITY, …)` дуудлагад гардаг биетүүд. */
@@ -74,7 +79,7 @@ export const BACKEND_ENTITIES = [
   "contract", "contract_item", "payment", "stock", "collection_note",
   "movement", "invoice", "akt", "rate_change", "penalty_charge",
   "machine", "machine_log", "machine_invoice", "deposit_event", "client_entry",
-  "note",
+  "note", "client_contact",
 ] as const;
 
 /** Үйлдлийн нэр + пилийн анги. Танихгүй түлхүүр ирвэл ядаж СААРАЛ болж,
