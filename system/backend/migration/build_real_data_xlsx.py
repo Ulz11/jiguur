@@ -31,6 +31,7 @@ import os
 import re
 import sys
 import unicodedata
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -311,12 +312,17 @@ GRADE_SUFFIX = {"пл": "плас", "плас": "плас", "пластик": "�
 #: Каталогт НЭЭГДЭХ шинэ материалууд (§4 E3). `base_rate` нь ТҮҮНИЙ тарифын
 #: хүснэгтээс (Чадварын харьцуулалт §1 R2 «труба уртаараа», булан = хэвийн
 #: тариф 330₮) гарган авсан; гаргаж чадаагүйг 0 + ТУГТАЙ тэмдэглэл.
+#:
+#: ⚠ `repair_fee` ХААНА Ч БАЙХГҮЙ. Гурван дэвтэрт «засвар» гэсэн үг НИЙТ НЭГ
+#: удаа, чөлөөт тэмдэглэл болж гарна — засварын хураамжийн ХҮСНЭГТ түүнд алга.
+#: Урьд нь энд 4,000₮ ба 8,000₮ бичигдсэн байсан нь ЗОХИОСОН тоо байв: ачаагч
+#: бүх материалын `repair_fee`-г 0 болгодог тул эндээс ч 0-оор л гарна.
 CATALOG_NEW: dict[str, dict] = {
-    "Хэв хашмал 1025": {"category": "Хэв", "base_rate": 330, "repair_fee": 8000,
+    "Хэв хашмал 1025": {"category": "Хэв", "base_rate": 330, "repair_fee": 0,
                         "why": "Дотор булан 1025 — булангийн тариф 330₮ (R2)"},
-    "Хэв хашмал 2020": {"category": "Хэв", "base_rate": 330, "repair_fee": 8000,
+    "Хэв хашмал 2020": {"category": "Хэв", "base_rate": 330, "repair_fee": 0,
                         "why": "Дотор булан 2020 — булангийн тариф 330₮ (R2)"},
-    "Труба 1м": {"category": "Труба", "base_rate": 110, "repair_fee": 4000,
+    "Труба 1м": {"category": "Труба", "base_rate": 110, "repair_fee": 0,
                  "why": "ӨнөОрд-8!AQ27 = 110₮ (түүний өөрийн тариф)"},
     "Труба 5м": {"category": "Труба", "base_rate": 0, "repair_fee": 0,
                  "why": "Тариф ХААНААС Ч олдсонгүй — 0-оор нээв, ТЭР тогтооно"},
@@ -437,6 +443,69 @@ def cycle_mode_from_labels(labels) -> str:
         else:
             bad += 1
     return "month" if good and good > bad else "days"
+
+
+def last_covered_from_labels(labels, year: int) -> date | None:
+    """Дэвтэр ХААНА ХҮРТЭЛ нэхэгдсэн бэ — СҮҮЛЧИЙН циклийн мөрийн ТӨГСГӨЛ.
+
+    `'7.13-8.11'` → 2026-08-11 (Блүүм); календарь горимд `'8.01-8.31'` →
+    8-р сарын сүүлчийн өдөр. Энэ огноо нь `billing_from`-ийн эх сурвалж:
+    систем ЯГ маргааш нь тоолж эхэлнэ.
+
+    ХАМГИЙН ИХИЙГ нь БИШ, СҮҮЛЧИЙНХИЙГ нь авна — Ашид Донжийн хуудсанд
+    `'7.23-8.21'`-ийн ДАРАА `'8.01-8.31'` бичигдсэн; дараалал нь ТҮҮНИЙХ.
+
+    Жил нь шошгонд бичигдээгүй тул дэвтрийн жилээр (`year`) тавина; төгсгөл
+    нь эхлэлээсээ ӨМНӨХ сард унавал (`'12.15-1.13'`) дараагийн жил болно.
+    Уншигдахгүй бол ТААМАГЛАХГҮЙ — None (ачаалагч тугтай мөр өргөнө).
+    """
+    last = None
+    for lab in labels or []:
+        m = _CYCLE_RE.search(_txt(lab))
+        if not m:
+            continue
+        m1, d1, m2, d2 = (int(m.group(i)) for i in (1, 2, 3, 4))
+        if not (1 <= m1 <= 12 and 1 <= m2 <= 12):
+            continue
+        try:
+            last = date(year + (1 if m2 < m1 else 0), m2, d2)
+        except ValueError:
+            continue                             # «2.30» гэх мэт байхгүй өдөр
+    return last
+
+
+_BOARD_MONTH = re.compile(r"^(\d{1,2})\s*сар$", re.IGNORECASE)
+
+
+def board_month_columns(header) -> dict[int, int]:
+    """Самбарын толгойн `'3 сар' … '7 сар'` → {баганын индекс: сарын дугаар}."""
+    out: dict[int, int] = {}
+    for ci, c in enumerate(tuple(header or ())):
+        m = _BOARD_MONTH.match(_txt(c))
+        if m and 1 <= int(m.group(1)) <= 12:
+            out[ci] = int(m.group(1))
+    return out
+
+
+def board_last_covered(header, row, year: int) -> date | None:
+    """САМБАР хаана хүртэл нэхсэн бэ — дүн бичигдсэн СҮҮЛЧИЙН сарын багана.
+
+    Самбар нь сарын нэхэлтийг нэг нүдэнд хийдэг тул хамралтыг ОЙРОЛЦООГООР
+    (сарын сүүлчээр) л хэлнэ — харилцагчийн хуудасны `last_covered` нь
+    нарийвчлалтай. Хоёр нь зөрвөл систем аль нэгийг СОНГОХГҮЙ: тайлангийн
+    §9-д хоёуланг нь, зөрүүг нь хоног ба ₮-өөр бичээд ТЭР шийднэ.
+    """
+    cols = board_month_columns(header)
+    if not cols:
+        return None
+    cells = tuple(row or ()) + (None,) * (max(cols) + 1)
+    best = None
+    for ci, mon in sorted(cols.items()):
+        if parse_money(cells[ci]):
+            best = mon
+    if best is None:
+        return None
+    return date(year, best, monthrange(year, best)[1])
 
 
 VAT_PERCENT_RE = re.compile(r"нөат\s*(\d{1,2})\s*%", re.IGNORECASE)
@@ -680,7 +749,7 @@ def _txt(c) -> str:
 
 
 # ── WB3 · AR самбар ────────────────────────────────────────────────────────
-def parse_ar_board(rows, rep: Report, formulas=None) -> dict[str, dict]:
+def parse_ar_board(rows, rep: Report, formulas=None, year: int | None = None) -> dict[str, dict]:
     """«Түрээс тооцоо-26»: [нэр, өмнөх, 3–7 сар, Нийт дүн, Тооцоо хийсэн,
     Үлдэгдэл, Барьцаа]. Нэргүй мөр + дүнтэй = хүснэгт дуусав.
 
@@ -689,6 +758,7 @@ def parse_ar_board(rows, rep: Report, formulas=None) -> dict[str, dict]:
     78,165,000₮ нь ӨР биш, ИЛҮҮ ТӨЛӨЛТ.
     """
     formulas = formulas or {}
+    header = rows[1] if len(rows) > 1 else ()
     out: dict[str, dict] = {}
     for ri, r in enumerate(rows[2:], start=3):
         r = tuple(r) + (None,) * 12
@@ -714,7 +784,7 @@ def parse_ar_board(rows, rep: Report, formulas=None) -> dict[str, dict]:
         row = out.setdefault(c.name, {"name": c.name, "sources": [], "total": 0.0,
                                       "paid": 0.0, "balance": 0.0, "deposit": 0.0,
                                       "deposit_not_lodged": False, "notes": [],
-                                      "rows": 0})
+                                      "rows": 0, "last_covered": None})
         row["sources"].append(name)
         row["total"] += total or 0
         row["paid"] += paid or 0
@@ -722,6 +792,12 @@ def parse_ar_board(rows, rep: Report, formulas=None) -> dict[str, dict]:
         row["deposit"] += dep
         row["deposit_not_lodged"] = row["deposit_not_lodged"] or not_lodged
         row["rows"] += 1
+        # САМБАР хаана хүртэл нэхсэн бэ (§9-ийн зүүн тал). Нэг харилцагч
+        # хоёр мөртэй бол ХОЙД нь — аль нь ч алдагдах учиргүй.
+        lc = board_last_covered(header, r, year) if year else None
+        if lc is not None and (row["last_covered"] is None
+                               or lc.isoformat() > row["last_covered"]):
+            row["last_covered"] = lc.isoformat()
         if note:
             row["notes"].append(note)
         if row["rows"] > 1:
@@ -830,6 +906,78 @@ def parse_stock(rows, rep: Report) -> list[dict]:
                      f"({q:g}ш ачаалагдсангүй)")
             continue
         out.append({"material": GROUP_PREFIX[g].format(c), "grade": s, "on_hand": q})
+    return out
+
+
+#: Паркийн дэвтрийн ХАШААНЫ мөр («2026 шинэ» 51-р мөр).
+YARD_ROW_NAME = "хашаанд бгаа"
+YARD_REF = "2026 шинэ!51 (Хашаанд бгаа)"
+
+
+def parse_park_yard(rows) -> dict[tuple[str, str], float]:
+    """«2026 шинэ»-ийн `Хашаанд бгаа` мөр → {(материал, зэрэглэл): тоо}.
+
+    Матрицын задлагч энэ мөр дээр ЗОГСДОГ (STOP) тул хашааны тоо ХААЯА Ч
+    уншигддаггүй байв. Гэтэл «тооллого 6.22»-д трубаны тооны нүд БҮГД хоосон:
+    хашааны мөр л 717/13/1,175/1,302/159/0/200-ыг мэднэ.
+    """
+    hdr = None
+    for ri, r in enumerate(rows[:12]):
+        if any(_txt(c) == "Харилцагч" for c in r):
+            hdr = ri
+            break
+    if hdr is None:
+        return {}
+    code_row = tuple(rows[hdr + 1]) + (None,) * 4
+    group_row = tuple(rows[hdr]) + (None,) * 4
+    colmap: dict[int, tuple[str, str]] = {}
+    for ci in range(2, len(code_row)):
+        raw = _txt(code_row[ci])
+        # `AE6` хоосон, `AE5='Шат'` — кодын мөргүй ГАНЦ баганат бүлэг. Түүнийг
+        # алгасвал хашаанд байгаа 34 шат хаана ч бүртгэгдэхгүй өнгөрнө.
+        if not raw:
+            raw = _txt(group_row[ci])
+        if not raw or raw.casefold() in ("нийт хэв", "нийт"):
+            continue
+        mat = material_of(raw)
+        if mat is not None:
+            colmap[ci] = mat
+    for r in rows[hdr + 2:]:
+        r = tuple(r) + (None,) * 4
+        if _txt(r[1]).casefold() != YARD_ROW_NAME:
+            continue
+        out: dict[tuple[str, str], float] = {}
+        for ci, mat in colmap.items():
+            q = parse_money(r[ci]) if ci < len(r) else None
+            if q:
+                out[mat] = out.get(mat, 0.0) + float(q)
+        return out
+    return {}
+
+
+def fill_stock_from_yard(stock: list[dict], yard: dict, rep: Report) -> list[dict]:
+    """Тооллогод ХООСОН үлдсэн МАТЕРИАЛЫГ хашааны мөрөөр нөхнө.
+
+    Дүрэм нь ЯГ НЭГ: тооллого тухайн материалын талаар ЮУ Ч хэлээгүй
+    (нэг ч зэрэглэлээр мөр алга) бол — ба ЗӨВХӨН тэр үед — хашааны тоог
+    зэрэглэл «А»-гаар нэмнэ. Тооллого нэг ч мөр бичсэн бол түүнийг ХӨНДӨХГҮЙ:
+    түүний өөрийн тоолсон тоо ялна.
+
+    Хоёр дэвтэр 4,215ш зөрдөг (63,695 ↔ 59,480) — энэ нөхөлт тэр зөрүүг
+    ЗАСАХГҮЙ, зөвхөн ОГТ мэдэгдэхгүй байсан мөрүүдийг нээнэ. Зөрүү нь
+    тайлангийн §9-д асуулт болж очно.
+    """
+    known = {r["material"] for r in stock}
+    out = list(stock)
+    by_mat: dict[str, float] = {}
+    for (m, _g), q in yard.items():
+        if m in known or q <= 0:
+            continue
+        by_mat[m] = by_mat.get(m, 0.0) + float(q)
+    for m, q in sorted(by_mat.items()):
+        out.append({"material": m, "grade": "А", "on_hand": q, "source": YARD_REF})
+        rep.warn(f"Агуулах: «{m}» тооллогод хоосон — паркийн дэвтрийн хашааны "
+                 f"мөрөөс {q:g}ш авав ({YARD_REF})")
     return out
 
 
@@ -958,7 +1106,8 @@ def _resolve_code(cells, qc, carry):
     return None, (prim if _txt(prim) else sec), carry
 
 
-def parse_contract_sheet(sheet_name, rows, rep: Report, formulas=None, fills=None):
+def parse_contract_sheet(sheet_name, rows, rep: Report, formulas=None, fills=None,
+                         year: int | None = None):
     """Хуудасны ХАМГИЙН СҮҮЛИЙН блокийн ХАМГИЙН СҮҮЛИЙН үеэс одоо ГАДАА
     байгаа мөрүүд.
 
@@ -1015,11 +1164,20 @@ def parse_contract_sheet(sheet_name, rows, rep: Report, formulas=None, fills=Non
     filled = [s for s in sections if _live_rows(s)]
     head = _header_text(rows)
     hdr = parse_contract_header(head)
+    # ХАМРАЛТ (P0-11): дэвтэр ХААНА хүртэл нэхэгдсэн бэ — тооцоо ЯГ маргааш
+    # нь эхэлнэ (`billing_from`). Жилгүй бол тооцохгүй (задлагчийн нэгж тест).
+    lc = last_covered_from_labels(labels, year) if year else None
+    # ХУУДАСНЫ ӨӨРИЙН ҮЛДЭГДЭЛ (2-р шат) — OB нь эндээс гарна, самбараас БИШ:
+    # ингэснээр үлдэгдэл ба хамралт хоёр НЭГ дэвтрээс гарна.
+    bal = sheet_balance(rows, qc, (dc if dc is not None else rc) + 1, sheet_name)
     base_meta = {"no": hdr["no"] or _contract_no(rows), "header": head,
                  "start_date": hdr["date"].isoformat() if hdr["date"] else None,
                  "appendix": hdr["appendix"],
                  "cycle_mode": cycle_mode_from_labels(labels),
                  "cycle_labels": labels, "blocks": len(blocks),
+                 "last_covered": lc.isoformat() if lc else None,
+                 "balance": bal["amount"] if bal else None,
+                 "balance_ref": bal["ref"] if bal else "",
                  "sections": len(sections)}
     if not filled:
         return [], {**base_meta, "vat_mentioned": _vat_seen(rows),
@@ -1044,6 +1202,7 @@ def parse_contract_sheet(sheet_name, rows, rep: Report, formulas=None, fills=Non
                          f"гадаа гэж авав")
 
     items: dict[tuple, float] = {}
+    rate_refs: dict[tuple, str] = {}
     carry = None
     skipped_returned = 0
     dropped: list[str] = []
@@ -1075,13 +1234,48 @@ def parse_contract_sheet(sheet_name, rows, rep: Report, formulas=None, fills=Non
                         if _txt(raw_code) in CATALOG_GAPS else ""))
             continue
         items[(code[0], code[1], rate)] = items.get((code[0], code[1], rate), 0) + qty
+        # ТАРИФЫН НҮД — каталогийн `base_rate` ЭНД цитатлагдана (2-р шат):
+        # «330₮ гэж хаанаас гарав» гэсэн асуултад ЭНЭ мөр хариулна.
+        rate_refs.setdefault((code[0], code[1], rate),
+                             f"{sheet_name}!{_col_name(rc)}{ri + 1}")
 
     meta = {**base_meta, "vat_mentioned": _vat_seen(rows),
             "returned_rows": skipped_returned, "period_end": section["period"],
             "her_total": her_total, "total_ref": total_ref, "dropped": dropped}
-    out = [{"material": m, "grade": g, "qty": q, "daily_rate": rt}
+    out = [{"material": m, "grade": g, "qty": q, "daily_rate": rt,
+            "rate_ref": rate_refs.get((m, g, rt), "")}
            for (m, g, rt), q in sorted(items.items())]
     return out, meta
+
+
+def sheet_balance(rows, qty_col: int, amount_col: int, sheet: str) -> dict | None:
+    """ТҮҮНИЙ ХУУДАСНЫ ӨӨРИЙН «Үлдэгдэл» нүд — эхний үлдэгдлийн эх сурвалж.
+
+    `БЛҮҮМ-2!X33 = X30 − X32` = 382,179,050₮. Самбар нь тэр харилцагчийг
+    392,791,500₮ гэдэг: хоёр дэвтэр 10,612,450₮-өөр зөрж байна. Үлдэгдлийг
+    ХУУДСААС нь авбал үлдэгдэл БА хамралт (`last_covered`) хоёр НЭГ дэвтрээс
+    гарах тул `billing_from = хамралт + 1` нь бүтцээрээ зөв болно; самбараас
+    авбал хоёр өөр дэвтрийн тоо нийлж, залгаа нь ЯМАР Ч баталгаагүй.
+
+    Долоон хуудсанд ДӨРВӨН нэршил: «Үлдэгдэл», «үлдэгдэл», «Үлдэгдэл төлбөр»,
+    «Нийт төлөх үлдэгдэл дүн/төлбөр». Тиймээс «үлд» гэсэн ХЭСГЭЭР хайна.
+    «Өмнөх үлдэгдэл» бол ЭХЛЭЛ — сонгогдохгүй. Ижил үг нэг блокт хоёр удаа
+    гарвал (`W30` ба `T33`) ДООД талынх нь ялна: тэр нь эцсийн мөр.
+    """
+    best = None
+    for ri, r in enumerate(rows, start=1):
+        cells = tuple(r) + (None,) * (amount_col + 2)
+        for ci in range(max(qty_col - 4, 0), amount_col + 1):
+            t = _txt(cells[ci]).casefold().strip(" :")
+            if "үлд" not in t or "өмнөх" in t:
+                continue
+            v = parse_money(cells[amount_col])
+            if v is None:
+                continue
+            best = {"amount": float(v),
+                    "ref": f"{sheet}!{_col_name(amount_col)}{ri}"}
+            break
+    return best
 
 
 def _col_name(ci: int) -> str:
@@ -1342,15 +1536,38 @@ def harvest_contacts(rows, sheet: str) -> list[dict]:
     return out
 
 
-def harvest_notes(rows, formulas, fills, fonts, sheet: str, as_of) -> list[dict]:
-    """ЗАХЫН ТЭМДЭГЛЭЛ + ШАР ТУГ + улаан маргаантай тоо (№111, 112 / P1-22).
+#: ХАМГИЙН БАГА УТГАТАЙ ТЭМДЭГЛЭЛ — ГУРВАН ҮГ. «буцаалт», «модонд», «хаав» нь
+#: өгүүлбэр биш, ХҮСНЭГТИЙН шошго: гэрээний хажууд наагаад тэр уншихад
+#: юу ч хэлэхгүй. Гурван үгнээс эхлээд л ТҮҮНИЙ өгүүлбэр болно
+#: («барьцаанаас суутгаж тооцов», «хугацаа хэтэрвэл … алданга тооцно»).
+MEMO_MIN_WORDS = 3
 
-    Гурван эх сурвалж:
-      1. үгсийн сангийн текст («7.06нд тооцов», «нөат шивсэн», «модонд»…);
-      2. ШАР дүүргэлттэй ямар ч утга — тэр өөрөө «энэ рүү эргэж хар»;
-      3. улаан фонттой ТОМ дүн — маргаантай/нэхэгдэх тоо.
+#: ТЭМДЭГЛЭЛИЙН ЗОХИОГЧ — хоёрхон нэр. «Шилжүүлэлт» гэдэг нь ХЭРЭГСЛИЙН нэр
+#: байсан: тэр хүнийг мэдэхгүй. Дэвтрээс уншсныг «Дэвтрээс», системийн
+#: өөрийн асуултыг «Систем» гэж бичнэ.
+NOTE_AUTHOR_BOOK = "Дэвтрээс"
+NOTE_AUTHOR_SYSTEM = "Систем"
+
+
+def harvest_notes(rows, formulas, fills, fonts, sheet: str,
+                  as_of) -> tuple[list[dict], list[dict]]:
+    """ЗАХЫН ТЭМДЭГЛЭЛ (№111, 112 / P1-22) — ТҮҮНИЙХ ба МАШИНЫХ хоёр овоолго.
+
+    Буцаана `(kept, dropped)`:
+
+    · `kept` — ТҮҮНИЙ бичсэн, гурав ба түүнээс дээш үгтэй захын тэмдэглэл.
+      Текст нь ЯГ ХЭВЭЭРЭЭ: нүдний хаяг (`Зулаа-3!AQ27`) НААГДАХГҮЙ, туг
+      өргөгдөхгүй. Тэр өөрийнхөө өгүүлбэрийг гэрээн дээрээ таньж харна.
+
+    · `dropped` — МАШИНЫ хэл: «ШАР нүд: 35,000,000 — «бартер»», «МАРГААНТАЙ
+      гар тоо», «улаанаар бичсэн дүн», ганц үгтэй шошго. Эдгээр нь ХӨГЖҮҮЛЭГЧИД
+      хэрэгтэй мөр — тайлангийн хавсралтад очно, гэрээн дээр НААГДАХГҮЙ.
+
+    Урьд нь гурвуулаа НЭГ жагсаалтаар гэрээ рүү ордог байсан тул тэр өөрийн
+    дэвтрээ нээхэд «ШАР нүд: … · Блүүт тооцоо!G8» гэсэн 215 мөр угтдаг байв.
     """
-    out: list[dict] = []
+    kept: list[dict] = []
+    dropped: list[dict] = []
     seen: set[str] = set()
     for ri, r in enumerate(rows, start=1):
         cells = tuple(r) + (None,) * 12
@@ -1365,23 +1582,31 @@ def harvest_notes(rows, formulas, fills, fonts, sheet: str, as_of) -> list[dict]
             numeric = isinstance(c, (int, float)) and not isinstance(c, bool)
             near = next((_txt(cells[j]) for j in range(max(ci - 4, 0), ci - 1)
                          if _txt(cells[j]) and not _txt(cells[j]).isdigit()), "")
-            body, flag = "", False
+            body, kind = "", ""
             if is_margin_note(text):
-                body, flag = text, yellow
+                body, kind = text, "захын тэмдэглэл"
             elif yellow and text:
                 body = (f"ШАР нүд: {c:,.0f}" if numeric else f"ШАР нүд: {text}")
                 if numeric and not near:
                     continue                      # тайлагдахгүй ганц тоо
                 body += f" — «{near}»" if near else ""
-                flag = True
+                kind = "шар нүд"
             elif font == "FFFF0000" and numeric and abs(c) >= 1e6:
-                # ГАРААР бичсэн улаан тоо = МАРГААНТАЙ нэхэмжлэл (тугтай);
+                # ГАРААР бичсэн улаан тоо = МАРГААНТАЙ нэхэмжлэл;
                 # томьёотой улаан тоо = ердийн «нэхэгдэх» нийлбэр (баримт).
                 hand = (ri, ci) not in formulas
                 body = (("МАРГААНТАЙ гар тоо " if hand else "улаанаар бичсэн дүн ")
                         + f"{c:,.0f}₮" + (f" — «{near}»" if near else ""))
-                flag = hand
+                kind = "улаан дүн"
             if not body:
+                continue
+            key = f"{body}|{ref}"
+            if key in seen:
+                continue
+            seen.add(key)
+            if kind != "захын тэмдэглэл" or len(body.split()) < MEMO_MIN_WORDS:
+                dropped.append({"text": body, "ref": ref, "kind": kind,
+                                "sheet": sheet})
                 continue
             day = parse_date_any(text, default_year=as_of.year)
             if day is None:
@@ -1389,12 +1614,40 @@ def harvest_notes(rows, formulas, fills, fonts, sheet: str, as_of) -> list[dict]
                 if m:
                     day = parse_date_any(f"{m.group(1)}.{m.group(2)}",
                                          default_year=as_of.year)
-            key = f"{body}|{ref}"
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append({"text": f"{body} · {ref}", "date": str(day or as_of),
-                        "flag": bool(flag), "ref": ref})
+            # Нүдэнд орсон давхар зай нь дэлгэц дээр эмх замбараагүй харагдана;
+            # үг нь хэвээрээ.
+            kept.append({"text": " ".join(body.split()), "date": str(day or as_of),
+                         "flag": False, "author": NOTE_AUTHOR_BOOK, "ref": ref})
+    return kept, dropped
+
+
+def dedupe_notes(notes: list[dict], dropped: list[dict], client: str,
+                 where: str) -> list[dict]:
+    """НЭГ ижил өгүүлбэрийг НЭГ Л удаа наана.
+
+    Гэрээний нөхцөлийн мөр («хугацаа хэтэрвэл … алданга тооцно») хуудсанд
+    цикл бүрийн хажууд ДАХИН ДАХИН бичигдсэн байдаг: нүдний хаяг нь өөр тул
+    урьд нь найман хуулбар болж очдог байв. Хаяг нь текстээс гарсны дараа
+    тэдгээр нь ЯГ ижил мөрүүд — үлдсэн нь хавсралт руу.
+    """
+    def key_of(n):
+        # «НӨАТ: «…»» нь ТҮҮНИЙ ижил өгүүлбэрийг ТУГТАЙГААР давтдаг — хоёулаа
+        # наагдвал нэг зүйлийг хоёр удаа асууна. Бүрхүүлийг нь хуулж
+        # түлхүүрийг тэнцүүлнэ; ТУГТАЙ нь ялна (доорх эрэмбэ).
+        s = " ".join(str(n.get("text", "")).split())
+        m = re.fullmatch(r"НӨАТ:\s*«(.*)»", s)
+        return " ".join((m.group(1) if m else s).split()).casefold()
+
+    out, seen = [], set()
+    for n in sorted(notes, key=lambda x: not x.get("flag")):
+        key = key_of(n)
+        if not key or key in seen:
+            dropped.append({"client": client, "where": where,
+                            "kind": "давхардсан", "text": n.get("text", ""),
+                            "ref": n.get("ref", ""), "sheet": ""})
+            continue
+        seen.add(key)
+        out.append(n)
     return out
 
 
@@ -1431,6 +1684,31 @@ def harvest_ae_block(rows) -> dict[str, dict]:
         out[AE_BLOCK][mat] = out[AE_BLOCK].get(mat, 0) + max(f, 0)
         out[OTHER_SITE][mat] = out[OTHER_SITE].get(mat, 0) + max(s - f, 0)
     return out if any(out[AE_BLOCK].values()) else {}
+
+
+def ae_block_snapshot(rows, year: int) -> str:
+    """`Батцоож!F` баганын ЗУРАГЛАСАН ОГНОО — «А Е блок»-оос ЗҮҮН талын
+    сүүлчийн огнооны толгой (`E6='4.01'` → 2026-04-01).
+
+    Энэ багана нь `B−C−D−E` буюу ТЭР ӨДРИЙН байдал: цаашид 4.08, 4.15, 4.21-нд
+    юу гарсан/ирснийг тоолоогүй. Тиймээс түүгээр өнөөдрийн 1,879ш-ийг хуваах
+    нь ХУГАЦААГАА ӨНГӨРСӨН харьцаагаар хуваах явдал.
+    """
+    hdr = fc = None
+    for ri, r in enumerate(rows[:12]):
+        for ci, c in enumerate(tuple(r) + (None,) * 4):
+            if AE_BLOCK.casefold() in _txt(c).casefold():
+                hdr, fc = ri, ci
+    if hdr is None or hdr + 1 >= len(rows):
+        return ""
+    best = ""
+    for ci, c in enumerate(tuple(rows[hdr + 1])):
+        if ci >= fc:
+            break
+        d = parse_date_any(_txt(c), default_year=year)
+        if d is not None:
+            best = d.isoformat()
+    return best
 
 
 def harvest_reg(rows) -> str:
@@ -1547,48 +1825,81 @@ NETTING: list[dict] = [
 ]
 
 
+def _grade_blind_weight(bucket: dict, material: str) -> float:
+    """Зэрэглэлээ ҮЛ ХАРААД тухайн МАТЕРИАЛЫН бүх тоог нэмнэ.
+
+    Паркийн дэвтрийн толгойд `Y6='V2'` ба `Z6='V2 шинэ'` гэсэн ХОЁР багана
+    байдаг тул `Z18`-ийн 600ш нь `Тулаас В2·шинэ` болж задардаг; гэрээний
+    мөр нь `Тулаас В2·А`. Хоёр түлхүүр таарахгүй тул дарь эхийн жин 0 болж,
+    600ш нь технологи руу нүүж 2,585/385/1,324 гэсэн ХУДАЛ задаргаа гардаг байв.
+    """
+    return float(sum(q for (m, _g), q in bucket.items() if m == material))
+
+
 def _site_split(client: str, items: list[dict], park: dict, rep: Report,
-                explicit: dict | None = None) -> list[dict]:
+                explicit: dict | None = None,
+                snapshot: str = "") -> tuple[list[dict], dict | None]:
     """Нэг гэрээ, ОЛОН ТАЛБАЙ (№88, 97) — олголтыг талбай тус бүрд хуваана.
 
     Блүүмийн хуудас ГУРВАН талбайг барина (`технологи 2,044 · архангай 326 ·
     дарь эх 1,924` = 4,294ш) атлаа АВЛАГА нь НЭГ. Хуваалт нь паркийн дэвтрийн
     SKU-гийн тоогоор жинлэгдэж, нийлбэр нь хуудасны тоотой ЯГ тэнцэнэ.
+
+    Буцаана `(sites, problem)`. `problem` нь §9-д очих АСУУЛТ: эх сурвалж нь
+    ОГНООТОЙ ЗУРАГ бөгөөд нийлбэр нь өнөөдрийн тоотой таарахгүй бол систем
+    ХУВААХГҮЙ — нэг хоосон нүднээс төрсөн харьцааг «түүний хуваарилалт» гэж
+    бичих нь ЗОХИОМОЛ баримт болно (Батцоож!F27 = 11,866ш, гэрээ нь 1,879ш).
     """
     if explicit:
         park, names = explicit, list(explicit)
     else:
         names = SITES.get(client)
     if not names:
-        return []
-    # SKU тус бүрд паркийн дэвтрийн тоо жин болно; тэр SKU-г парк мэдэхгүй бол
-    # ТАЛБАЙН НИЙТ тоо (2,044 · 326 · 1,924) руу уналт хийнэ — «бүгдийг эхний
-    # талбайд» гэж хаях нь худал задаргаа болно.
+        return [], None
+    want = sum(i["qty"] for i in items)
+    if explicit:
+        src_total = sum(sum(d.values()) for d in explicit.values())
+        if abs(src_total - want) > max(1.0, 0.01 * want):
+            text = (f"«{AE_BLOCK}» / «{OTHER_SITE}»-ийн хуваалт: эх сурвалж "
+                    + (f"{snapshot}-ний зураг" if snapshot else "огнооны зураг")
+                    + f" ({src_total:,.0f}ш), одоогийн {want:,.0f}ш-тэй "
+                      f"таарахгүй — та хуваарилна уу")
+            rep.warn(f"«{client}»: {text}")
+            return [], {"client": client, "text": text, "source": src_total,
+                        "now": want, "snapshot": snapshot}
+    # SKU тус бүрд паркийн дэвтрийн тоо жин болно; ЯГ таарах (материал,
+    # зэрэглэл) байхгүй бол ЗЭРЭГЛЭЛГҮЙГЭЭР нэмнэ; тэр ч байхгүй бол ТАЛБАЙН
+    # НИЙТ тоо (2,044 · 326 · 1,924) руу уналт хийнэ — «бүгдийг эхний талбайд»
+    # гэж хаях нь худал задаргаа болно.
     site_totals = [float(sum(park.get(n, {}).values())) for n in names]
     out = [{"site": n, "items": []} for n in names]
     for it in items:
         key = (it["material"], it["grade"])
-        w = [float(park.get(n, {}).get(key, 0) or 0) for n in names]
+        w = [float(park.get(n, {}).get(key, 0) or 0)
+             or _grade_blind_weight(park.get(n, {}), it["material"])
+             for n in names]
         if not any(w):
             w = site_totals if any(site_totals) else [1.0] + [0.0] * (len(names) - 1)
         for i, q in enumerate(split_qty(float(it["qty"]), w)):
             if q > 0:
                 out[i]["items"].append({**it, "qty": q})
     got = sum(i["qty"] for s in out for i in s["items"])
-    want = sum(i["qty"] for i in items)
     if abs(got - want) > 0.5:                    # хуваалт нийлбэрээ эвдсэн бол ХАЯНА
         rep.warn(f"«{client}»: талбайн хуваалт нийлбэрээ эвдэв "
                  f"({got:g} ≠ {want:g}) — хуваалгүй нэг мөрөөр авав")
-        return []
+        return [], None
     rep.warn(f"«{client}»: {want:g}ш нь {len(names)} ТАЛБАЙД задарлаа — "
              + " · ".join(f"{s['site']} {sum(i['qty'] for i in s['items']):g}ш"
                           for s in out))
-    return [s for s in out if s["items"]]
+    return [s for s in out if s["items"]], None
 
 
-def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, Report]:
+def build(src_dir: str, as_of: str, clients_mode: str = "top10",
+          ob_source: str = "sheet") -> tuple[dict, Report]:
     rep = Report()
     as_of_d = date.fromisoformat(as_of)
+    dropped_notes: list[dict] = []
+    site_gaps: list[dict] = []
 
     def load(fn):
         path = os.path.join(src_dir, fn)
@@ -1601,7 +1912,8 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
 
     # ---- WB3: самбар, жижиг авлага, зээл ----
     board_rows = _rows(wb3["Түрээс тооцоо-26"], max_col=14)
-    board = parse_ar_board(board_rows, rep, b3.formulas("Түрээс тооцоо-26"))
+    board = parse_ar_board(board_rows, rep, b3.formulas("Түрээс тооцоо-26"),
+                           year=as_of_d.year)
     board_totals = parse_ar_totals(board_rows, rep)
     small = parse_small_receivables(board_rows, rep)
     loans = parse_loans(_rows(wb3["Өглөгө.зээл-26"], max_col=12), rep)
@@ -1610,7 +1922,12 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
     stock = parse_stock(_rows(wb1["тооллого 6.22"], max_col=10), rep)
 
     # ---- WB2: паркийн матриц (гадаа байгаа) ----
-    park, unknown_sku, park_raw = parse_park_matrix(_rows(wb2["2026 шинэ"]), rep,
+    park_rows = _rows(wb2["2026 шинэ"])
+    yard = parse_park_yard(park_rows)
+    # Тооллогод ХООСОН үлдсэн материалыг (бүх труба, Тулаас В6, Шат) хашааны
+    # мөрөөр нөхнө — эс тэгвэл 7 труба SKU бүгд 0-ээр ачаалагдана.
+    stock = fill_stock_from_yard(stock, yard, rep)
+    park, unknown_sku, park_raw = parse_park_matrix(park_rows, rep,
                                                     "2026 шинэ")
     park_prev, _, _ = parse_park_matrix(_rows(wb2["2026 он"]), rep, "2026 он")
     for u in unknown_sku:
@@ -1630,6 +1947,8 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
     sheet_contacts: dict[str, list[dict]] = {}
     sheet_agreed: dict[str, dict] = {}
     sheet_reg: dict[str, str] = {}
+    #: харилцагч → {"amount", "ref", "last_covered", "sheet"} — OB-ийн эх сурвалж
+    sheet_ob: dict[str, dict] = {}
     for sheet, client in SHEET_CLIENT.items():
         if sheet not in sheets_seen:
             rep.warn(f"WB1: хуудас алга — «{sheet}»")
@@ -1647,7 +1966,8 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
         rows = _rows(wb1[sheet])
         f_sheet = b1.formulas(sheet)
         fills, fonts = b1.styles(sheet)
-        items, meta = parse_contract_sheet(sheet, rows, rep, f_sheet, fills)
+        items, meta = parse_contract_sheet(sheet, rows, rep, f_sheet, fills,
+                                           year=as_of_d.year)
         in_park = client in park
         on_rent = park.get(client, {})
         out_qty = sum(on_rent.values())
@@ -1698,7 +2018,8 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
         # ---- Зургаан байр: барьцаа · холбоо · тэмдэглэл · тооцоо нийлсэн ----
         dep = harvest_deposit(rows, f_sheet, as_of_d, sheet)
         contacts = harvest_contacts(rows, sheet)
-        notes = harvest_notes(rows, f_sheet, fills, fonts, sheet, as_of_d)
+        notes, dropped = harvest_notes(rows, f_sheet, fills, fonts, sheet, as_of_d)
+        dropped_notes += [dict(d, client=client, where="гэрээ") for d in dropped]
         agreed = None
         for extra in EXTRA_SHEETS.get(client, []):
             if extra not in sheets_seen:
@@ -1709,25 +2030,32 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
             contacts += [c for c in harvest_contacts(e_rows, extra)
                          if name_key(c["name"]) not in
                          {name_key(x["name"]) for x in contacts}]
-            notes += harvest_notes(e_rows, e_f, e_fill, e_font, extra, as_of_d)
+            e_keep, e_drop = harvest_notes(e_rows, e_f, e_fill, e_font, extra, as_of_d)
+            notes += e_keep
+            dropped_notes += [dict(d, client=client, where="гэрээ") for d in e_drop]
             agreed = agreed or harvest_agreed(e_rows, extra, as_of_d)
             if dep["status"] == "":
                 dep = harvest_deposit(e_rows, e_f, as_of_d, extra)
         agreed = agreed or harvest_agreed(rows, sheet, as_of_d)
+        # ТҮРЭЭС БИШ мөр · ГЭРЭЭНИЙ ТОЛГОЙ — ХӨГЖҮҮЛЭГЧИЙН мөр, ТҮҮНИЙХ БИШ.
+        # Түүний гэрээн дээр «(самбарын Үлдэгдэлд АЛЬ ХЭДИЙН орсон, бичилт
+        # үүсгээгүй)» гэсэн өгүүлбэр наах нь ямар ч асуулт тавихгүй, зөвхөн
+        # чимээ болно: хавсралтад очно.
         for label, amount, ref in ACCOUNT_NOTES.get(client, []):
-            notes.append({"text": f"Түрээс БИШ мөр: {label} — {amount:,.0f}₮ · {ref} "
-                                  f"(самбарын Үлдэгдэлд АЛЬ ХЭДИЙН орсон, "
-                                  f"бичилт үүсгээгүй)",
-                          "date": str(as_of_d), "flag": True, "ref": ref})
+            dropped_notes.append({
+                "client": client, "where": "гэрээ", "kind": "түрээс биш мөр",
+                "text": f"{label} — {amount:,.0f}₮", "ref": ref, "sheet": sheet})
         for vn in vat_notes:
-            notes.append({"text": f"НӨАТ: «{vn}»", "date": str(as_of_d),
-                          "flag": True, "ref": sheet})
+            notes.append({"text": "НӨАТ: «" + " ".join(str(vn).split()) + "»",
+                          "date": str(as_of_d), "flag": True,
+                          "author": NOTE_AUTHOR_BOOK, "ref": sheet})
         if meta.get("start_date"):
-            notes.append({"text": f"Гэрээний ЖИНХЭНЭ толгой: «{meta['header']}» — "
-                                  f"эхлэл {meta['start_date']}"
-                                  + (f", хавсралт №{meta['appendix']}"
-                                     if meta["appendix"] else ""),
-                          "date": meta["start_date"], "flag": False, "ref": f"{sheet}!C1"})
+            dropped_notes.append({
+                "client": client, "where": "гэрээ", "kind": "гэрээний толгой",
+                "text": f"«{meta['header']}» — эхлэл {meta['start_date']}"
+                        + (f", хавсралт №{meta['appendix']}"
+                           if meta["appendix"] else ""),
+                "ref": f"{sheet}!C1", "sheet": sheet})
         else:
             rep.warn(f"{sheet} ({client}): гэрээний толгойгоос ОГНОО олдсонгүй — "
                      f"эхлэл {as_of} болов")
@@ -1741,33 +2069,57 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
                      f"{loaded:g}ш ({meta['total_ref']}) — зөрүү {her - loaded:g}ш")
 
         # ---- ТАЛБАЙН задаргаа (№88, 97) ----
-        ae = {}
+        ae, ae_snap = {}, ""
         if "Батцоож" in EXTRA_SHEETS.get(client, []) and "Батцоож" in sheets_seen:
-            ae = harvest_ae_block(_rows(wb1["Батцоож"]))
+            bt_rows = _rows(wb1["Батцоож"])
+            ae = harvest_ae_block(bt_rows)
+            ae_snap = ae_block_snapshot(bt_rows, as_of_d.year) if ae else ""
             if ae:
-                notes.append({
-                    "text": f"ТАЛБАЙН хуваалт «{AE_BLOCK}» нь Батцоож!F баганаас "
-                            f"(«{AE_BLOCK} үлдэгдэл» = B−C−D−E) жинлэгдэв — тэр "
-                            f"багана нь ДУНДЫН байдал тул хуваалтыг ТЭР батална",
-                    "date": str(as_of_d), "flag": True, "ref": "Батцоож!F5"})
-        sites = _site_split(client, items, park_raw, rep, explicit=ae or None)
+                dropped_notes.append({
+                    "client": client, "where": "гэрээ", "kind": "талбайн хуваалт",
+                    "text": f"«{AE_BLOCK}» нь Батцоож!F («{AE_BLOCK} үлдэгдэл» = "
+                            f"B−C−D−E) баганаас жинлэгдэв — ДУНДЫН байдал",
+                    "ref": "Батцоож!F5", "sheet": "Батцоож"})
+        sites, site_problem = _site_split(client, items, park_raw, rep,
+                                          explicit=ae or None, snapshot=ae_snap)
+        if site_problem:
+            site_gaps.append(dict(site_problem, sheet=sheet, no=meta.get("no") or sheet))
+
+        # ---- ХАМРАЛТ: дэвтэр хаана дуусав → систем хаанаас эхлэх вэ (P0-11) ----
+        last_covered = meta.get("last_covered")
+        board_lc = (board.get(client) or {}).get("last_covered")
+        if not last_covered:
+            rep.warn(f"{sheet} ({client}): циклийн шошго олдсонгүй — дэвтэр "
+                     f"ХЭЗЭЭ хүртэл нэхэгдсэн нь мэдэгдэхгүй тул тооцоо "
+                     f"{as_of}-оос эхэлнэ. ТЭР баталгаажуулна")
+        elif board_lc and board_lc != last_covered:
+            rep.warn(f"{sheet} ({client}): самбар {board_lc} хүртэл, хуудас "
+                     f"{last_covered} хүртэл нэхсэн — хамралт ЗӨРЖ байна "
+                     f"(систем хуудсыг сонгов, §9-д бичив)")
 
         day = sum(i["qty"] * i["daily_rate"] for i in items)
         contracts.append({
             "client": client, "no": no, "items": items,
             "vat_percent": vat_pct,
             "start_date": meta.get("start_date"),
+            # `last_covered` + 1 хоног = `billing_from` (ачаалагч тавина).
+            # `board_last_covered` нь ЗӨВХӨН тулгалтын §9-д хэрэглэгдэнэ.
+            "last_covered": last_covered,
+            "board_last_covered": board_lc,
             "cycle_mode": meta["cycle_mode"],
             "sheet": sheet,
             "deposit_events": dep["events"],
             "deposit_status": dep["status"] or "none",
             "sites": sites,
-            "notes": notes,
-            "note": (f"Шилжүүлэлт: «{sheet}» хуудсаас · өдрийн дүн {day:,.0f}₮"
-                     + (f" · гэрээ {meta['start_date']}" if meta.get("start_date") else "")
-                     + (f" · НӨАТ {vat_pct:g}%" if vat_pct else "")
-                     + (" · НӨАТ шалгах" if vat_notes else "")),
+            "notes": dedupe_notes(notes, dropped_notes, client, "гэрээ"),
+            # ГЭРЭЭНИЙ ТЭМДЭГЛЭЛ нь ТҮҮНИЙ талбар — шилжүүлэлтийн машины
+            # мөрийг («Шилжүүлэлт: «БЛҮҮМ-2» хуудсаас · өдрийн дүн …») тэнд
+            # бичихгүй. Тэр өгөгдөл нь `audit`-д ба тулгалтын тайланд байна.
+            "note": "",
         })
+        sheet_ob[client] = {"amount": meta.get("balance"),
+                            "ref": meta.get("balance_ref", ""),
+                            "last_covered": last_covered, "sheet": sheet}
         sheet_contacts[client] = sheet_contacts.get(client, []) + contacts
         if agreed:
             sheet_agreed[client] = agreed
@@ -1781,11 +2133,16 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
         entry["total_ref"] = meta.get("total_ref", "")
         entry["returned_rows"] = meta.get("returned_rows", 0)
         entry["start_date"] = meta.get("start_date")
+        entry["last_covered"] = last_covered
+        entry["board_last_covered"] = board_lc
         entry["cycle_mode"] = meta["cycle_mode"]
         entry["vat_percent"] = vat_pct
         entry["deposit_events"] = len(dep["events"])
         entry["notes"] = len(notes)
         entry["contacts"] = len(contacts)
+        entry["sheet_balance"] = meta.get("balance")
+        entry["balance_ref"] = meta.get("balance_ref", "")
+        entry["day_amount"] = day
         sheet_report.append(entry)
 
     # ---- Харилцагчдын жагсаалт ----
@@ -1796,38 +2153,62 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
     for name, row in board.items():
         if keep is not None and name not in keep:
             continue
-        note = "Мастер самбар «Түрээс тооцоо-26»"
-        if row["notes"]:
-            note += " · " + " · ".join(row["notes"])
-        if row["deposit_not_lodged"]:
-            note += " · барьцаа БАЙРШУУЛААГҮЙ"
-        entries = [dict(n, date=str(as_of_d)) for n in NETTING if n["client"] == name]
+        # САМБАРЫН захын үг нь ТҮҮНИЙХ — гурав ба түүнээс дээш үгтэй бол
+        # тэмдэглэл болно, богино шошго нь хавсралт руу.
         c_notes = []
+        for t in row["notes"]:
+            if len(_txt(t).split()) >= MEMO_MIN_WORDS:
+                c_notes.append({"text": _txt(t), "date": str(as_of_d),
+                                "flag": False, "author": NOTE_AUTHOR_BOOK,
+                                "ref": "Түрээс тооцоо-26"})
+            else:
+                dropped_notes.append({"client": name, "where": "харилцагч",
+                                      "kind": "самбарын шошго", "text": _txt(t),
+                                      "ref": "Түрээс тооцоо-26",
+                                      "sheet": "Түрээс тооцоо-26"})
+        entries = [dict(n, date=str(as_of_d)) for n in NETTING if n["client"] == name]
         for n in entries:
             for ref, val, why in n.get("decisions", []):
-                c_notes.append({
-                    "text": f"ШИЙДВЭР ХЭРЭГТЭЙ — «{n['label']}»-ийн ӨӨР утга: "
-                            f"{val:,.0f}₮ ({why}) · {ref}",
-                    "date": str(as_of_d), "flag": True, "ref": ref})
+                dropped_notes.append({
+                    "client": name, "where": "харилцагч", "kind": "шийдвэр",
+                    "text": f"«{n['label']}»-ийн ӨӨР утга: {val:,.0f}₮ ({why})",
+                    "ref": ref, "sheet": "2026 тооцоо"})
         # WB1-д ХУУДАСГҮЙ топ-10 (Хурд групп · Голден лайт · Дархан Оюунаа) —
         # гэрээ үүсэхгүй тул тэдний баримтжсан мөрүүд ХАРИЛЦАГЧ дээр буудаг.
         if name not in with_contract:
             for label, amount, ref in ACCOUNT_NOTES.get(name, []):
-                c_notes.append({
-                    "text": f"Түрээс БИШ мөр: {label} — {amount:,.0f}₮ · {ref} "
-                            f"(самбарын Үлдэгдэлд АЛЬ ХЭДИЙН орсон, "
-                            f"бичилт үүсгээгүй)",
-                    "date": str(as_of_d), "flag": True, "ref": ref})
+                dropped_notes.append({
+                    "client": name, "where": "харилцагч", "kind": "түрээс биш мөр",
+                    "text": f"{label} — {amount:,.0f}₮", "ref": ref,
+                    "sheet": "2026 тооцоо"})
         contacts = sheet_contacts.get(name, [])
-        clients.append({"name": name, "balance": round(row["balance"]),
-                        "deposit": round(row["deposit"]), "note": note,
+        ob = sheet_ob.get(name) or {}
+        board_bal = round(row["balance"])
+        sheet_bal = None if ob.get("amount") is None else round(ob["amount"])
+        use_sheet = ob_source == "sheet" and sheet_bal is not None
+        clients.append({"name": name,
+                        "balance": sheet_bal if use_sheet else board_bal,
+                        # ЭХНИЙ ҮЛДЭГДЭЛ ХААНААС ГАРАВ (2-р шат). Хуудастай
+                        # харилцагчийн үлдэгдэл нь ТҮҮНИЙ ХУУДСААС гарна:
+                        # тэгвэл үлдэгдэл ба хамралт (`ob_date`) НЭГ дэвтрээс
+                        # гарах тул `billing_from = хамралт + 1` нь бүтцээрээ
+                        # зөв болно. Самбар нь §9-д АСУУЛТ болж үлдэнэ.
+                        "balance_source": "sheet" if use_sheet else "board",
+                        "balance_sheet": sheet_bal,
+                        "balance_board": board_bal,
+                        "balance_ref": (ob.get("ref") if use_sheet
+                                        else "Түрээс тооцоо-26!J"),
+                        "ob_date": ob.get("last_covered"),
+                        "deposit": round(row["deposit"]), "note": "",
+                        "deposit_not_lodged": bool(row["deposit_not_lodged"]),
                         "reg": sheet_reg.get(name, ""),
                         "person": contacts[0]["name"] if contacts else "",
                         "phone": contacts[0]["phone"] if contacts else "",
                         "contacts": contacts,
                         "entries": [{k: v for k, v in e.items() if k != "decisions"}
                                     for e in entries],
-                        "notes": c_notes,
+                        "notes": dedupe_notes(c_notes, dropped_notes, name,
+                                              "харилцагч"),
                         "agreed": sheet_agreed.get(name)})
         seen.add(name)
     for row in small:
@@ -1843,7 +2224,9 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
     for c in contracts:
         if c["client"] not in seen:
             clients.append({"name": c["client"], "balance": 0, "deposit": 0,
-                            "note": "Самбарт байхгүй — паркийн/хуудасны дэвтрээс"})
+                            "note": "", "balance_source": "none",
+                            "balance_board": None, "balance_sheet": None,
+                            "balance_ref": "", "ob_date": c.get("last_covered")})
             seen.add(c["client"])
             rep.warn(f"«{c['client']}»: AR самбарт мөр алга, гэрээ нь бий — "
                      f"үлдэгдэл 0-ээр нээв")
@@ -1859,6 +2242,9 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
     data = {
         "as_of": as_of,
         "clients_mode": clients_mode,
+        # ЭХНИЙ ҮЛДЭГДЛИЙН ЭХ СУРВАЛЖ: `sheet` = харилцагчийн ӨӨРИЙН хуудас
+        # (хуудасгүй бол самбар), `board` = урьдын зан төлөв.
+        "ob_source": ob_source,
         "source": f"{WB1} + {WB2} + {WB3} (openpyxl, 2026.08 байдлаар)",
         "clients": sorted(clients, key=lambda c: c["name"]),
         "catalog": catalog,
@@ -1886,6 +2272,14 @@ def build(src_dir: str, as_of: str, clients_mode: str = "top10") -> tuple[dict, 
                           for k, v in sorted(park_prev.items()) if v},
             "sheets": sheet_report,
             "catalog_gaps": sorted(set(rep.gaps)),
+            # ХАЯГДСАН ТЭМДЭГЛЭЛ — гэрээн дээр НААГДААГҮЙ, гэхдээ АЛДАГДААГҮЙ.
+            # Тайлангийн хавсралтад бүтнээрээ хэвлэгдэнэ (хөгжүүлэгчид).
+            "dropped_notes": dropped_notes,
+            "site_gaps": site_gaps,
+            "park_yard": {f"{m}·{g}": q for (m, g), q in sorted(yard.items())},
+            "contact_refs": sorted(
+                {f"{c['name']} · {c.get('ref', '')}"
+                 for lst in sheet_contacts.values() for c in lst if c.get("ref")}),
             "warnings": rep.warnings,
             "unparsed": rep.unparsed,
         },
@@ -1902,16 +2296,23 @@ def main(argv=None):
     ap.add_argument("--as-of", default=DEFAULT_AS_OF)
     ap.add_argument("--clients", choices=("top10", "all"), default="top10",
                     help="top10 = аудитын §1.2-ийн эрэмбийн эхний арав (анхны)")
+    ap.add_argument("--ob-source", choices=("sheet", "board"), default="sheet",
+                    dest="ob_source",
+                    help="эхний үлдэгдэл ХААНААС: sheet = харилцагчийн өөрийн "
+                         "хуудас (анхны), board = «Түрээс тооцоо-26» самбар")
     a = ap.parse_args(argv)
 
-    data, rep = build(a.src, a.as_of, a.clients)
+    data, rep = build(a.src, a.as_of, a.clients, a.ob_source)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1, sort_keys=False)
         f.write("\n")
 
     debt = sum(c["balance"] for c in data["clients"] if c["balance"] > 0)
     cred = -sum(c["balance"] for c in data["clients"] if c["balance"] < 0)
+    from_sheet = sum(1 for c in data["clients"] if c.get("balance_source") == "sheet")
     print(f"→ {a.out}")
+    print(f"  OB эх сурв: --ob-source {a.ob_source}  ·  хуудсаар {from_sheet} "
+          f"харилцагч, самбараар {len(data['clients']) - from_sheet}")
     print(f"  Харилцагч : {len(data['clients'])}  ·  авлага {debt:,.0f}₮  ·  "
           f"илүү төлөлт {cred:,.0f}₮")
     print(f"  Барьцаа   : {sum(c['deposit'] for c in data['clients']):,.0f}₮")

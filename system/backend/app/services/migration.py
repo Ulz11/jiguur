@@ -6,7 +6,7 @@
 - load_data() idempotent — нэр давхардвал алгасна.
 """
 import json
-from datetime import date
+from datetime import date, timedelta
 from sqlalchemy.orm import Session
 from .. import models
 from . import deposit as deposit_svc
@@ -38,9 +38,19 @@ def account_contract(db: Session, client: models.Client, as_of: date | None = No
 
 
 def create_opening_balance(db: Session, client: models.Client, amount: float,
-                           as_of: date, deposit: float = 0):
+                           as_of: date, deposit: float = 0,
+                           ob_date: date | None = None):
+    """Хуучин авлагыг НЭГ нэхэмжлэл болгож буулгана.
+
+    `ob_date` нь ТҮҮНИЙ ДЭВТЭР ХААНА ДУУССАН өдөр (`last_covered`). Гурван
+    огноо (цикл эхлэл · төгсгөл · төлөх хугацаа) ба дансны гэрээний эхлэл
+    ЦӨМ тэнд буудаг. Урьд нь бүгд `as_of` байсан тул насжилтын самбар
+    Блүүмийн 382 сая₮-ийг «4 хоногийн настай» гэж харуулдаг байв — үнэндээ
+    тэр нь 8.11 хүртэлх БҮХ циклийн хуримтлагдсан үлдэгдэл.
+    """
     if abs(amount) < 0.5 and deposit <= 0:
         return None
+    day = ob_date or as_of
     credit = None
     if amount < 0:
         # Сөрөг үлдэгдэл = «илүү» (R18) → хуваарилагдаагүй кредит төлбөр.
@@ -57,9 +67,8 @@ def create_opening_balance(db: Session, client: models.Client, amount: float,
     # penalty 0: шилжүүлсэн хуучин үлдэгдэлд автомат алданги тооцохгүй
     # (шаардлагатай бол гэрээ дээр нь гараар асаана)
     c = account_contract(
-        db, client, as_of,
-        note="Үлдэгдэл шилжүүлэлт — хуучин системээс"
-             + (" (илүү төлөлттэй, барьцаа хадгалав)" if credit is not None else ""))
+        db, client, day,
+        note=f"{day:%Y.%m.%d} хүртэлх үлдэгдэл — Excel дэвтрээс")
     if deposit:
         # Барьцаа нь дэвтрийн ЭХНИЙ мөр болж орно (H8) — «байршуулаагүй»
         # (явдалгүй) ба «0 байршуулсан» хоёр цаашид ялгагдана.
@@ -67,7 +76,7 @@ def create_opening_balance(db: Session, client: models.Client, amount: float,
     inv = None
     if amount > 0:
         inv = models.Invoice(contract_id=c.id, no=f"OB-{client.id}",
-                             cycle_start=as_of, cycle_end=as_of, due_date=as_of,
+                             cycle_start=day, cycle_end=day, due_date=day,
                              rent_amount=amount, charge_amount=0, vat_amount=0,
                              total=amount,
                              detail_json=json.dumps({"note": "Хуучин системийн үлдэгдэл"}))
@@ -80,18 +89,22 @@ def create_active_contract(db: Session, client: models.Client, no: str, as_of: d
                            items: list[dict], note: str = "", vat_percent: float = 0,
                            warnings: list | None = None, *,
                            start_date: date | None = None, cycle_mode: str = "days",
-                           sites: list[dict] | None = None):
+                           sites: list[dict] | None = None,
+                           billing_from: date | None = None):
     """Явж байгаа түрээсийн гэрээг шилжүүлнэ.
 
     Бараа нь аль хэдийн түрээсэнд гарчихсан тул агуулахын үлдэгдлээс ХАСАХГҮЙ —
-    on_rent-д шууд нэмнэ. Тооцоо шилжсэн өдрөөс эхэлж явна; өмнөх бүх тооцоо
-    OB үлдэгдэлд аль хэдийн орсон.
+    on_rent-д шууд нэмнэ.
 
-    `start_date` нь ГЭРЭЭНИЙ ЖИНХЭНЭ ОГНОО (Марч 2022.3.1) — `as_of` БИШ.
-    Хөдөлгүүр үүнийг тэвчинэ: олголт нь `as_of`-т буудаг тул түүнээс өмнөх
-    циклүүд БҮГД тэг хуримтлалтай бөгөөд `derivable_invoice_specs` тэдгээрийг
-    алгасдаг (`rent == 0 and charge == 0 → continue`). Циклийн дугаар нь
-    огнооноос гардаг тул том боловч ТОГТВОРТОЙ.
+    `start_date` нь ГЭРЭЭНИЙ ЖИНХЭНЭ ОГНОО (Марч 2022.3.1) — ГАРЫН ҮСГИЙН
+    баримт. `billing_from` нь ТООЦОО эхлэх өдөр БА циклийн торны гарал цэг:
+    түүний дэвтрийн СҮҮЛЧИЙН цикл дуусаад маргааш нь. ОЛГОЛТ ч ЯГ тэр өдөрт
+    буудаг тул хоног ба ₮ хоёр нэг гаралтай болно.
+
+    Урьд нь олголт `as_of`-т буудаг байсан ба тор нь гарын үсгийн огнооноос
+    гардаг байв — хооронд нь ХЭН Ч нэхэхгүй нүх үлдэж (Блүүм 8.12-8.31 =
+    24,589,200₮), эхний нэхэмжлэл ТАСАРХАЙ цонхны дүнгээр гарч байлаа.
+    `billing_from` NULL бол зан төлөв ЯГ ХЭВЭЭР — олголт `as_of`-т.
 
     `sites` нь НЭГ олголтыг ТАЛБАЙ тус бүрийн падан болгож хуваана (№88, 97):
     Блүүмийн 4,294ш нь `технологи · архангай · дарь эх` гурав болно, авлага
@@ -103,20 +116,30 @@ def create_active_contract(db: Session, client: models.Client, no: str, as_of: d
     # ЗЭВСЭГЛЭХГҮЙ (P0-10 «алданги=0», H2). Гэрээ дээр нь гараар асаана.
     c = models.Contract(no=no, client_id=client.id, type="rent",
                         start_date=start_date or as_of,
+                        billing_from=billing_from,
                         cycle_days=30, cycle_mode=cycle_mode or "days",
                         penalty_percent=0, status="active",
                         vat_percent=vat_percent,
-                        note=note or "Идэвхтэй гэрээ — хуучин системээс шилжүүлэв")
+                        # ГЭРЭЭНИЙ ТЭМДЭГЛЭЛ нь ТҮҮНИЙ талбар: шилжүүлэлтийн
+                        # мөр («Шилжүүлэлт: «БЛҮҮМ-2» хуудсаас · өдрийн дүн …»)
+                        # тэнд БИЧИГДЭХГҮЙ — тэр өгөгдөл нь тулгалтын тайланд.
+                        note=note or "")
     db.add(c)
     db.flush()
     groups = [{"site": s.get("site", ""), "items": s["items"]} for s in (sites or [])
               if s.get("items")] or [{"site": "", "items": items}]
+    # ОЛГОЛТ нь ТООЦООНЫ гарал цэг дээр буудаг — эс бөгөөс эхний цикл нь
+    # тасархай (падангийн өдрөөс) нэхэгдэж, «30/30 хоног» гэж бичээд 5
+    # хоногийн мөнгө харуулна.
+    issue_day = billing_from or as_of
     rates: dict[tuple, float] = {}
     for g in groups:
-        mv = models.Movement(contract_id=c.id, type="ISSUE", date=as_of, status="done",
+        # Падангийн тэмдэглэл нь ТҮҮХИЙГ тайлбарлана: энэ бол шинэ АЧИЛТ биш,
+        # дэвтрээс шилжиж ирсэн үлдэгдэл. Талбайг тусад нь `site` барина —
+        # тэмдэглэлд давхарлахгүй.
+        mv = models.Movement(contract_id=c.id, type="ISSUE", date=issue_day, status="done",
                              site=g["site"],
-                             note="Шилжүүлэлт — түрээсэнд байгаа үлдэгдэл"
-                                  + (f" ({g['site']})" if g["site"] else ""))
+                             note="Дэвтрээс шилжүүлсэн үлдэгдэл")
         db.add(mv)
         db.flush()
         for it in g["items"]:
@@ -154,8 +177,16 @@ def _grade(db: Session, code: str) -> models.Grade:
     return g
 
 
-def _note(db: Session, entity: str, entity_id: int, row: dict, as_of: date):
-    """Захын тэмдэглэл (P1-22). ШАР нүд → `flag=True` — «энэ рүү эргэж хар»."""
+#: ТЭМДЭГЛЭЛИЙН ЗОХИОГЧ хоёрхон: дэвтрээс уншсан нь «Дэвтрээс», системийн
+#: өөрийн асуулт нь «Систем». «Шилжүүлэлт» гэдэг нь ХЭРЭГСЛИЙН нэр байсан —
+#: тэр хүнийг мэдэхгүй тул тэмдэглэлийн эзэн ч болохгүй.
+AUTHOR_BOOK = "Дэвтрээс"
+AUTHOR_SYSTEM = "Систем"
+
+
+def _note(db: Session, entity: str, entity_id: int, row: dict, as_of: date,
+          author: str = AUTHOR_BOOK):
+    """Захын тэмдэглэл (P1-22). `flag=True` — «энэ рүү эргэж хар»."""
     text = (row.get("text") or "").strip()
     if not text:
         return None
@@ -164,10 +195,70 @@ def _note(db: Session, entity: str, entity_id: int, row: dict, as_of: date):
     except ValueError:
         day = as_of
     n = models.Note(entity_type=entity, entity_id=entity_id, date=day, text=text,
-                    flag=bool(row.get("flag")), author="Шилжүүлэлт",
+                    flag=bool(row.get("flag")),
+                    author=row.get("author") or author,
                     void_reason="", voided_by="")
     db.add(n)
     return n
+
+
+def catalog_rates(contracts: list[dict]) -> dict[str, dict]:
+    """Материал бүрийн ТАРИФ — ТҮҮНИЙ гэрээнүүд дээр ХАМГИЙН ОЛОН удаа
+    бичигдсэн тоо, цитаттайгаа (2-р шат).
+
+    Каталогийн `base_rate` нь SEED-ийн ойролцоо тоо байв. Түүний дэвтэрт
+    тарифын ХҮСНЭГТ гэж байхгүй — тариф нь ГЭРЭЭ БҮРИЙН мөрөнд амьдардаг.
+    Тиймээс каталог нь тэдгээр мөрийг л ТООЛНО: хамгийн олон санал авсан
+    тариф ялна, тэнцвэл ИЛҮҮ ОЛОН ширхэг зөөсөн нь, дараа нь өндөр нь.
+
+    Хаанаас ч санал ирээгүй материал 0 хэвээр үлдэнэ — ТААМАГЛАХГҮЙ.
+    """
+    votes: dict[str, dict[float, dict]] = {}
+    for row in contracts or []:
+        for it in row.get("items") or []:
+            rate = float(it.get("daily_rate") or 0)
+            if rate <= 0:
+                continue
+            box = votes.setdefault(it["material"], {}).setdefault(
+                rate, {"rate": rate, "ref": "", "votes": 0, "qty": 0.0})
+            box["votes"] += 1
+            box["qty"] += float(it.get("qty") or 0)
+            box["ref"] = box["ref"] or it.get("rate_ref") or ""
+    out: dict[str, dict] = {}
+    for mat, by_rate in votes.items():
+        best = max(by_rate.values(),
+                   key=lambda b: (b["votes"], b["qty"], b["rate"]))
+        out[mat] = dict(best)
+    return out
+
+
+def reset_catalog(db: Session, data: dict, counts: dict, warnings: list) -> None:
+    """Каталогоос ЗОХИОСОН тоог БҮГДИЙГ нь арчина (2-р шат).
+
+    `repair_fee`, `НБҮнэ`, `худалдах үнэ` гурвуулаа `seed.py`-ийн ДЕМО тоо
+    байв: гурван дэвтэрт «засвар» гэсэн үг НИЙТ НЭГ удаа, чөлөөт тэмдэглэл
+    болж гардаг — засварын ч, худалдах үнийн ч хүснэгт түүнд АЛГА. Байхгүй
+    тоог 0 гэж хэлэх нь худал; байхгүй тоог 15,000₮ гэж хэлэх нь БҮР ХУДАЛ.
+
+    `base_rate` нь `catalog_rates` — түүний өөрийн гэрээнүүдээс. Хаанаас ч
+    гараагүй бол 0 + ТУГТАЙ асуулт («Тариф бүртгэгдээгүй — үнийг та тогтооно уу»).
+    """
+    as_of = date.fromisoformat(data.get("as_of") or str(date.today()))
+    db.query(models.MaterialGradePrice).delete()
+    rates = catalog_rates(data.get("contracts") or [])
+    for m in db.query(models.Material).all():
+        m.repair_fee = 0
+        got = rates.get(m.name)
+        m.base_rate = float(got["rate"]) if got else 0.0
+        if got:
+            continue
+        warnings.append(f"Каталог: «{m.name}» — тариф ХААНААС Ч гараагүй "
+                        f"(гэрээнүүдэд мөр алга), 0-оор үлдээв. ТЭР тогтооно")
+        _note(db, "material", m.id,
+              {"text": "Тариф бүртгэгдээгүй — үнийг та тогтооно уу", "flag": True},
+              as_of, author=AUTHOR_SYSTEM)
+        counts["notes"] += 1
+    db.commit()
 
 
 def load_data(db: Session, data: dict) -> dict:
@@ -191,14 +282,13 @@ def load_data(db: Session, data: dict) -> dict:
         db.add(m)
         db.flush()
         counts["materials"] += 1
-        if not row.get("base_rate"):
-            warnings.append(f"Каталогт нээв: «{row['name']}» — ТАРИФ 0 "
-                            f"({row.get('note', '')}) — ТЭР тогтооно")
-            _note(db, "material", m.id,
-                  {"text": f"Каталогт шилжүүлэлтээр нээв — тариф тогтоогоогүй "
-                           f"({row.get('note', '')})", "flag": True}, as_of)
-            counts["notes"] += 1
     db.commit()
+
+    # ---- КАТАЛОГООС ЗОХИОСОН ТООГ АРЧИХ (2-р шат) ----
+    # `seed_base` нь демо тариф/засвар/худалдах үнээр каталогоо дүүргэдэг.
+    # Тэдгээр нь ТҮҮНИЙ дэвтэрт БАЙХГҮЙ тоонууд — эндээс арчигдаж, тариф нь
+    # түүний ГЭРЭЭНҮҮДЭЭС дахин тогтоогдоно.
+    reset_catalog(db, data, counts, warnings)
 
     # ---- Барьцаа АЛЬ гэрээн дээр амьдрах вэ (H9 «нэг факт, нэг тоо») ----
     # Түүний хуудсан дээрх барьцааны ГИНЖ нь ТҮРЭЭСИЙН гэрээнийх. Тэр гэрээ
@@ -220,26 +310,47 @@ def load_data(db: Session, data: dict) -> dict:
         db.add(cl)
         db.flush()
         existing.add(name.lower())
-        # ТҮРЭЭС БИШ бичилт (H11) нь самбарын мөрөөс ГАРААД өөрийн баримт болно
-        # — эс тэгвэл нэг мөнгө хоёр удаа: OB-д нэг, бичилтэд нэг.
+        # ---- ДАВХАР ТООЦООНЫ ДҮРЭМ нь ЭХ СУРВАЛЖААС хамаарна (2-р шат) ----
+        # САМБАР нь Бутангуудын ХОЁР мөрийг (R8 + R24) нэг үлдэгдэлд нийлүүлдэг
+        # тул бичилт нь R24-ийг ГАРГАЖ АВАХ ёстой — эс тэгвэл нэг мөнгө хоёр
+        # удаа. ХУУДАС (Бутангууд-7!Y70) нь ТҮРЭЭСИЙНХ: харилцагч хоорондын
+        # тооцоо тэнд ОРООГҮЙ тул хасвал 139.6 сая₮ ХОЁР УДАА хасагдана.
         extra = sum(float(e.get("amount", 0)) for e in row.get("entries", []))
-        balance = float(row.get("balance", 0)) - extra
+        source = row.get("balance_source", "board")
+        balance = float(row.get("balance", 0))
+        if source == "board":
+            balance -= extra
+        elif extra:
+            warnings.append(f"«{name}»: үлдэгдэл ХУУДСААС авагдсан "
+                            f"({row.get('balance_ref', '')}) тул түрээс БИШ "
+                            f"бичилт {extra:,.0f}₮ хасагдсангүй — тэр нь "
+                            f"хуудсанд ороогүй гэж үзэв. ЗӨВ үү?")
         deposit = 0.0 if name in dep_on_contract else float(row.get("deposit", 0))
         if name in dep_on_contract and row.get("deposit"):
             warnings.append(f"«{name}»: барьцаа {float(row['deposit']):,.0f}₮ нь "
                             f"ТҮРЭЭСИЙН гэрээний дэвтэрт бичигдэв (дансны гэрээнд "
                             f"давхардуулаагүй)")
-        ob = create_opening_balance(db, cl, balance, as_of, deposit=deposit)
+        ob_day = None
+        if row.get("ob_date"):
+            try:
+                ob_day = date.fromisoformat(row["ob_date"])
+            except ValueError:
+                warnings.append(f"«{name}»: эхний үлдэгдлийн огноо уншигдсангүй "
+                                f"«{row['ob_date']}» — {as_of} болов")
+        ob = create_opening_balance(db, cl, balance, as_of, deposit=deposit,
+                                    ob_date=ob_day)
         counts["clients"] += 1
 
         # ГАРЫН ҮСЭГТНҮҮД (№72, 73) — тэр ЗАХИРАЛ руу залгадаггүй, НЯРАВ руу
         for p in row.get("contacts", []):
             if not (p.get("name") or "").strip():
                 continue
+            # ⚠ `ref` (`БЛҮҮМ-2!O39`) нь ХЭРЭГСЛИЙН хаяг — түүний хаягийн
+            # дэвтэрт байх юм биш. Цитат нь `audit.contact_refs`-д үлдэнэ.
             db.add(models.ClientContact(client_id=cl.id, name=p["name"].strip(),
                                         role=p.get("role", ""), phone=p.get("phone", ""),
                                         phone2=p.get("phone2", ""),
-                                        note=p.get("ref", ""), active=True))
+                                        note="", active=True))
             counts["contacts"] += 1
         if not cl.person and row.get("contacts"):
             cl.person = row["contacts"][0]["name"]
@@ -336,12 +447,30 @@ def load_data(db: Session, data: dict) -> dict:
             except ValueError:
                 warnings.append(f"№{row['no']}: гэрээний огноо уншигдсангүй "
                                 f"«{row['start_date']}» — {as_of} болов")
+        # ---- ХАМРАЛТЫН ЗАЛГАА (P0-11): дэвтэр хаана дуусав → систем хаанаас ----
+        # `last_covered` нь түүний хуудасны СҮҮЛЧИЙН циклийн мөрийн төгсгөл.
+        # Тооцоо ЯГ маргааш нь эхэлнэ: нүх ч, давхардал ч үлдэхгүй.
+        billing_from = None
+        raw_lc = row.get("last_covered")
+        if raw_lc:
+            try:
+                billing_from = date.fromisoformat(raw_lc) + timedelta(days=1)
+            except ValueError:
+                warnings.append(f"№{row['no']}: хамралтын огноо уншигдсангүй "
+                                f"«{raw_lc}» — тооцоо {as_of}-оос эхлэв")
+        if billing_from is None:
+            # ТААМАГЛАХГҮЙ. `as_of` дээр зогсоод ТУГ өргөнө — тайлангийн
+            # мөр болж ТЭР шийднэ (гэрээний захын тэмдэглэл БИШ).
+            warnings.append(f"№{row['no']} ({row['client']}): хуудсанд циклийн "
+                            f"шошго олдсонгүй — хамралт мэдэгдэхгүй тул тооцоо "
+                            f"{as_of}-оос эхлэв. Дэвтэр хэзээ хүртэл нэхэгдсэн бэ?")
         c = create_active_contract(db, cl, row["no"], as_of, row["items"],
                                    note=row.get("note", ""),
                                    vat_percent=float(row.get("vat_percent", 0)),
                                    warnings=warnings, start_date=start,
                                    cycle_mode=row.get("cycle_mode", "days"),
-                                   sites=row.get("sites"))
+                                   sites=row.get("sites"),
+                                   billing_from=billing_from)
         if c is None:
             counts["skipped"] += 1
             continue

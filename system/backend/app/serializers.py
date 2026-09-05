@@ -237,6 +237,10 @@ def contract_row(c: models.Contract, today: date):
     return {"id": c.id, "no": c.no, "client_id": c.client_id, "client": c.client.name,
             "qty_out": qty_out,
             "type": c.type, "start_date": str(c.start_date),
+            # ТООЦООНЫ ГАРАЛ ЦЭГ (P0-11) — `start_date` нь ГАРЫН ҮСГИЙН огноо;
+            # цикл эндээс тоологдоно. NULL бол хоёул нэг өдөр.
+            "billing_from": (str(c.billing_from)
+                             if getattr(c, "billing_from", None) else None),
             "end_date": str(c.end_date) if c.end_date else None,
             "deposit": c.deposit, "penalty_percent": c.penalty_percent,
             "deposit_status": c.deposit_status, "deposit_applied": c.deposit_applied,

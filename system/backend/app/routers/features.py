@@ -222,7 +222,7 @@ def book_penalty(cid: int, body: BookPenaltyIn, db: Session = Depends(get_db),
         raise HTTPException(400, "Энэ гэрээнд алдангийн хувь 0 — алданги нэхэгдэхгүй. "
                                  "Нэхэх бол эхлээд гэрээний алдангийн хувийг тохируулна уу.")
     as_of = body.as_of or date.today()
-    if as_of < c.start_date:
+    if as_of < billing.billing_origin(c):
         raise HTTPException(400, "Огноо гэрээний эхлэлээс өмнө байна")
     billing.ensure_invoices(db, c, as_of)
     db.refresh(c)

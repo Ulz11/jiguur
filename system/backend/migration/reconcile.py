@@ -22,7 +22,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
@@ -39,6 +39,117 @@ def money(v) -> str:
 
 def _md_row(*cells) -> str:
     return "| " + " | ".join(str(c) for c in cells) + " |"
+
+
+def _day(v):
+    """`'2026-08-11'` → date; хоосон/буруу бол None."""
+    if isinstance(v, date):
+        return v
+    try:
+        return date.fromisoformat(v) if v else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _day_amount(row: dict) -> float:
+    """Гэрээний НЭГ ХОНОГИЙН түрээс — зөрүүг ₮ болгож хэлэхэд."""
+    return sum(i["qty"] * i["daily_rate"] for i in row.get("items") or [])
+
+
+def coverage_check(row: dict, billing_from, first_issue, accrued: float,
+                   as_of: date) -> dict:
+    """ХАМРАЛТЫН ЗАЛГАА — дэвтэр хаана дуусав, систем хаанаас эхлэв (P0-11).
+
+    Гурван зүйл ЗЭРЭГ таарвал л «нүх ч, давхардал ч алга» гэж хэлж болно:
+      · `billing_from` = хуудасны сүүлчийн цикл + 1 хоног;
+      · ЭХНИЙ олголт ЯГ тэр өдөрт (хоног ба ₮ НЭГ гаралтай болно);
+      · тэр өдрөөс `as_of` хүртэл хуримтлал 0-ээс их (тоолуур ҮНЭХЭЭР асав).
+
+    Хамралт нь `as_of`-оос хойш байвал (Грэйт 8.31 → 9.01) хуримтлал 0
+    байх нь ЗӨВ — тоолуур маргаашаас асна.
+    """
+    lc = _day(row.get("last_covered"))
+    bf, fi = _day(billing_from), _day(first_issue)
+    want = lc + timedelta(days=1) if lc else None
+    bad: list[str] = []
+    if lc is None:
+        bad.append("хуудсанд циклийн шошго алга — хамралт МЭДЭГДЭХГҮЙ")
+    elif bf != want:
+        bad.append(f"тооцооны эхлэл {bf or '—'} ≠ хамралт+1 ({want})")
+    if bf is not None and fi != bf:
+        bad.append(f"эхний олголт {fi or '—'} ≠ тооцооны эхлэл {bf}")
+    if lc is not None and bf is not None and bf < as_of and accrued <= 0:
+        bad.append(f"{bf}-аас хойш хуримтлал 0 — тоолуур асаагүй")
+    return {"client": row.get("client", ""), "no": row.get("no", ""),
+            "last_covered": lc, "billing_from": bf, "first_issue": fi,
+            "accrued": accrued, "day_amount": _day_amount(row),
+            "ok": not bad, "problems": bad}
+
+
+def ob_source_row(client: dict) -> dict:
+    """ЭХНИЙ ҮЛДЭГДЭЛ ХААНААС ГАРАВ — хуудас ↔ самбар (2-р шат).
+
+    Хуудастай харилцагчийн үлдэгдлийг ТҮҮНИЙ ӨӨРИЙН хуудсаас авдаг болов:
+    ингэснээр үлдэгдэл ба хамралт (`last_covered`) НЭГ дэвтрээс гарна.
+    Хоёр дэвтэр зөрвөл систем аль нэгийг нь ЗӨВ гэж ЗАРЛАХГҮЙ — зөрүүг нь
+    ТҮҮНИЙ хэлээр асуулт болгож §9-д бичнэ.
+    """
+    sheet = client.get("balance_sheet")
+    board = client.get("balance_board")
+    src = "хуудас" if client.get("balance_source") == "sheet" else "самбар"
+    delta = None
+    if sheet is not None and board is not None:
+        delta = round(float(sheet) - float(board))
+    q = ""
+    if delta:
+        q = (f"Хуудас {money(sheet)} · самбар {money(board)} · "
+             f"зөрүү {money(abs(delta))} — аль нь вэ?")
+    return {"client": client.get("name", ""), "source": src,
+            "sheet": sheet, "board": board, "delta": delta,
+            "loaded": client.get("balance"),
+            "ref": client.get("balance_ref", ""), "question": q}
+
+
+def stock_gap(data: dict) -> dict:
+    """АГУУЛАХ — «тооллого 6.22» ↔ паркийн дэвтрийн хашааны мөр (2-р шат).
+
+    Хоёр дэвтэр НЭГ агуулахын тухай ярьж байгаа атлаа 4,215ш зөрдөг
+    (63,695 ↔ 59,480). Тооллогод трубаны тооны нүд БҮГД хоосон тул тэдгээрийг
+    хашааны мөрөөр нөхсөн — тэр НӨХӨЛТ нь «тооллого» баганад тоологдохгүй
+    (`source` талбартай мөр), эс тэгвэл зөрүү нь өөрөө нуугдана.
+    """
+    count: dict[str, float] = {}
+    for r in data.get("stock", []):
+        if r.get("source"):
+            continue                       # хашааны мөрөөс нөхөгдсөн
+        count[r["material"]] = count.get(r["material"], 0.0) + float(r["on_hand"])
+    park: dict[str, float] = {}
+    for k, q in (data.get("audit", {}).get("park_yard") or {}).items():
+        mat = k.rsplit("·", 1)[0]
+        park[mat] = park.get(mat, 0.0) + float(q)
+    rows = [{"material": m, "count": count.get(m, 0.0), "park": park.get(m, 0.0),
+             "delta": count.get(m, 0.0) - park.get(m, 0.0)}
+            for m in sorted(set(count) | set(park))]
+    return {"rows": rows, "count": sum(count.values()), "park": sum(park.values()),
+            "delta": sum(count.values()) - sum(park.values())}
+
+
+def board_gap(row: dict) -> dict | None:
+    """§9 — САМБАР ба ХУУДАС хамралтаараа зөрсөн мөр.
+
+    Самбар нь сарын нэхэлтийг нэг нүдэнд хийдэг тул сарын сүүлчээр л
+    хэлдэг; харилцагчийн хуудас нь циклийн ЖИНХЭНЭ төгсгөлийг мэднэ. Систем
+    хуудсыг сонгосон — зөрүүг нь хоног БА ₮-өөр бичээд ТЭР шийднэ.
+    """
+    board, sheet = _day(row.get("board_last_covered")), _day(row.get("last_covered"))
+    if board is None or sheet is None or board == sheet:
+        return None
+    days = (sheet - board).days
+    amount = days * _day_amount(row)
+    return {"client": row.get("client", ""), "no": row.get("no", ""),
+            "board": board, "sheet": sheet, "days": days, "amount": amount,
+            "text": (f"Самбар {board} хүртэл, хуудас {sheet} хүртэл — зөрүү "
+                     f"{days} хоног, {money(amount)}")}
 
 
 def collect(db_url: str, data: dict) -> dict:
@@ -97,7 +208,11 @@ def collect(db_url: str, data: dict) -> dict:
             # Шинэ циклийн хуримтлал нь шилжсэн ӨДРӨӨС хойш тоологдож эхэлсэн
             # тул түүний дэвтэрт БАЙХ ЁСГҮЙ — тусдаа багана болж харагдана.
             sys_net = r["invoiced"] - credit
-            her_bal = b["balance"] if b else src.get("balance")
+            # «Та» багана нь СИСТЕМД ОРСОН эх сурвалжийн тоо: хуудастай
+            # харилцагчид ХУУДАС, бусдад САМБАР. Хоёр дэвтрийн зөрүү нь
+            # §2.4-т тусдаа мөр болж, §9-д асуулт болж очно.
+            her_bal = src["balance"] if "balance" in src else (
+                b["balance"] if b else None)
             delta = sys_net - (her_bal if her_bal is not None else 0)
             her_dep = b["deposit"] if b else src.get("deposit", 0)
             rows.append({
@@ -164,12 +279,22 @@ def collect(db_url: str, data: dict) -> dict:
 
         # ── SKU-гийн тоо: ТҮҮНИЙ хуудас ↔ ачаалсан ↔ WB2 парк ──
         sku: dict[str, list[dict]] = {}
+        cover: list[dict] = []
         park = data["audit"].get("park_now", {})
         for row in data.get("contracts", []):
             cl = by_name.get(row["client"])
             if cl is None:
                 continue
             ct = next((c for c in cl.contracts if c.no == row["no"]), None)
+            # ── ХАМРАЛТЫН ЗАЛГАА (P0-11) ──
+            bf = billing.billing_origin(ct) if ct is not None else None
+            first_issue = min((mv.date for mv in (ct.movements if ct else [])
+                               if mv.type == "ISSUE" and mv.voided_at is None),
+                              default=None)
+            accrued = 0.0
+            if ct is not None and bf is not None and bf < as_of:
+                accrued = billing.accrue_rent(ct, bf, as_of)[0]
+            cover.append(coverage_check(row, bf, first_issue, accrued, as_of))
             loaded: dict[tuple, float] = {}
             for mv in (ct.movements if ct else []):
                 if mv.type != "ISSUE" or mv.voided_at is not None:
@@ -189,8 +314,20 @@ def collect(db_url: str, data: dict) -> dict:
                 "her": her.get(k, 0), "loaded": loaded.get(k, 0),
                 "wb2": wb2.get(f"{k[0]}·{k[1]}", 0),
             } for k in keys]
+
+        # ── КАТАЛОГ: тариф ХААНААС гарав, засвар/худалдах үнэ АРЧИГДСАН уу ──
+        from app.services.migration import catalog_rates
+        cited = catalog_rates(data.get("contracts") or [])
+        catalog = [{
+            "name": m.name, "category": m.category, "rate": m.base_rate,
+            "repair": m.repair_fee,
+            "ref": (cited.get(m.name) or {}).get("ref", ""),
+            "votes": (cited.get(m.name) or {}).get("votes", 0),
+        } for m in db.query(models.Material).order_by(models.Material.name).all()]
+        prices = db.query(models.MaterialGradePrice).count()
     return {"rows": rows, "totals": totals, "counts": counts, "as_of": as_of,
-            "penalty_armed": armed, "sku": sku}
+            "penalty_armed": armed, "sku": sku, "coverage": cover,
+            "catalog": catalog, "prices": prices}
 
 
 def render(data: dict, res: dict, db_url: str) -> str:
@@ -210,6 +347,13 @@ def render(data: dict, res: dict, db_url: str) -> str:
     A(f"**Тулгасан огноо:** {res['as_of']}  ·  **Сан:** `{os.path.basename(db_url)}` "
       f"(ТУРШИЛТЫН — ажлын сан хөндөгдөөгүй)")
     A(f"**Эх сурвалж:** {data['source']}")
+    ob_src = data.get("ob_source", "board")
+    A(f"**Эхний үлдэгдлийн эх сурвалж:** `--ob-source {ob_src}` — "
+      + ("харилцагч бүрийн **өөрийн хуудас** (хуудасгүй бол самбар). "
+         "Ингэснээр үлдэгдэл ба «дэвтэр хаана хүртэл нэхэгдсэн» хоёр "
+         "**нэг дэвтрээс** гарна."
+         if ob_src == "sheet" else
+         "мастер самбар «Түрээс тооцоо-26»-ийн `Үлдэгдэл` багана."))
     A("")
     A("> Зүүн талын багана бол **таны** дэвтрийн тоо. Баруун талынх нь систем "
       "ачаалсны дараа ЯГ тэр харилцагчид бодсон тоо. Хоёр нь ижил байвал "
@@ -317,6 +461,11 @@ def render(data: dict, res: dict, db_url: str) -> str:
             notes.append("барьцаа байршуулаагүй")
         if r["sys_credit"]:
             notes.append(f"илүү төлөлт {money(r['sys_credit'])}")
+        # ТҮРЭЭС БИШ бичилт нь хуудасны Үлдэгдэлд ОРООГҮЙ мөнгө: авлагыг
+        # НЭМЭГДҮҮЛНЭ. Энэ багана нь §2-ийн зөрүүг тайлбарлана.
+        if r.get("entries_sum"):
+            notes.append(f"түрээс бус бичилт {money(r['entries_sum'])} "
+                         f"(хуудсанд ороогүй)")
         if r["contracts"]:
             notes.append(f"{r['contracts']} идэвхтэй гэрээ")
         A(_md_row(r["name"], money(r["her_total"]), money(r["her_paid"]),
@@ -355,6 +504,27 @@ def render(data: dict, res: dict, db_url: str) -> str:
         A("")
         for r in missing:
             A(f"- **{r['name']}** — {money(r['her_bal'])} ({r['note']})")
+        A("")
+
+    # ── 2.4 OB ХААНААС ГАРАВ — хуудас ↔ самбар ────────────────────────────
+    ob_rows = [ob_source_row(c) for c in data.get("clients", [])]
+    if ob_rows:
+        A("### 2.4 Эхний үлдэгдэл хаанаас гарав — таны хуудас ↔ мастер самбар")
+        A("")
+        A("Харилцагч бүрийн эхний үлдэгдлийг **түүний өөрийн хуудсаас** "
+          "(жишээ нь `БЛҮҮМ-2!X33 = X30 − X32`) авлаа. Шалтгаан нь: тооцоо "
+          "хаанаас эхлэхийг (`дэвтэр хаана хүртэл нэхэгдсэн`) МӨН тэр хуудас "
+          "хэлдэг. Хоёр тоог нэг дэвтрээс авбал хооронд нь нүх ч, давхардал ч "
+          "үлдэхгүй. Хуудасгүй харилцагчид самбараар орсон.")
+        A("")
+        A(_md_row("Харилцагч", "Эх сурвалж", "Хуудас", "Самбар", "Зөрүү",
+                  "Системд орсон", "Нүд"))
+        A(_md_row("---", "---", "---:", "---:", "---:", "---:", "---"))
+        for x in ob_rows:
+            A(_md_row(x["client"], x["source"], money(x["sheet"]),
+                      money(x["board"]),
+                      "✓" if not x["delta"] else f"**{money(x['delta'])}**",
+                      money(x["loaded"]), f"`{x['ref']}`" if x["ref"] else "—"))
         A("")
 
     # ── 3. Нэрийн нэгтгэлүүд ──────────────────────────────────────────────
@@ -510,6 +680,51 @@ def render(data: dict, res: dict, db_url: str) -> str:
                       r.get("flagged", 0) if i == 0 else "",
                       (r.get("agreed_at") or "—") if i == 0 else ""))
     A("")
+    # ── 5.3 ХАМРАЛТЫН ЗАЛГАА — дэвтэр хаана дуусав, систем хаанаас эхлэв ──
+    cover = res.get("coverage") or []
+    if cover:
+        A("### 5.3 Тооцооны залгаа — таны дэвтэр хаана дуусав, систем хаанаас "
+          "эхлэв")
+        A("")
+        A("Таны хуудас сүүлчийн циклийнхээ **төгсгөл хүртэл** нэхэгдсэн байдаг. "
+          "Систем ЯГ **маргааш** нь тоолж эхэлнэ — ингэснээр хооронд нь "
+          "нэхэгдээгүй хоног ч, хоёр удаа нэхэгдсэн хоног ч үлдэхгүй. "
+          "«Олголт» багана нь материал системд гарсан гэж бүртгэгдсэн өдөр: "
+          "тэр нь тооцооны эхлэлтэй ЯГ таарах ёстой, эс бөгөөс дэлгэц дээр "
+          "«30/30 хоног» гэж бичээд 5 хоногийн мөнгө харагдана.")
+        A("")
+        A(_md_row("Харилцагч", "Гэрээ", "Дэвтэр хүртэл", "Тооцоо эхэлсэн",
+                  "Олголт", "₮/хоног", "Хуримтлал (тулгасан өдөр хүртэл)",
+                  "Шалгалт"))
+        A(_md_row("---", "---", "---", "---", "---", "---:", "---:", "---"))
+        for x in cover:
+            A(_md_row(x["client"], x["no"], x["last_covered"] or "—",
+                      x["billing_from"] or "—", x["first_issue"] or "—",
+                      f"{x['day_amount']:,.0f}", money(x["accrued"]),
+                      "✓" if x["ok"] else "⚠ " + "; ".join(x["problems"])))
+        A("")
+
+    # ── 5.4 АГУУЛАХ — тооллого ↔ паркийн дэвтрийн хашааны мөр ─────────────
+    sg = stock_gap(data)
+    if sg["rows"]:
+        A("### 5.4 Агуулахын үлдэгдэл — «тооллого 6.22» ↔ паркийн дэвтрийн "
+          "хашааны мөр")
+        A("")
+        A("Хоёр дэвтэр НЭГ агуулахын тухай ярьж байгаа боловч тоо нь зөрж "
+          "байна. «тооллого 6.22»-д **трубаны тооны нүд бүгд хоосон**, «Тулаас "
+          "В6», «Шат» ч мөн адил — тэдгээрийг паркийн дэвтрийн `Хашаанд бгаа` "
+          "(51-р мөр) мөрөөс нөхөв (зэрэглэл «А»). Нөхөгдсөн мөр нь «тооллого» "
+          "баганад 0 гэж харагдана — тэр дэвтэр тэдний талаар ЮУ Ч хэлээгүй.")
+        A("")
+        A(_md_row("Материал", "тооллого 6.22", "Паркийн дэвтэр (хашаа)", "Зөрүү"))
+        A(_md_row("---", "---:", "---:", "---:"))
+        for r in sg["rows"]:
+            A(_md_row(r["material"], f"{r['count']:,.0f}", f"{r['park']:,.0f}",
+                      "✓" if abs(r["delta"]) < 0.5 else f"**{r['delta']:+,.0f}**"))
+        A(_md_row("**НИЙТ**", f"**{sg['count']:,.0f}**", f"**{sg['park']:,.0f}**",
+                  f"**{sg['delta']:+,.0f}**"))
+        A("")
+
     A("**Гарын үсэгтнүүд** (утсаар нь залгах хүн — захирал биш, нярав):")
     A("")
     for r in sorted(live, key=lambda r: r["name"]):
@@ -538,6 +753,31 @@ def render(data: dict, res: dict, db_url: str) -> str:
           + ", ".join(f"`{g}`" for g in audit["catalog_gaps"]))
         A("")
 
+    # ── 6.1 БҮХ КАТАЛОГ — тариф хаанаас гарав ─────────────────────────────
+    cat = res.get("catalog") or []
+    if cat:
+        A("### 6.1 Каталогийн тариф — аль нь ТАНЫ тоо вэ")
+        A("")
+        A("Систем суурилуулахдаа каталогтоо **ойролцоо үнэ** бичдэг байсан: "
+          "засварын хураамж, НБҮнэ, худалдах үнэ гурвуулаа тэр демо тоо байв. "
+          "Таны гурван дэвтэрт «засвар» гэсэн үг **нийт нэг удаа**, чөлөөт "
+          "тэмдэглэл болж гарна — засварын ч, худалдах үнийн ч хүснэгт танд "
+          "алга. Тиймээс тэдгээрийг **бүгдийг нь арчив** "
+          f"(НБҮнэ/худалдах үнийн мөр одоо {res.get('prices', 0)}). "
+          "Түрээсийн тариф нь таны гэрээнүүд дээр бичигдсэн тоогоор "
+          "тогтоогдов — хамгийн олон удаа давтагдсан нь, цитаттайгаа.")
+        A("")
+        A(_md_row("Материал", "Ангилал", "Тариф ₮/хоног", "Засвар",
+                  "Хаанаас (нүд)", "Хэдэн гэрээний мөр"))
+        A(_md_row("---", "---", "---:", "---:", "---", "---:"))
+        for m in cat:
+            A(_md_row(m["name"], m["category"] or "—",
+                      f"{m['rate']:,.0f}" + ("" if m["rate"] else " ⚠ ТОГТООХ"),
+                      f"{m['repair']:,.0f}",
+                      f"`{m['ref']}`" if m["ref"] else "— (гэрээнд мөр алга)",
+                      m["votes"] or "—"))
+        A("")
+
     # ── 7. Задлагдаагүй, анхааруулга ──────────────────────────────────────
     A("## 7. Задлаж чадаагүй нүд")
     A("")
@@ -562,11 +802,19 @@ def render(data: dict, res: dict, db_url: str) -> str:
     A(_md_row("#", "Юу зөрсөн", "Утга А", "Утга Б", "Нүд", "Таны шийдвэр"))
     A(_md_row("---:", "---", "---:", "---:", "---", "---"))
     dec, n = [], 0
+    # ЭХНИЙ ҮЛДЭГДЭЛ: ХОЁР ДЭВТЭР ХОЁР ӨӨР ТОО хэлж байна (2-р шат). Систем
+    # хуудсыг сонгосон (үлдэгдэл ба хамралт НЭГ дэвтрээс гарах ёстой) —
+    # зөрүү нь ЖИНХЭНЭ мөнгө тул ТЭР шийднэ.
+    for x in ob_rows:
+        if x["question"]:
+            dec.append((f"{x['client']} — эхний үлдэгдэл: {x['question']}",
+                        money(x["sheet"]), money(x["board"]),
+                        f"{x['ref']} ↔ Түрээс тооцоо-26!J", ""))
     for r in sorted(live, key=lambda r: -abs(r["delta"])):
         if abs(r["delta"]) >= TOL:
-            dec.append((f"{r['name']} — самбарын Үлдэгдэл ↔ системийн авлага",
+            dec.append((f"{r['name']} — ачаалсан үлдэгдэл ↔ системийн авлага",
                         money(r["her_bal"]), money(r["sys_net"]),
-                        "Түрээс тооцоо-26!J", ""))
+                        "§2", ""))
     for s in audit["sheets"]:
         if s.get("her_total") is None:
             continue
@@ -579,15 +827,41 @@ def render(data: dict, res: dict, db_url: str) -> str:
             dec.append((f"{s['client']} — хуудасны тоо ↔ паркийн дэвтэр",
                         f"{s['wb1_qty']:,.0f}ш", f"{s['wb2_qty']:,.0f}ш",
                         f"{s['sheet']} ↔ 2026 шинэ", ""))
+    # ХАМРАЛТ: самбар ↔ хуудас (P0-11). Систем ХУУДСЫГ сонгосон — самбар нь
+    # сарын нүдээр л ярьдаг тул нарийвчлал нь бага. Зөрүү нь ЖИНХЭНЭ мөнгө:
+    # хэдэн хоног хоёр дэвтрийн хооронд «хэн нэхсэн бэ» нь тодорхойгүй байна.
+    for row in data.get("contracts", []):
+        g = board_gap(row)
+        if g:
+            dec.append((f"{g['client']} №{g['no']} — хамралт: {g['text']}",
+                        str(g["board"]), str(g["sheet"]),
+                        f"Түрээс тооцоо-26 ↔ {row.get('sheet', '')}", ""))
+    for c in res.get("coverage") or []:
+        if not c["ok"]:
+            dec.append((f"{c['client']} №{c['no']} — тооцооны залгаа: "
+                        + "; ".join(c["problems"]),
+                        str(c["last_covered"] or "—"),
+                        str(c["billing_from"] or "—"), "§5.3", ""))
+    # ТАЛБАЙН ХУВААЛТ: эх сурвалж нь ОГНООТОЙ ЗУРАГ бөгөөд өнөөдрийн тоотой
+    # таарахгүй тул систем ХУВААГААГҮЙ — хуваарилалт нь ТҮҮНИЙ шийдвэр.
+    for g in audit.get("site_gaps", []):
+        dec.append((f"{g['client']} — {g['text']}",
+                    f"{g['source']:,.0f}ш", f"{g['now']:,.0f}ш",
+                    "Батцоож!F27", ""))
+    # АГУУЛАХ: хоёр дэвтэр нэг агуулахыг хоёр өөр тоогоор хэлж байна.
+    if abs(sg["delta"]) >= 0.5:
+        dec.append(("Агуулахын үлдэгдэл: хоёр дэвтэр "
+                    f"{abs(sg['delta']):,.0f}ш зөрөөтэй — системд тооллого хийж "
+                    "баталгаажуулна уу",
+                    f"{sg['count']:,.0f}ш", f"{sg['park']:,.0f}ш",
+                    "тооллого 6.22 ↔ 2026 шинэ!51", ""))
     for d in audit.get("decisions", []):
         dec.append((f"{d['client']} — «{d['what']}» хэдэн төгрөг вэ ({d['why']})",
                     money(d["a"]), money(d["b"]),
                     f"{d['a_ref']} ↔ {d['b_ref']}", ""))
     for ct in data.get("contracts", []):
         for nt in ct.get("notes", []):
-            if nt.get("flag") and "МАРГААНТАЙ" in nt.get("text", ""):
-                continue                       # улаан гар тоо — доор нэгтгэв
-            if nt.get("flag") and ("НӨАТ" in nt["text"] or "ТАЛБАЙН" in nt["text"]):
+            if nt.get("flag") and "НӨАТ" in nt.get("text", ""):
                 dec.append((f"{ct['client']} — {nt['text'][:70]}", "", "",
                             nt.get("ref", ""), ""))
     for i, (what, a, b, cell, _) in enumerate(dec, start=1):
@@ -624,6 +898,35 @@ def render(data: dict, res: dict, db_url: str) -> str:
     A("*Хугацаа хэтэрсэн тохиолдолд гэрээнд зааснаар алданги тооцно — "
       "систем автоматаар нэхэхгүй (алданги 0%).*")
     A("")
+
+    # ── Хавсралт: гэрээн дээр НААГДААГҮЙ, гэхдээ АЛДАГДААГҮЙ мөрүүд ────────
+    drop = audit.get("dropped_notes") or []
+    if drop:
+        A("---")
+        A("")
+        A("## Хавсралт — хуудасны машин тэмдэглэл (хөгжүүлэгчид)")
+        A("")
+        A("Задлагч хуудсуудаас дараах мөрүүдийг олсон боловч гэрээ/харилцагч "
+          "дээр **тэмдэглэл болгож наагаагүй**: эдгээр нь нүдний хаяг, өнгө, "
+          "хүснэгтийн шошго зэрэг МАШИНЫ хэл бөгөөд Отгонцэцэгээс ямар ч "
+          "асуулт хүлээхгүй. Мөрүүд эндээс АЛДАГДААГҮЙ — шаардлагатай бол "
+          "энэ жагсаалтаас буцааж авна.")
+        A("")
+        A(_md_row("Харилцагч", "Хаана", "Төрөл", "Текст", "Нүд"))
+        A(_md_row("---", "---", "---", "---", "---"))
+        for d in drop:
+            A(_md_row(d.get("client", "—"), d.get("where", "—"),
+                      d.get("kind", "—"),
+                      str(d.get("text", "")).replace("|", "\\|")[:120],
+                      f"`{d.get('ref', '')}`"))
+        A("")
+        A(f"*Нийт {len(drop)} мөр.*")
+        A("")
+    refs = audit.get("contact_refs") or []
+    if refs:
+        A("**Гарын үсэгтний нүдний хаяг** (холбоо барих бүртгэлд хадгалаагүй): "
+          + ", ".join(f"`{r}`" for r in refs))
+        A("")
     return "\n".join(L) + "\n"
 
 

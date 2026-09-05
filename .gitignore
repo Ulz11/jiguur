@@ -20,6 +20,10 @@ system/backend/jiguur-real.db-shm
 system/backend/jiguur-top10.db
 system/backend/jiguur-top10.db-wal
 system/backend/jiguur-top10.db-shm
+# 2-р шатны шилжүүлэлтийн ШИНЭ сан — ижил бодит өгөгдөл
+system/backend/jiguur-top10.next.db
+system/backend/jiguur-top10.next.db-wal
+system/backend/jiguur-top10.next.db-shm
 # Тулгалтын тайлан — бодит харилцагч тус бүрийн ₮ агуулна
 docs/Тулгалтын тайлан.md
 docs/Тулгалтын тайлан.html

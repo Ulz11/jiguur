@@ -182,6 +182,16 @@ class Contract(Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
     type: Mapped[str] = mapped_column(String(10))            # rent | sale
     start_date: Mapped[date] = mapped_column(Date)
+    # ТООЦОО ЭХЛЭХ өдөр БА циклийн торны ГАРАЛ ЦЭГ (P0-11). `start_date` нь
+    # «ГАРЫН ҮСЭГ зурсан өдөр» гэсэн утгаа хадгална — хоёр нь ЯЛГААТАЙ:
+    # шилжүүлэлтээр ирсэн гэрээ дээр Отгоогийн дэвтэр сүүлчийн циклийнхээ
+    # ТӨГСГӨЛ хүртэл нэхэгдсэн байдаг тул систем ЯГ тэр залгаанаас (сүүлчийн
+    # хамралт + 1 хоног) тоолж эхлэх ёстой. Урьд нь тор нь гарын үсгийн
+    # огнооноос гарч, олголт нь `as_of`-т буудаг байсан тул хооронд нь ХЭН Ч
+    # нэхэхгүй нүх үлдэж (Блүүм дээр 8.12-8.31 = 24,589,200₮, долоон гэрээгээр
+    # ~102 сая₮), эхний нэхэмжлэл нь ТАСАРХАЙ цонхны дүнгээр гарч байв.
+    # NULL = хуучин зан төлөв ЯГ ХЭВЭЭР (`billing_origin` нь start_date рүү унана).
+    billing_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     cycle_days: Mapped[int] = mapped_column(Integer, default=30)
     # Тооцооны мөчлөгийн ХЭЛБЭР: "days" (анхны — cycle_days хоногт зангидсан)

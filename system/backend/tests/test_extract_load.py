@@ -12,7 +12,7 @@
 """
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -108,30 +108,81 @@ def test_contract_keeps_its_real_start_date_four_years_before_as_of(db):
     assert c.penalty_percent == 0
 
 
-def test_a_start_date_years_early_yields_no_phantom_invoices(db):
-    """Тэг хуримтлалтай цикл нэхэмжлэл ТӨРҮҮЛДЭГГҮЙ (`derivable_invoice_specs`
-    нь `rent == 0 and charge == 0` мөрийг алгасдаг), гэхдээ ЦИКЛИЙН ДУГААР нь
-    огнооноос гарах тул ТОГТВОРТОЙ."""
+def test_billing_begins_the_day_after_her_book_ends(db):
+    """ТООЦОО нь `billing_from` = дэвтрийн сүүлчийн цикл + 1 хоногоос эхэлнэ.
+
+    Урьд нь олголт `as_of` (9.01) дээр буудаг байсан ба циклийн тор нь ГАРЫН
+    ҮСЭГ зурсан өдрөөс (2022.3.1) гардаг байв. Хоёрын хооронд — түүний
+    дэвтэр дуусаад системийн тоолуур асах хүртэл — ХЭН Ч нэхэхгүй нүх
+    үлдэж, эхний нэхэмжлэл нь ТАСАРХАЙ цонхны дүнгээр гарч байлаа.
+    """
     from app.services import billing, migration as M
 
     M.load_data(db, _data(clients=[_client("Марч констракшн")],
                           contracts=[_contract("Марч констракшн", "02",
-                                               start_date="2022-03-01")]))
+                                               start_date="2022-03-01",
+                                               last_covered="2026-08-11")]))
     c = db.query(models.Contract).filter_by(no="02").first()
-    as_of = date.fromisoformat(AS_OF)
-    specs = billing.derivable_invoice_specs(c, today=as_of)
-    assert specs == []                       # олголт нь as_of-т — өмнө нь ЮУ Ч алга
+    bf = date(2026, 8, 12)
+    assert c.start_date == date(2022, 3, 1)      # ГАРЫН ҮСЭГ — хөндөгдөөгүй
+    assert c.billing_from == bf                  # ТООЦОО — дэвтрийн залгаанаас
 
-    # …нэг цикл өнгөрөхөд ЯГ НЭГ нэхэмжлэл, дугаар нь огнооны индексээр
-    later = billing.cycle_of(c, as_of)[1]
-    specs = billing.derivable_invoice_specs(c, today=later)
+    # ОЛГОЛТ нь тооцооны эхлэл дээр буудаг — `as_of` дээр БИШ
+    assert [m.date for m in c.movements if m.type == "ISSUE"] == [bf]
+
+    # `billing_from`-оос ӨМНӨ нэхэмжлэл ТӨРӨХГҮЙ …
+    assert billing.derivable_invoice_specs(c, today=bf) == []
+    # … эхний цикл нь ЯГ [8.12, 9.11) ба БҮТЭН 30 хоногоор нэхэгдэнэ
+    specs = billing.derivable_invoice_specs(c, today=bf + timedelta(days=31))
     assert len(specs) == 1
-    idx = billing.cycle_index(c, specs[0]["cycle_start"])
-    assert specs[0]["no"] == f"R-02-{idx}"
-    assert idx > 50                          # том — гэхдээ тогтвортой
-    assert specs[0]["cycle_start"] <= as_of < specs[0]["cycle_end"]
+    s = specs[0]
+    assert (s["cycle_start"], s["cycle_end"]) == (bf, bf + timedelta(days=30))
+    assert s["rent_amount"] == 278 * 110 * 30
+    assert s["no"] == "R-02-1"                   # эхний цикл = 1-р дугаар
+    assert billing.cycle_index(c, s["cycle_start"]) == 1
     # ХОЁР ДАХЬ дуудалт ЯГ ижил дугаар өгнө (байрлалаас биш огнооноос)
-    assert billing.derivable_invoice_specs(c, today=later)[0]["no"] == specs[0]["no"]
+    assert billing.derivable_invoice_specs(
+        c, today=bf + timedelta(days=31))[0]["no"] == s["no"]
+
+
+def test_the_meter_counts_from_the_first_day_of_billing_not_from_as_of(db):
+    """«15/30 хоног» гэж бичээд 5 хоногийн мөнгө харуулдаг байв.
+
+    Хоног ба ₮ хоёр НЭГ гаралтай болсон: цонх нь `billing_from`-оос эхэлнэ,
+    падан ч ТЭР өдөрт буудаг тул эхний өдөр 1 хоног, маргааш нь 2.
+    """
+    from app.services import billing, migration as M
+
+    M.load_data(db, _data(clients=[_client("Марч констракшн")],
+                          contracts=[_contract("Марч констракшн", "02",
+                                               start_date="2022-03-01",
+                                               last_covered="2026-08-11")]))
+    c = db.query(models.Contract).filter_by(no="02").first()
+    day = 278 * 110
+    first = billing.current_cycle_accrual(c, date(2026, 8, 12))
+    assert first["cycle_start"] == "2026-08-12" and first["cycle_end"] == "2026-09-11"
+    assert (first["days_done"], first["days_total"]) == (1, 30)
+    assert first["accrued"] == day               # 0 БИШ
+    nxt = billing.current_cycle_accrual(c, date(2026, 8, 13))
+    assert (nxt["days_done"], nxt["accrued"]) == (2, day * 2)
+
+
+def test_a_sheet_with_no_cycle_line_falls_back_to_as_of_and_raises_a_flag(db):
+    """Дэвтэр хаана дууссаныг УНШИЖ ЧАДААГҮЙ бол ТААМАГЛАХГҮЙ.
+
+    `as_of` дээр зогсоод тайланд тугтай мөр өргөнө — Тэмдэглэл БИШ: энэ нь
+    гэрээний захад наах цаас биш, шилжүүлэлтийн тайланд хариулт хүлээх мөр.
+    """
+    from app.services import migration as M
+
+    r = M.load_data(db, _data(clients=[_client("Зулаа")],
+                              contracts=[_contract("Зулаа", "25/03")]))
+    c = db.query(models.Contract).filter_by(no="25/03").first()
+    assert c.billing_from is None                # NULL → хуучин зан төлөв
+    assert [m.date for m in c.movements] == [date.fromisoformat(AS_OF)]
+    assert any("25/03" in w and "хамрал" in w for w in r["warnings"])
+    assert db.query(models.Note).filter_by(entity_type="contract",
+                                           entity_id=c.id).count() == 0
 
 
 def test_missing_header_date_falls_back_to_as_of(db):
@@ -309,10 +360,10 @@ def test_crane_and_payroll_stay_notes_not_entries(db):
 def test_notes_land_on_the_contract_with_their_yellow_flag(db):
     from app.services import migration as M, notes as N
 
-    rows = [{"text": "7.06нд тооцов · ГрэйтМайнинг-5!H30", "date": "2026-07-06",
+    rows = [{"text": "7.06-нд бүх тооцоог нийлүүлж дуусгав", "date": "2026-07-06",
              "flag": False},
-            {"text": "ШАР нүд: 35,000,000 — «бартер» · Блүүт тооцоо!G8",
-             "date": AS_OF, "flag": True}]
+            {"text": "НӨАТ: «бартерийн дүнд нөат бодохгүй»", "date": AS_OF,
+             "flag": True}]
     r = M.load_data(db, _data(clients=[_client("Грэйт Майнинг")],
                               contracts=[_contract("Грэйт Майнинг", "25/04",
                                                    notes=rows)]))
@@ -322,7 +373,8 @@ def test_notes_land_on_the_contract_with_their_yellow_flag(db):
     assert len(got) == 2
     assert [g["flag"] for g in got].count(True) == 1
     assert any(g["date"] == "2026-07-06" for g in got)
-    assert all(g["author"] == "Шилжүүлэлт" for g in got)
+    # ЗОХИОГЧ нь «Шилжүүлэлт» гэсэн ХЭРЭГСЛИЙН нэр байхаа болив
+    assert all(g["author"] == "Дэвтрээс" for g in got)
 
 
 def test_client_level_decision_notes(db):
@@ -438,3 +490,199 @@ def test_load_is_idempotent(db):
     assert again["clients"] == 0 and again["contracts"] == 0
     assert db.query(models.Client).count() == 1
     assert db.query(models.Contract).filter_by(no="25/03").count() == 1
+
+
+# ═══════════════════ ЭХНИЙ ҮЛДЭГДЭЛ — ХУУДАСНААС ба ХАМРАЛТЫН ӨДРӨӨР (2-р шат)
+
+def test_the_opening_balance_is_dated_where_her_book_stops(db):
+    """400 сая₮-ийн өр «4 хоногийн настай» гэж харагдахаа болив.
+
+    Урьд нь OB нэхэмжлэлийн гурван огноо ЦӨМ `as_of` (9.01) байсан тул
+    насжилтын самбар дээр Блүүмийн 382 сая₮ «саяхны» өр мэт харагдана —
+    үнэндээ тэр 8.11 хүртэлх бүх циклийн хуримтлагдсан үлдэгдэл.
+    """
+    from app.services import migration as M
+
+    M.load_data(db, _data(clients=[_client("Блүүм технологи",
+                                           balance=382_179_050,
+                                           balance_source="sheet",
+                                           ob_date="2026-08-11")]))
+    cl = db.query(models.Client).filter_by(name="Блүүм технологи").first()
+    inv = db.query(models.Invoice).filter_by(no=f"OB-{cl.id}").one()
+    lc = date(2026, 8, 11)
+    assert (inv.cycle_start, inv.cycle_end, inv.due_date) == (lc, lc, lc)
+    assert inv.total == 382_179_050
+    ob = db.query(models.Contract).filter_by(no=f"OB-{cl.id}").one()
+    assert ob.start_date == lc
+    assert ob.note == "2026.08.11 хүртэлх үлдэгдэл — Excel дэвтрээс"
+
+
+def test_without_a_coverage_date_the_opening_balance_falls_back_to_as_of(db):
+    from app.services import migration as M
+
+    M.load_data(db, _data(clients=[_client("Дархан Оюунаа", balance=59_400_000)]))
+    cl = db.query(models.Client).filter_by(name="Дархан Оюунаа").first()
+    inv = db.query(models.Invoice).filter_by(no=f"OB-{cl.id}").one()
+    assert inv.due_date == date.fromisoformat(AS_OF)
+    ob = db.query(models.Contract).filter_by(no=f"OB-{cl.id}").one()
+    assert ob.note == "2026.09.01 хүртэлх үлдэгдэл — Excel дэвтрээс"
+
+
+# ═══════════════════ ТҮҮНИЙ ТАЛБАРУУД — ШИЛЖҮҮЛЭЛТИЙН МӨР АЛГА (2-р шат)
+
+def test_her_own_fields_carry_no_migration_provenance(db):
+    """`Client.note`, `Contract.note`, холбоо барих хүний талбар — ЦЭВЭР.
+
+    «Мастер самбар «Түрээс тооцоо-26»», «Шилжүүлэлт: «БЛҮҮМ-2» хуудсаас ·
+    өдрийн дүн …», `БЛҮҮМ-2!O39` гэсэн мөрүүд нь ХЭРЭГСЛИЙН бүртгэл: тэр
+    гэрээгээ нээхэд юуны түрүүнд эдгээрийг уншдаг байв.
+    """
+    from app.services import migration as M
+
+    people = [{"name": "Н.Соль", "role": "Нярав", "phone": "99966285",
+               "phone2": "", "ref": "БЛҮҮМ-2!O39"}]
+    M.load_data(db, _data(
+        clients=[_client("Блүүм технологи", balance=382_179_050,
+                         balance_source="sheet", ob_date="2026-08-11",
+                         contacts=people)],
+        contracts=[_contract("Блүүм технологи", "24/03",
+                             last_covered="2026-08-11")]))
+    cl = db.query(models.Client).filter_by(name="Блүүм технологи").first()
+    assert cl.note == ""
+    c = db.query(models.Contract).filter_by(no="24/03").one()
+    assert c.note == ""
+    p = db.query(models.ClientContact).one()
+    assert p.note == ""
+    assert not any("!" in (getattr(p, f) or "")
+                   for f in ("name", "role", "phone", "phone2", "note"))
+
+
+def test_the_migrated_issue_reads_as_a_carried_over_balance(db):
+    """Падангийн тэмдэглэл нь «ачилт» биш, «шилжүүлсэн үлдэгдэл» гэж хэлнэ."""
+    from app.services import migration as M
+
+    M.load_data(db, _data(clients=[_client("Зулаа")],
+                          contracts=[_contract("Зулаа", "25/03")]))
+    c = db.query(models.Contract).filter_by(no="25/03").one()
+    assert [m.note for m in c.movements] == ["Дэвтрээс шилжүүлсэн үлдэгдэл"]
+
+
+#: Гэрээн дээр ХЭЗЭЭ Ч гарч болохгүй машины тэмдэг (§3-ын шалгуур).
+FORBIDDEN = ("!", "самбарын", "бичилт үүсгээгүй", "Шилжүүлэлт")
+
+
+def test_no_note_text_carries_a_machine_marker(db):
+    """Бүх ангиллын тэмдэглэл орсон дэвтрээс ачаалсны дараа — цэвэр."""
+    from app.services import migration as M
+
+    notes = [{"text": "барьцаанаас суутгаж тооцов", "date": AS_OF, "flag": False,
+              "author": "Дэвтрээс"},
+             {"text": "НӨАТ: «нөат-гүй тооцов»", "date": AS_OF, "flag": True,
+              "author": "Дэвтрээс"}]
+    r = M.load_data(db, _data(
+        clients=[_client("Бутангууд", balance=291_539_644,
+                         balance_source="sheet",
+                         notes=[{"text": "энэ тооцоог дахин нягтлах",
+                                 "date": AS_OF, "flag": False,
+                                 "author": "Дэвтрээс"}])],
+        contracts=[_contract("Бутангууд", "25.19", notes=notes)]))
+    rows = db.query(models.Note).all()
+    assert len(rows) == r["notes"] >= 4          # 3 дэвтрийн + тарифын тугууд
+    for n in rows:
+        for bad in FORBIDDEN:
+            assert bad not in n.text, (bad, n.text)
+        assert len(n.text.split()) >= 2, n.text  # ганц үгтэй шошго алга
+    assert {n.author for n in rows} <= {"Дэвтрээс", "Систем"}
+
+
+# ═══════════════════ КАТАЛОГ — ЮУ Ч ЗОХИОХГҮЙ (2-р шат)
+
+def test_seeded_demo_prices_and_repair_fees_are_wiped(db):
+    """`repair_fee`, `НБҮнэ`, `худалдах үнэ` — гурвуулаа ДЕМО тоо байв.
+
+    Гурван дэвтэрт «засвар» гэсэн үг НИЙТ НЭГ удаа, чөлөөт тэмдэглэл болж
+    гарна: засварын хураамжийн ч, худалдах үнийн ч хүснэгт түүнд АЛГА.
+    """
+    from app.seed import seed_base
+    from app.services import migration as M
+
+    seed_base(db)
+    assert db.query(models.MaterialGradePrice).count() > 0     # демо үнэ орсон
+    assert any(m.repair_fee for m in db.query(models.Material).all())
+    M.load_data(db, _data())
+    assert db.query(models.MaterialGradePrice).count() == 0
+    assert all(m.repair_fee == 0 for m in db.query(models.Material).all())
+
+
+def test_base_rate_comes_from_the_most_common_contract_rate(db):
+    """Тариф нь СИД-ийн тоо биш, ТҮҮНИЙ гэрээнүүд дээр ХАМГИЙН ОЛОН удаа
+    бичигдсэн тоо байна — цитат нь `audit`-д үлдэнэ."""
+    from app.services import migration as M
+
+    def item(rate, ref):
+        return {"material": "Труба 1м", "grade": "А", "qty": 10,
+                "daily_rate": rate, "rate_ref": ref}
+
+    M.load_data(db, _data(
+        clients=[_client("Өнө Орд ХХК яармаг"), _client("Зулаа"),
+                 _client("Марч констракшн")],
+        contracts=[_contract("Өнө Орд ХХК яармаг", "A", items=[item(110, "ӨнөОрд-8!AQ27")]),
+                   _contract("Зулаа", "B", items=[item(110, "Зулаа-3!AO9")]),
+                   _contract("Марч констракшн", "C", items=[item(150, "Марч-1!N8")])]))
+    m = db.query(models.Material).filter_by(name="Труба 1м").one()
+    assert m.base_rate == 110                    # 2 санал ↔ 1
+    got = M.catalog_rates(_data(contracts=[
+        _contract("x", "A", items=[item(110, "ӨнөОрд-8!AQ27")])])["contracts"])
+    assert got["Труба 1м"] == {"rate": 110.0, "ref": "ӨнөОрд-8!AQ27", "votes": 1,
+                               "qty": 10.0}
+
+
+def test_a_material_with_no_contract_rate_is_flagged_by_the_system(db):
+    """Тариф ХААНААС Ч гараагүй бол 0 + ТУГТАЙ асуулт — таамаг БИШ."""
+    from app.services import migration as M
+
+    M.load_data(db, _data())
+    m = db.query(models.Material).filter_by(name="Труба 5м").one()
+    assert m.base_rate == 0
+    n = db.query(models.Note).filter_by(entity_type="material", entity_id=m.id).one()
+    assert n.text == "Тариф бүртгэгдээгүй — үнийг та тогтооно уу"
+    assert n.flag is True and n.author == "Систем"
+
+
+# ═══════════════════ ДАВХАР ТООЦОО — ЭХ СУРВАЛЖААС ХАМААРНА (2-р шат)
+
+def test_a_board_sourced_balance_still_lets_the_netting_out(db):
+    """Самбарын Үлдэгдэл нь Бутангуудын ХОЁР мөрийг (R8 + R24) нийлүүлсэн —
+    бичилт нь R24-ийг ГАРГАЖ АВНА, нийт дүн ХЭВЭЭР."""
+    from app.services import billing, migration as M
+
+    entry = {"kind": "transfer", "amount": 139_648_000, "date": AS_OF,
+             "label": "Өнө Ордтой тооцоо", "ref": "2026 тооцоо!R24"}
+    M.load_data(db, _data(clients=[_client("Бутангууд", balance=474_981_564,
+                                           balance_source="board",
+                                           entries=[entry])]))
+    cl = db.query(models.Client).filter_by(name="Бутангууд").first()
+    ob = db.query(models.Invoice).filter_by(no=f"OB-{cl.id}").one()
+    assert ob.total == 335_333_564
+    db.refresh(cl)
+    assert round(billing.client_receivable(cl, date.fromisoformat(AS_OF))["total"]) \
+        == 474_981_564
+
+
+def test_a_sheet_sourced_balance_does_not_have_the_netting_subtracted(db):
+    """Бутангууд-7!Y70 нь ТҮРЭЭСИЙН хуудас — Өнө Ордтой хийсэн тооцоо тэнд
+    ОРООГҮЙ. Хасвал 139.6 сая₮ хоёр удаа хасагдана."""
+    from app.services import billing, migration as M
+
+    entry = {"kind": "transfer", "amount": 139_648_000, "date": AS_OF,
+             "label": "Өнө Ордтой тооцоо", "ref": "2026 тооцоо!R24"}
+    r = M.load_data(db, _data(clients=[_client("Бутангууд", balance=291_539_644,
+                                               balance_source="sheet",
+                                               entries=[entry])]))
+    cl = db.query(models.Client).filter_by(name="Бутангууд").first()
+    ob = db.query(models.Invoice).filter_by(no=f"OB-{cl.id}").one()
+    assert ob.total == 291_539_644               # хуудасны тоо ЯГ ХЭВЭЭР
+    db.refresh(cl)
+    assert round(billing.client_receivable(cl, date.fromisoformat(AS_OF))["total"]) \
+        == 291_539_644 + 139_648_000
+    assert any("139,648,000" in w and "Бутангууд" in w for w in r["warnings"])

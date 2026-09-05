@@ -722,3 +722,86 @@ def test_two_stale_sessions_do_not_duplicate_invoices(tmp_path):
         assert len({(i.cycle_start, i.cycle_end) for i in rows}) == 2
         # Авлага нь ХОЁР ДАХИН биш — яг хоёр циклийн дүн
         assert sum(i.total for i in rows) == pytest.approx(2 * 100 * 330 * 30)
+
+
+# ═══════════════════════ ТООЦООНЫ ГАРАЛ ЦЭГ — `billing_from` (P0-11)
+#
+# `start_date` нь ГАРЫН ҮСЭГ зурсан өдөр; `billing_from` нь СИСТЕМ тоолж
+# эхэлсэн өдөр БА циклийн торны гарал цэг. Хоёр нь тусдаа болсон учир:
+# Отгоогийн дэвтэр сүүлчийн циклийнхээ төгсгөл хүртэл нэхсэн байдаг тул
+# систем ЯГ тэр залгаанаас эхлэх ёстой — эс бөгөөс хооронд нь нүх үлдэнэ.
+
+def _grid(c, today):
+    """Торны БҮХ ажиглагдах утга — өөрчлөлтийн өмнө/дараа тулгах цуглуулга."""
+    return {"w0": billing.cycle_window(c, 0), "w1": billing.cycle_window(c, 1),
+            "of": billing.cycle_of(c, today),
+            "idx": billing.cycle_index(c, billing.this_cycle_start(c, today)),
+            "this": billing.this_cycle_start(c, today),
+            "next": billing.next_cycle_start(c, today)}
+
+
+def test_a_null_billing_from_changes_nothing(db):
+    """Багана NULL бол хөдөлгүүр БИТ ТУТМААРАА хуучин зан төлөвөө барина."""
+    c, m, ga, gb = setup_contract(db, start=date(2026, 3, 20))
+    today = date(2026, 5, 25)
+    assert c.billing_from is None
+    # …өөрчлөлтийн ӨМНӨ гараар бодсон утгууд (start_date = тор)
+    assert _grid(c, today) == {
+        "w0": (date(2026, 3, 20), date(2026, 4, 19)),
+        "w1": (date(2026, 4, 19), date(2026, 5, 19)),
+        "of": (date(2026, 5, 19), date(2026, 6, 18)),
+        "idx": 3, "this": date(2026, 5, 19), "next": date(2026, 6, 18)}
+    assert billing.billing_origin(c) == c.start_date
+    assert billing.is_cycle_boundary(c, date(2026, 4, 19)) is True
+    assert billing.cycle_of(c, date(2026, 3, 19)) is None
+
+
+def test_billing_from_moves_the_whole_cycle_grid(db):
+    """Тор нь `billing_from`-оос гарна — гарын үсгийн огноо хөндөгдөхгүй."""
+    c, m, ga, gb = setup_contract(db, start=date(2024, 4, 4))
+    c.billing_from = date(2026, 8, 12)
+    db.commit()
+    today = date(2026, 9, 5)
+    assert c.start_date == date(2024, 4, 4)
+    assert billing.billing_origin(c) == date(2026, 8, 12)
+    assert _grid(c, today) == {
+        "w0": (date(2026, 8, 12), date(2026, 9, 11)),
+        "w1": (date(2026, 9, 11), date(2026, 10, 11)),
+        "of": (date(2026, 8, 12), date(2026, 9, 11)),
+        "idx": 1, "this": date(2026, 8, 12), "next": date(2026, 9, 11)}
+    # гарал цэгээс ӨМНӨХ өдөр ямар ч циклд харьяалагдахгүй — гарын үсгийн
+    # огноо ч гэсэн (2024.4.04 нь одоо тороос ГАДНА)
+    assert billing.cycle_of(c, date(2026, 8, 11)) is None
+    assert billing.cycle_of(c, c.start_date) is None
+    assert billing.is_cycle_boundary(c, date(2026, 8, 12)) is True
+    assert billing.is_cycle_boundary(c, c.start_date) is False
+
+
+def test_billing_from_anchors_the_calendar_month_grid_too(db):
+    """Календарь горимд ч зангилаа нь `billing_from`-ийн ӨДӨР (R5/H3)."""
+    c, m, ga, gb = setup_contract(db, start=date(2025, 5, 8))
+    c.cycle_mode = "month"
+    c.billing_from = date(2026, 9, 1)
+    db.commit()
+    assert billing.cycle_window(c, 0) == (date(2026, 9, 1), date(2026, 10, 1))
+    assert billing.cycle_window(c, 1) == (date(2026, 10, 1), date(2026, 11, 1))
+    assert billing.cycle_of(c, date(2026, 10, 15)) == (date(2026, 10, 1),
+                                                       date(2026, 11, 1))
+    assert billing.cycle_index(c, date(2026, 10, 1)) == 2
+    assert billing.cycle_of(c, date(2026, 8, 31)) is None
+
+
+def test_no_cycle_is_billed_between_signing_and_billing_from(db):
+    """Хоёрын хооронд НЭХЭМЖЛЭЛ ч, ХУРИМТЛАЛ ч байхгүй — тоолуур унтуулагдсан."""
+    c, m, ga, gb = setup_contract(db, start=date(2024, 4, 4))
+    c.billing_from = date(2026, 8, 12)
+    db.commit()
+    mv(db, c, "ISSUE", date(2026, 8, 12),
+       [dict(material_id=m.id, grade_id=ga.id, qty=100)])
+    assert billing.derivable_invoice_specs(c, today=date(2026, 9, 5)) == []
+    specs = billing.derivable_invoice_specs(c, today=date(2026, 9, 12))
+    assert [(s["no"], s["cycle_start"], s["rent_amount"]) for s in specs] == \
+        [("R-24/03-1", date(2026, 8, 12), 100 * 330 * 30)]
+    cur = billing.current_cycle_accrual(c, date(2026, 9, 5))
+    assert (cur["days_done"], cur["days_total"]) == (25, 30)
+    assert cur["accrued"] == 100 * 330 * 25

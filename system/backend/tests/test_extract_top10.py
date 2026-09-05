@@ -174,6 +174,67 @@ def test_no_labels_is_days():
     assert B.cycle_mode_from_labels(["Нийт", None]) == "days"
 
 
+# ═══════════════════════ ХАМРАЛТ — ДЭВТЭР ХААНА ДУУССАН БЭ (`last_covered`)
+#
+# Түүний дэвтэр СҮҮЛЧИЙН циклийн мөрийнхөө ТӨГСГӨЛ хүртэл нэхсэн. Тэр огноог
+# хэн ч уншдаггүй байсан тул систем олголтоо `as_of` (9.01) дээр буулгаж,
+# хоёрын хооронд ХЭН Ч нэхэхгүй нүх үлдээж байв — Блүүм дээр 8.12-8.31-ийн
+# 20 хоног = 24,589,200₮, долоон гэрээгээр ~102 сая₮.
+
+def test_last_covered_is_the_end_of_the_last_cycle_line():
+    """БЛҮҮМ-2 (V24 `'7.13-8.11'`) — дэвтэр 8.11 хүртэл нэхэгдсэн."""
+    assert B.last_covered_from_labels(
+        ["5.14-6.12", "6.13-7.12", "7.13-8.11"], 2026) == date(2026, 8, 11)
+
+
+def test_last_covered_of_calendar_months_is_the_last_day_of_the_month():
+    """Грэйт Майнинг — `'8.01-8.31'` → 8-р сарын СҮҮЛЧИЙН өдөр."""
+    assert B.last_covered_from_labels(
+        ["4.01-4.30", "5.01-5.31      31х", "6.01-6.30", "7.01-7.31", "8.01-8.31"],
+        2026) == date(2026, 8, 31)
+
+
+def test_last_covered_reads_the_LAST_line_not_the_largest():
+    """Ашид Донж — `'7.23-8.21'`-ийн ДАРАА `'8.01-8.31'`: дэвтрийн ДАРААЛАЛ."""
+    assert B.last_covered_from_labels(["7.23-8.21", "8.01-8.31"], 2026) \
+        == date(2026, 8, 31)
+
+
+def test_last_covered_across_the_new_year_lands_in_the_next_year():
+    """`'12.15-1.13'` — төгсгөл нь ЭХЛЭЛЭЭСЭЭ өмнөх сард унавал ДАРАА жил."""
+    assert B.last_covered_from_labels(["12.15-1.13"], 2026) == date(2027, 1, 13)
+
+
+def test_no_cycle_line_means_no_coverage_date():
+    """Шошго алга бол ТААМАГЛАХГҮЙ — None буцаана (ачаалагч тугтай мөр өргөнө)."""
+    assert B.last_covered_from_labels([], 2026) is None
+    assert B.last_covered_from_labels(["Нийт", None], 2026) is None
+    assert B.last_covered_from_labels(["13.01-14.30"], 2026) is None
+    assert B.last_covered_from_labels(["2.15-2.30"], 2026) is None   # 2.30 байхгүй
+
+
+def test_board_last_covered_is_the_last_month_column_with_money():
+    """Самбарын `'3 сар' … '7 сар'` — Блүүм 7 сар хүртэл (сарын сүүлчээр)."""
+    head = ("Харилцагч", "Өмнөх үлд", "3 сар", "4 сар", "5 сар", "6 сар", "7 сар",
+            "Нийт дүн", "Тооцоо хийсэн", "Үлдэгдэл", "Барьцаа")
+    row = ("Блүүм технологи", 237099320, 40190700, 35275080, 38408800, 38408800,
+           38408800, 427791500, 35000000, 392791500, None)
+    assert B.board_last_covered(head, row, 2026) == date(2026, 7, 31)
+
+
+def test_board_row_with_a_hole_still_ends_at_the_last_filled_month():
+    """Бутангууд — 5 ба 7 сар хоосон, 6 сар дүнтэй: хамрал 6 сарын сүүл."""
+    head = ("Харилцагч", "Өмнөх үлд", "3 сар", "4 сар", "5 сар", "6 сар", "7 сар")
+    row = ("Бутангууд ", 71900254, 107196210, 82175670, None, 74061430, None)
+    assert B.board_last_covered(head, row, 2026) == date(2026, 6, 30)
+
+
+def test_board_row_without_a_month_amount_has_no_coverage_date():
+    head = ("Харилцагч", "Өмнөх үлд", "3 сар", "4 сар")
+    assert B.board_last_covered(head, ("Өнө Орд ХХК нүхт", None, None, None),
+                                2026) is None
+
+
 # ═══════════════════════════════════════════════════════════ НӨАТ (R14/H12)
 
 def test_vat_percent_row_sets_the_rate():
@@ -319,3 +380,240 @@ def test_every_top10_with_a_sheet_is_reachable_from_sheet_client():
     assert len(have) == 7
     for name in ("Хурд групп", "Голден лайт", "Дархан Оюунаа"):
         assert name not in reachable      # WB1-д хуудасгүй (аудит §1.2)
+
+
+# ═════════════════════ OB-ИЙН ЭХ СУРВАЛЖ — ТҮҮНИЙ ӨӨРИЙН ХУУДАС (2-р шат)
+
+#: БЛҮҮМ-2-ийн сүүлчийн блок: T=19 · U=20(тоо) · V=21 · W=22(хоног) · X=23(дүн)
+BAL_QTY, BAL_AMT = 20, 23
+
+
+def _bal_row(label, amount, tail=None):
+    return (None,) * 19 + (label, None, None, tail, amount)
+
+
+def _bal_rows():
+    """`X33 = X30 − X32` нь ТҮҮНИЙ үлдэгдэл; `T27` нь ЭХЛЭЛ, `W30` нь дундах."""
+    return [_bal_row("тоо", None, "хоног"),
+            _bal_row("өмнөх үлдэгдэл", 237_099_320),
+            _bal_row("Нийт төлөх дүн", 417_179_050, "үлдэгдэл"),
+            _bal_row("Төлсөн", 35_000_000),
+            _bal_row("Үлдэгдэл", 382_179_050)]
+
+
+def test_the_sheet_names_its_own_balance_in_its_own_last_cell():
+    """OB нь САМБАРААС биш, ТҮҮНИЙ ХУУДСААС гарна: тэгвэл үлдэгдэл ба
+    хамралт хоёр НЭГ дэвтрээс гарч, `billing_from` нь бүтцээрээ зөв болно."""
+    got = B.sheet_balance(_bal_rows(), BAL_QTY, BAL_AMT, "БЛҮҮМ-2")
+    assert got == {"amount": 382_179_050.0, "ref": "БЛҮҮМ-2!X5"}
+
+
+def test_the_previous_balance_line_is_not_the_balance():
+    """«өмнөх үлдэгдэл» бол ЭХЛЭЛ, төгсгөл БИШ — сонгогдох ёсгүй."""
+    rows = _bal_rows()[:2]
+    assert B.sheet_balance(rows, BAL_QTY, BAL_AMT, "БЛҮҮМ-2") is None
+
+
+def test_the_last_balance_line_wins_over_an_earlier_one():
+    """Блок дотор «үлдэгдэл» гэсэн үг ХОЁР удаа гарна (W30 ба T33)."""
+    got = B.sheet_balance(_bal_rows()[:3], BAL_QTY, BAL_AMT, "БЛҮҮМ-2")
+    assert got["amount"] == 417_179_050.0          # r3 — сүүлчийнх нь тэр
+    got = B.sheet_balance(_bal_rows(), BAL_QTY, BAL_AMT, "БЛҮҮМ-2")
+    assert got["amount"] == 382_179_050.0          # r5 нь бүр сүүлд
+
+
+@pytest.mark.parametrize("label", ["Нийт төлөх үлдэгдэл төлбөр",
+                                   "Үлдэгдэл төлбөр", "үлдэгдэл",
+                                   "Нийт төлөх үлдэгдэл дүн"])
+def test_every_wording_of_her_balance_line_is_found(label):
+    """Долоон хуудсанд ДӨРВӨН өөр нэршил: бүгд «үлд»-ээр эхэлдэггүй."""
+    got = B.sheet_balance([_bal_row(label, 1_234_567)], BAL_QTY, BAL_AMT, "X")
+    assert got["amount"] == 1_234_567.0
+
+
+def test_a_sheet_without_a_balance_line_says_so():
+    assert B.sheet_balance([_bal_row("Нийт", 5_000_000)],
+                           BAL_QTY, BAL_AMT, "X") is None
+
+
+# ═════════════════════ ТЭМДЭГЛЭЛИЙН БОДЛОГО — МАШИНЫ ТЭМДЭГ ГАРНА (2-р шат)
+
+def test_a_real_margin_memo_is_kept_as_plain_text_without_a_cell_reference():
+    """Гурав ба түүнээс дээш үгтэй тэмдэглэл нь ТҮҮНИЙ өгүүлбэр — хэвээрээ."""
+    memo = "хугацаа хэтэрвэл уг түрээсийн гэрээний 4.2-т зааснаар алданга тооцно"
+    kept, dropped = B.harvest_notes([(memo,)], {}, {}, {}, "Зулаа-3",
+                                    date(2026, 9, 1))
+    assert len(kept) == 1 and dropped == []
+    assert kept[0]["text"] == memo                 # нүдний хаяг НААГААГҮЙ
+    assert "!" not in kept[0]["text"]
+    assert kept[0]["flag"] is False
+    assert kept[0]["author"] == "Дэвтрээс"
+
+
+@pytest.mark.parametrize("memo", ["буцаалт", "модонд", "хаав", "нөат шивсэн"])
+def test_a_one_or_two_word_margin_label_is_not_a_note(memo):
+    """«буцаалт» бол өгүүлбэр биш, ХҮСНЭГТИЙН ШОШГО — гэрээн дээр наах юм алга."""
+    kept, dropped = B.harvest_notes([(memo,)], {}, {}, {}, "Зулаа-3",
+                                    date(2026, 9, 1))
+    assert kept == []
+    assert len(dropped) == 1 and dropped[0]["text"] == memo
+
+
+def test_a_yellow_cell_no_longer_becomes_a_note():
+    """«ШАР нүд: 35,000,000 — «бартер»» гэдэг нь МАШИНЫ хэл — хавсралтад."""
+    kept, dropped = B.harvest_notes(
+        [("бартер", 35_000_000)], {}, {(1, 2): B.YELLOW}, {}, "Блүүт тооцоо",
+        date(2026, 9, 1))
+    assert kept == []
+    yellow = [d for d in dropped if d["kind"] == "шар нүд"]
+    assert len(yellow) == 1
+    assert yellow[0]["text"] == "ШАР нүд: 35,000,000 — «бартер»"
+    assert yellow[0]["ref"] == "Блүүт тооцоо!B1"
+
+
+def test_a_hand_written_red_number_no_longer_becomes_a_note():
+    kept, dropped = B.harvest_notes(
+        [("нэхэмжлэх", 12_000_000)], {}, {}, {(1, 2): "FFFF0000"}, "Марч-1",
+        date(2026, 9, 1))
+    assert kept == []
+    assert len(dropped) == 1 and dropped[0]["kind"] == "улаан дүн"
+
+
+# ═════════════════════ ТАЛБАЙН ЖИН — ЗЭРЭГЛЭЛ ХАРААХГҮЙ УНАЛТ (2-р шат)
+
+def _bluum_park():
+    """«2026 шинэ» 16/17/18-р мөр — `Z6='V2 шинэ'` нь ТУСДАА багана."""
+    return {
+        "БЛҮҮМ технологи": {("Хэв хашмал 6012", "А"): 1879,
+                            ("Тулаас В2", "А"): 165},
+        "БЛҮҮМ архангай": {("Хэв хашмал 6012", "А"): 178,
+                           ("Труба 6м", "А"): 60, ("Труба 3м", "А"): 50,
+                           ("Тулаас В2", "А"): 18, ("Тулаас В4", "А"): 20},
+        "Блүүм дарь эх": {("Хэв хашмал 6012", "А"): 1324,
+                          ("Тулаас В2", "шинэ"): 600},
+    }
+
+
+def _bluum_items():
+    return [{"material": "Хэв хашмал 6012", "grade": "А", "qty": 3381,
+             "daily_rate": 330},
+            {"material": "Тулаас В2", "grade": "А", "qty": 783, "daily_rate": 110},
+            {"material": "Тулаас В4", "grade": "А", "qty": 20, "daily_rate": 220},
+            {"material": "Труба 6м", "grade": "А", "qty": 60, "daily_rate": 220},
+            {"material": "Труба 3м", "grade": "А", "qty": 50, "daily_rate": 200}]
+
+
+def test_the_park_weight_folds_grades_when_the_exact_sku_is_missing():
+    """`Z18` дээрх 600ш «V2 шинэ» нь гэрээн дээр «В2·А» гэж бичигдсэн.
+
+    ЯГ таарах жин олдохгүй тул урьд нь ЖИН 0 болж, дарь эхийн 600ш нь
+    технологи руу нүүж 2,585/385/1,324 гэсэн ХУДАЛ задаргаа гарч байв.
+    """
+    sites, problem = B._site_split("Блүүм технологи", _bluum_items(),
+                                   _bluum_park(), B.Report())
+    assert problem is None
+    total = {s["site"]: sum(i["qty"] for i in s["items"]) for s in sites}
+    assert total == {"БЛҮҮМ технологи": 2044, "БЛҮҮМ архангай": 326,
+                     "Блүүм дарь эх": 1924}
+    v2 = {s["site"]: sum(i["qty"] for i in s["items"]
+                         if i["material"] == "Тулаас В2") for s in sites}
+    assert v2 == {"БЛҮҮМ технологи": 165, "БЛҮҮМ архангай": 18,
+                  "Блүүм дарь эх": 600}
+    assert sum(total.values()) == 4294
+
+
+def test_a_dated_snapshot_that_does_not_reconcile_is_not_split():
+    """Батцоож!F нь 2026.04.01-ний ЗУРАГ (11,866ш) — өнөөдрийн 1,879ш БИШ.
+
+    Нэг ХООСОН нүднээс төрсөн хуваалтыг «түүний хэлсэн хуваарилалт» гэж
+    бичих нь ЗОХИОМОЛ баримт болно: систем хуваахгүй, ТҮҮНЭЭС асууна.
+    """
+    explicit = {B.AE_BLOCK: {("Хэв хашмал 6012", "А"): 11_866},
+                B.OTHER_SITE: {("Тулаас В2", "шинэ"): 10}}
+    items = [{"material": "Хэв хашмал 6012", "grade": "А", "qty": 1879,
+              "daily_rate": 330}]
+    sites, problem = B._site_split("Бутангууд", items, {}, B.Report(),
+                                   explicit=explicit, snapshot="2026-04-01")
+    assert sites == []
+    assert problem is not None
+    assert "2026-04-01" in problem["text"] and "1,879" in problem["text"]
+    assert "хуваарилна" in problem["text"]
+
+
+def test_a_snapshot_that_does_reconcile_still_splits():
+    explicit = {B.AE_BLOCK: {("Хэв хашмал 6012", "А"): 1200},
+                B.OTHER_SITE: {("Хэв хашмал 6012", "А"): 679}}
+    items = [{"material": "Хэв хашмал 6012", "grade": "А", "qty": 1879,
+              "daily_rate": 330}]
+    sites, problem = B._site_split("Бутангууд", items, {}, B.Report(),
+                                   explicit=explicit, snapshot="2026-04-01")
+    assert problem is None
+    assert [sum(i["qty"] for i in s["items"]) for s in sites] == [1200, 679]
+
+
+# ═════════════════════ АГУУЛАХ — ХОЁР ДЭВТРИЙН НИЙЛБЭР (2-р шат)
+
+def test_the_yard_row_fills_the_materials_the_count_left_blank():
+    """«тооллого 6.22»-д трубаны тоо нүд ХООСОН — паркийн дэвтрийн хашааны
+    мөр (row 51) л мэднэ. Урьд нь 7 труба бүгд 0-ээр ачаалагдаж байв."""
+    stock = [{"material": "Хэв хашмал 6012", "grade": "А", "on_hand": 10_899}]
+    yard = {("Труба 1м", "А"): 200, ("Труба 6м", "А"): 717,
+            ("Труба 1.5м", "А"): 0, ("Шат", "А"): 34,
+            ("Хэв хашмал 6012", "шинэ"): 999}
+    got = B.fill_stock_from_yard(stock, yard, B.Report())
+    by = {(r["material"], r["grade"]): r["on_hand"] for r in got}
+    assert by[("Труба 1м", "А")] == 200
+    assert by[("Труба 6м", "А")] == 717
+    assert by[("Шат", "А")] == 34
+    assert ("Труба 1.5м", "А") not in by            # хашаанд ч 0 — мөр үүсгэхгүй
+    # ТООЛЛОГО мэдэж байгааг НЭГ Ч ХӨНДӨХГҮЙ (зэрэглэл нь өөр байсан ч)
+    assert by[("Хэв хашмал 6012", "А")] == 10_899
+    assert ("Хэв хашмал 6012", "шинэ") not in by
+
+
+def test_the_yard_fill_is_recorded_as_grade_a():
+    got = B.fill_stock_from_yard([], {("Тулаас В6", "А"): 145}, B.Report())
+    assert got == [{"material": "Тулаас В6", "grade": "А", "on_hand": 145.0,
+                    "source": "2026 шинэ!51 (Хашаанд бгаа)"}]
+
+
+def test_the_yard_row_is_read_off_the_park_sheet():
+    rows = [(None, "Харилцагч", "Хэв", None, "Труба"),
+            (None, None, "6012", None, "1м"),
+            (1, "Хурд Гранд Слаб", 5, None, 6),
+            (45, "Хашаанд бгаа", 10_899, None, 200),
+            (47, "Үндсэн материал", 18_907, None, 514)]
+    got = B.parse_park_yard(rows)
+    assert got[("Хэв хашмал 6012", "А")] == 10_899
+    assert got[("Труба 1м", "А")] == 200
+    assert len(got) == 2
+
+
+# ═════════════════════ КАТАЛОГ — ЮУ Ч ЗОХИОХГҮЙ (2-р шат)
+
+def test_the_new_catalog_rows_invent_no_repair_fee():
+    """«Труба 1м»-ийн 4,000₮ засварын хураамж нь ХААНААС Ч гараагүй байв —
+    гурван дэвтэрт «засвар» гэсэн үг ГАНЦ удаа, чөлөөт тэмдэглэл болж гарна."""
+    for name, spec in B.CATALOG_NEW.items():
+        assert spec.get("repair_fee", 0) == 0, name
+
+
+def test_the_same_sentence_is_pasted_only_once():
+    """Гэрээний нөхцөлийн мөр цикл бүрийн хажууд ДАХИН ДАХИН бичигдсэн байдаг:
+    нүдний хаяг текстээс гарсны дараа тэдгээр нь ЯГ ижил мөрүүд."""
+    memo = "хугацаа хэтэрвэл уг түрээсийн гэрээний 4.2-т зааснаар алданга тооцно"
+    drop = []
+    got = B.dedupe_notes([{"text": memo, "flag": False, "ref": "Зулаа-3!I7"},
+                          {"text": memo, "flag": False, "ref": "Зулаа-3!AS7"}],
+                         drop, "Зулаа", "гэрээ")
+    assert len(got) == 1 and got[0]["ref"] == "Зулаа-3!I7"
+    assert len(drop) == 1 and drop[0]["kind"] == "давхардсан"
+
+
+def test_the_flagged_vat_copy_wins_over_the_bare_one():
+    """«НӨАТ: «…»» нь ижил өгүүлбэрийг ТУГТАЙГААР давтдаг — тугтай нь ялна."""
+    txt = "бартерт 9957 УКК машин нөатгүй дүн. нөат авах бол 10% нэмж төлбөр хийнэ"
+    got = B.dedupe_notes([{"text": txt, "flag": False, "ref": "БЛҮҮМ-2!G9"},
+                          {"text": f"НӨАТ: «{txt}»", "flag": True, "ref": "БЛҮҮМ-2"}],
+                         [], "Блүүм технологи", "гэрээ")
+    assert len(got) == 1 and got[0]["flag"] is True

@@ -449,7 +449,8 @@ def test_unknown_cycle_mode_is_refused(client, as_role):
     cid = _make_contract(client, as_role, 5)
     r = client.patch(f"/api/contracts/{cid}", headers=h, json={"cycle_mode": "quarter"})
     assert r.status_code == 400
-    assert "мөчлөг" in r.json()["detail"].lower()
+    # Дэлгэц дээр НЭГ л үг: «цикл» (Мөчлөг/Цикл хоёр нэг зүйлийг нэрлэж байв).
+    assert "цикл" in r.json()["detail"].lower()
 
 
 def test_only_the_manager_may_switch_the_cycle_mode(client, as_role):

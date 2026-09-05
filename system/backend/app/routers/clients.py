@@ -167,10 +167,20 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
     # Тойм-ийн timeline: гэрээ, хөдөлгөөн, төлбөр, нэхэмжлэл нэгтгэсэн он цагийн хэлхээ
     timeline = []
     for ct in c.contracts:
-        timeline.append({"date": str(ct.start_date), "kind": "contract",
-                         "title": f"Гэрээ №{ct.no} эхлэв",
-                         "sub": ("Түрээс" if ct.type == "rent" else "Худалдаа") +
-                                (f" · барьцаа {ct.deposit:,.0f}₮" if ct.deposit else "")})
+        # ХУУЧИН ҮЛДЭГДЭЛ нь гэрээ ДҮР ЭСГЭСЭН шилжүүлгийн дүн (`OB-…`).
+        # «Гэрээ №OB-2 эхлэв» гэдэг нь гурван худал нэг мөрөнд: гэрээ ч биш,
+        # тэр дугаартай ч биш, тэр өдөр эхэлсэн ч биш. Отгоо эгч ийм гэрээнд
+        # гарын үсэг зурж байгаагүй тул хэлхээ дээр ҮНЭНЭЭ хэлнэ.
+        if ct.no.startswith("OB-"):
+            opening = sum(i.total for i in ct.invoices if i.voided_at is None)
+            timeline.append({"date": str(ct.start_date), "kind": "contract",
+                             "title": f"Хуучин үлдэгдэл бүртгэв — {opening:,.0f}₮",
+                             "sub": "Хуучин системээс шилжсэн"})
+        else:
+            timeline.append({"date": str(ct.start_date), "kind": "contract",
+                             "title": f"Гэрээ №{ct.no} эхлэв",
+                             "sub": ("Түрээс" if ct.type == "rent" else "Худалдаа") +
+                                    (f" · барьцаа {ct.deposit:,.0f}₮" if ct.deposit else "")})
         for mv in ct.movements:
             if mv.status != "done":
                 continue
@@ -192,7 +202,7 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
                              "voided": mv.voided_at is not None})
     for p in payments:
         m = {"CASH": "Бэлэн", "BANK": "Данс", "BARTER": "Бартер",
-             "CREDIT": "Бичилтийн кредит"}.get(p["method"], p["method"])
+             "CREDIT": "Тооцоогоор хаасан"}.get(p["method"], p["method"])
         sub = m + (f" · {p['barter_desc']}" if p["barter_desc"] else "")
         # Цуцлагдсан төлбөр он цагийн хэлхээнээс АЛГА БОЛОХГҮЙ — тэр өдөр
         # бичилт хийгдсэн нь үнэн. Гэхдээ хэлхээ дээр л ХҮЧИНГҮЙ гэдгээ хэлнэ,

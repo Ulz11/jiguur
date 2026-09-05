@@ -686,6 +686,20 @@ def add_months(anchor: date, n: int) -> date:
     return date(y, m, min(anchor.day, monthrange(y, m)[1]))
 
 
+def billing_origin(contract: models.Contract) -> date:
+    """ТООЦООНЫ ГАРАЛ ЦЭГ — циклийн тор ЭНДЭЭС эхэлнэ (P0-11).
+
+    `start_date` нь «ГАРЫН ҮСЭГ зурсан өдөр» — тэр нь цаасны баримт, тооцооны
+    зангилаа БИШ. Шилжүүлэлтээр ирсэн гэрээ дээр Отгоогийн дэвтэр сүүлчийн
+    циклийнхээ төгсгөл хүртэл нэхэгдсэн байдаг тул систем ЯГ тэр залгаанаас
+    (`billing_from`) тоолж эхэлнэ.
+
+    `getattr` уналттай: багана нэмэгдэхээс өмнөх мөр, талбаргүй туслах объект
+    («fake» гэрээ), эсвэл NULL утга — гурвуулаа ХУУЧИН зан төлөвөө барина.
+    """
+    return getattr(contract, "billing_from", None) or contract.start_date
+
+
 def cycle_window(contract: models.Contract, n: int) -> tuple[date, date]:
     """n-р циклийн ХАГАС НЭЭЛТТЭЙ цонх [эхлэл, төгсгөл) — n нь 0-оос тоологдоно.
 
@@ -693,10 +707,11 @@ def cycle_window(contract: models.Contract, n: int) -> tuple[date, date]:
     төсөөлөл) ЗӨВХӨН цонхыг хэрэглэнэ — хоногийн арифметик хийхгүй. Горим
     солигдоход тэдгээрийн аль нь ч мэдэхгүй өнгөрнө.
     """
+    origin = billing_origin(contract)
     if cycle_mode(contract) == "month":
-        return add_months(contract.start_date, n), add_months(contract.start_date, n + 1)
+        return add_months(origin, n), add_months(origin, n + 1)
     step = timedelta(days=contract.cycle_days)
-    cs = contract.start_date + n * step
+    cs = origin + n * step
     return cs, cs + step
 
 
@@ -709,11 +724,11 @@ def cycle_of(contract: models.Contract, d: date) -> tuple[date, date] | None:
 
     ЗӨВХӨН ЦОНХЫГ хэрэглэнэ — горимоо мэдэхгүй.
     """
-    if d < contract.start_date:
+    origin = billing_origin(contract)
+    if d < origin:
         return None
     if cycle_mode(contract) == "month":
-        n = ((d.year - contract.start_date.year) * 12
-             + d.month - contract.start_date.month)
+        n = ((d.year - origin.year) * 12 + d.month - origin.month)
         for _ in range(4):                     # хумилтын хазайлт ≤ 1 алхам
             cs, ce = cycle_window(contract, max(n, 0))
             if d < cs:
@@ -724,7 +739,7 @@ def cycle_of(contract: models.Contract, d: date) -> tuple[date, date] | None:
                 continue
             return cs, ce
         return None
-    return cycle_window(contract, (d - contract.start_date).days // contract.cycle_days)
+    return cycle_window(contract, (d - origin).days // contract.cycle_days)
 
 
 def is_cycle_boundary(contract: models.Contract, d: date) -> bool:
@@ -734,7 +749,7 @@ def is_cycle_boundary(contract: models.Contract, d: date) -> bool:
     дотор тариф хоёр болох боломжгүй болж, зурвасууд хагалагдахгүй. Горимоо
     мэдэхгүй: `cycle_of` цонхыг өөрөө олно.
     """
-    if d < contract.start_date:
+    if d < billing_origin(contract):
         return False
     w = cycle_of(contract, d)
     return w is not None and w[0] == d
@@ -743,10 +758,11 @@ def is_cycle_boundary(contract: models.Contract, d: date) -> bool:
 def this_cycle_start(contract: models.Contract, today: date | None = None) -> date:
     """Өнөөдөр аль циклд байна вэ — түүний эхлэл («Энэ циклээс»)."""
     today = today or date.today()
-    if today < contract.start_date:
-        return contract.start_date
+    origin = billing_origin(contract)
+    if today < origin:
+        return origin
     w = cycle_of(contract, today)
-    return w[0] if w else contract.start_date
+    return w[0] if w else origin
 
 
 def next_cycle_start(contract: models.Contract, today: date | None = None) -> date:
@@ -756,10 +772,11 @@ def next_cycle_start(contract: models.Contract, today: date | None = None) -> da
     өөрчлөлт НЭХЭМЖЛЭГДСЭН юуг ч хөндөхгүй тул дахин бодолт ч шаардахгүй.
     """
     today = today or date.today()
-    if today < contract.start_date:
-        return contract.start_date
+    origin = billing_origin(contract)
+    if today < origin:
+        return origin
     w = cycle_of(contract, today)
-    return w[1] if w else contract.start_date
+    return w[1] if w else origin
 
 
 # Хөнгөлөлт нь ЦИКЛИЙГ сөрөг болгож болохгүй: сөрөг нэхэмжлэл нь харилцагчид
@@ -820,7 +837,7 @@ def cycles_of(contract: models.Contract, today: date):
 
 
 def cycle_index(contract: models.Contract, cycle_start: date) -> int:
-    """Циклийн дугаар — гэрээний эхлэлээс тоологдоно (1-ээс эхэлнэ).
+    """Циклийн дугаар — ТООЦООНЫ ГАРАЛ ЦЭГЭЭС тоологдоно (1-ээс эхэлнэ).
 
     Байрлалаас (хэдэн нэхэмжлэл үүссэнээс) БИШ огнооноос гарна: иймд
     нэхэмжлэлүүдийг устгаад дахин үүсгэхэд дугаар нь ЯГ ХЭВЭЭР үлдэнэ.
@@ -829,10 +846,11 @@ def cycle_index(contract: models.Contract, cycle_start: date) -> int:
     (28…31) тул хуваахад тогтворгүй болно. Хумигдсан хил (1.31 → 2.28) ч
     сарынхаа дугаарыг л авч явна.
     """
+    origin = billing_origin(contract)
     if cycle_mode(contract) == "month":
-        return ((cycle_start.year - contract.start_date.year) * 12
-                + cycle_start.month - contract.start_date.month) + 1
-    return (cycle_start - contract.start_date).days // contract.cycle_days + 1
+        return ((cycle_start.year - origin.year) * 12
+                + cycle_start.month - origin.month) + 1
+    return (cycle_start - origin).days // contract.cycle_days + 1
 
 
 def last_movement_day(contract: models.Contract) -> date | None:
@@ -1478,7 +1496,12 @@ def client_receivable(client: models.Client, today: date | None = None) -> dict:
         penalty += b["penalty"]
         booked += b["penalty_booked"]
         deposit += ct.deposit
-        if ct.status == "active":
+        # ХУУЧИН ҮЛДЭГДЭЛ («OB-…») нь гэрээ ДҮР ЭСГЭСЭН шилжүүлгийн дүн —
+        # «Идэвхтэй гэрээ» гэсэн тоонд ОРОХГҮЙ. Нэг л жинхэнэ гэрээтэй
+        # харилцагч жагсаалт дээр «2» гэж харагдвал Отгоо эгч байхгүй
+        # гэрээ хайж эхэлнэ (`serializers.contract_row` мөн ЭНЭ тэмдгээр
+        # `state: "opening"` гэж шийддэг).
+        if ct.status == "active" and not ct.no.startswith("OB-"):
             active += 1
     total = invoiced + uninvoiced
     return {"total": total, "invoiced": invoiced, "uninvoiced": uninvoiced,
@@ -1865,6 +1888,30 @@ def pending_shipments(db: Session, scope: str = "all") -> list[models.Movement]:
     return [mv for mv in rows if mv.contract.type == scope]
 
 
+def invoice_label(inv: models.Invoice) -> str:
+    """Нэхэмжлэлийн ХҮНИЙ уншдаг нэр — дотоод дугаар (OB-2, A-3-1, R-24/03-1) гарахгүй.
+
+    Отгоо эгч «OB-2» гэсэн нэхэмжлэл бичиж байгаагүй: тэр нь хөдөлгүүрийн
+    зохиомол дугаар, «A-3-1» ч мөн адил. Дэлгэц (`lib/invoice.ts`) аль хэдийн
+    нэрээр нь дууддаг — серверээс угсрагддаг мэдэгдлийн гарчиг ч тэр дүрмээр:
+      · хуучин үлдэгдэл → «хуучин үлдэгдэл (ОГНОО хүртэл)»
+      · бусад бичилт    → бичилтийн өөрийн нэр («Байрны төлбөр суутгал»)
+      · түрээс          → циклийн огноо, сүүлчийн ХОНОГООР («03-20 – 04-18»),
+                          гэрээний хуудасны «08-22 – 09-20» бичлэгтэй адил.
+    """
+    no = inv.no or ""
+    if no.startswith("OB-"):
+        return f"хуучин үлдэгдэл ({inv.cycle_end} хүртэл)"
+    if no.startswith("A-"):
+        try:
+            d = json.loads(inv.detail_json or "{}")
+        except ValueError:
+            d = {}
+        return d.get("label") or d.get("kind_mn") or "бусад бичилт"
+    last = inv.cycle_end - timedelta(days=1)
+    return f"{inv.cycle_start} – {last} нэхэмжлэл"
+
+
 def build_notifications(db: Session, today: date | None = None, scope: str = "all"):
     """Мэдэгдэл — ЗӨВХӨН `scope` төрлийн гэрээнүүдээс.
 
@@ -1911,7 +1958,7 @@ def build_notifications(db: Session, today: date | None = None, scope: str = "al
                 if unbooked > 0.5:
                     sub += f" · алдангийн тооцоолол ≈{unbooked:,.0f}₮ (нэхэгдээгүй)"
                 notes.append({"kind": "overdue", "level": "danger",
-                              "title": f"{c.client.name} — нэхэмжлэл {inv.no} {days} хоног хэтэрлээ",
+                              "title": f"{c.client.name} — {invoice_label(inv)} {days} хоног хэтэрлээ",
                               "sub": sub,
                               "contract_id": c.id, "invoice_id": inv.id})
     pending = pending_shipments(db, scope)

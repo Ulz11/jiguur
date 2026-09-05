@@ -26,7 +26,7 @@ def _safe(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z._-]+", "-", name).strip("-") or "file"
 
 
-CYCLE_MODE_ERR = "Тооцооны мөчлөг «30 хоног» эсвэл «Календарь сар» байна"
+CYCLE_MODE_ERR = "Тооцооны цикл «30 хоног» эсвэл «Календарь сар» байна"
 # «Худалдаа болгох» (H7) нь ЗӨВХӨН түрээсийн гэрээнд утгатай — худалдааны
 # гэрээнд ачилт нь өөрөө худалдаа бөгөөс өөрийн нэхэмжлэлтэй.
 SALE_ONLY_RENT_ERR = ("«Худалдаа болгох» нь зөвхөн ТҮРЭЭСИЙН гэрээнд бүртгэгдэнэ — "
@@ -201,6 +201,7 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
                                    db, c.id, live_only=False))],
            # «Хэзээнээс» сонголтын ГУРВАН огноо — UI таамаглахгүй, СЕРВЕР хэлнэ
            "cycle_bounds": {"contract_start": str(c.start_date),
+                            "billing_from": str(billing.billing_origin(c)),
                             "current_start": str(billing.this_cycle_start(c, today)),
                             "next_start": str(billing.next_cycle_start(c, today))},
            "payments": [serializers.payment(p) for p in
@@ -819,7 +820,7 @@ def _akt_note(raw: str | None) -> str:
 
 def _akt_check(c: models.Contract, d: date, amount: float, *, drop_id: int | None = None):
     """Санал болгож буй бичилтийн ЕРӨНХИЙ шалгуурууд — бичих, засах хоёуланд."""
-    if d < c.start_date:
+    if d < billing.billing_origin(c):
         raise HTTPException(400, AKT_BEFORE_START_ERR)
     if abs(amount) < 0.005:
         raise HTTPException(400, AKT_ZERO_ERR)
@@ -973,7 +974,7 @@ def _rate_effective_from(c: models.Contract, raw: date | None) -> date:
         return billing.next_cycle_start(c, date.today())
     if not billing.is_cycle_boundary(c, raw):
         win = billing.cycle_of(c, raw)
-        hint = f"{win[0]} эсвэл {win[1]}" if win else str(c.start_date)
+        hint = f"{win[0]} эсвэл {win[1]}" if win else str(billing.billing_origin(c))
         raise HTTPException(400, f"«Хэзээнээс» нь циклийн ЭХЛЭЛ байх ёстой — {hint}")
     return raw
 
@@ -1151,7 +1152,8 @@ def patch_item(cid: int, body: ItemPatch, db: Session = Depends(get_db),
         c.rate_changes.append(models.RateChange(
             contract_id=c.id, material_id=body.material_id, grade_id=body.grade_id,
             old_rate=body.old_rate, new_rate=new_rate,
-            effective_from=c.start_date, note="Гэрээний тариф — бүх түүхэнд"))
+            effective_from=billing.billing_origin(c),
+            note="Гэрээний тариф — бүх түүхэнд"))
         # 2) Гэрээний үндсэн тариф — ШИНЭ олголт үүгээр тамгалагдана
         if body.old_rate is None or abs(cur - body.old_rate) < 0.005:
             if body.daily_rate is not None:
@@ -1159,7 +1161,8 @@ def patch_item(cid: int, body: ItemPatch, db: Session = Depends(get_db),
             if body.unit_price is not None:
                 it.unit_price = body.unit_price
 
-    rebuilt, preview = _gated(db, user, c, mutate, [c.start_date], body.confirm,
+    rebuilt, preview = _gated(db, user, c, mutate, [billing.billing_origin(c)],
+                              body.confirm,
                               f"тариф → {new_rate:,.0f}₮ (бүх түүхэнд)")
     if preview:
         return preview
@@ -1382,8 +1385,9 @@ def _close_date_error(c: models.Contract, cd: date, today: date) -> str | None:
     """Хаах огнооны шалгуурууд — 400 ба wizard-ийн урьдчилсан анхааруулга НЭГ эх."""
     if cd > today:
         return "Хаах огноо ирээдүйд байж болохгүй"
-    if cd < c.start_date:
-        return f"Хаах огноо гэрээний эхлэлээс ({c.start_date}) өмнө байж болохгүй"
+    origin = billing.billing_origin(c)
+    if cd < origin:
+        return f"Хаах огноо тооцооны эхлэлээс ({origin}) өмнө байж болохгүй"
     last = billing.last_movement_day(c)
     if last is not None and cd < last:
         return (f"Хаах огноо сүүлийн хөдөлгөөнөөс ({last}) өмнө байж болохгүй — "

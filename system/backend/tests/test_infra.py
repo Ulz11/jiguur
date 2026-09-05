@@ -127,6 +127,29 @@ def test_schema_migrate_adds_missing_columns(tmp_path):
     engine.dispose()
 
 
+def test_schema_migrate_opens_billing_from_on_an_old_contracts_table(tmp_path):
+    """P0-11: ажиллаж байгаа сан дээр `billing_from` НЭМЭГДЭЖ, NULL-аар эхэлнэ.
+
+    NULL = «тооцоо гарын үсгийн огнооноос» — хуучин гэрээ бүрийн зан төлөв
+    ЯГ ХЭВЭЭР. Багана нээгдэхдээ ямар ч тоо ХӨДӨЛГӨХГҮЙ байх нь нөхцөл.
+    """
+    engine = create_engine("sqlite:///" + str(tmp_path / "old.db"))
+    with engine.begin() as c:
+        c.exec_driver_sql("""CREATE TABLE contracts (
+            id INTEGER PRIMARY KEY, no VARCHAR(30), client_id INTEGER,
+            type VARCHAR(10), start_date DATE)""")
+        c.exec_driver_sql("INSERT INTO contracts VALUES (1,'24/03',1,'rent','2024-04-04')")
+
+    assert "contracts.billing_from" in migrate_schema(engine)
+    assert "billing_from" in _cols(engine, "contracts")
+    with engine.connect() as c:
+        assert c.exec_driver_sql(
+            "SELECT start_date, billing_from FROM contracts").fetchall() \
+            == [("2024-04-04", None)]
+    assert migrate_schema(engine) == []          # idempotent
+    engine.dispose()
+
+
 def test_schema_migrate_renders_scalar_defaults(tmp_path):
     """Тогтмол default-тай багана нэмэхэд ХУУЧИН мөрүүд default-аараа дүүрнэ.
 
