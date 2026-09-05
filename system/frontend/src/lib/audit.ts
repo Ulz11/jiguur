@@ -43,6 +43,9 @@ export const ACTIONS: Record<string, [label: string, pill: string]> = {
   /* ХОЛБОО БАРИХ ХҮН (№72, 73) — устгал БАЙХГҮЙ: ажлаас гарсан хүн мөрөндөө
      үлдэж, зөвхөн залгах жагсаалтаас гарна. Тиймээс «Устгасан» БИШ. */
   deactivate: ["Идэвхгүй болгосон", "pill-grey"],
+  /* Түүний толин тусгал: хүн буцаж ирсэн (эсвэл андуурч идэвхгүй болгосон).
+     Ногоон — залгах жагсаалт дахин бүтэн боллоо. */
+  reactivate: ["Идэвхжүүлсэн", "pill-green"],
 };
 
 /** Биетийн монгол нэр — мөрөн дээр ба ШҮҮЛТҮҮРИЙН товчин дээр хоёуланд нь. */
@@ -71,7 +74,7 @@ export const ENTITIES: Record<string, string> = {
 export const BACKEND_ACTIONS = [
   "create", "update", "delete", "void", "stocktake",
   "settle_deposit", "rebuild", "close", "book_penalty", "cron",
-  "agree", "unagree", "deactivate",
+  "agree", "unagree", "deactivate", "reactivate",
 ] as const;
 
 /** Backend-ийн `audit.log(db, user, action, ENTITY, …)` дуудлагад гардаг биетүүд. */

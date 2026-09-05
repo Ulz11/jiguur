@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { dayShift, freshMark, issueOutcome, payOutcome, returnOutcome,
-         saleOutcome, shipmentOutcome } from "./outcome";
+import { contactOutcome, dayShift, entryOutcome, fieldOutcome, fileOutcome,
+         freshMark, issueOutcome, noteOutcome, payOutcome, promiseOutcome,
+         receivableShift, returnOutcome, saleOutcome, shipmentOutcome,
+         voidEntryOutcome, voidPayOutcome } from "./outcome";
 
 /**
  * ҮР ДҮНГИЙН ЗУРВАСЫН ҮГ — Отгоо эгч дэлгэц дээр ӨНГӨРЧ БУЙ зүйлийг
@@ -97,10 +99,99 @@ describe("freshMark — тодруулах мөрийн түлхүүр", () => {
     expect(freshMark("mv", 3)).toBe("mv-3");
     expect(freshMark("pay", 3)).toBe("pay-3");
     expect(freshMark("akt", 3)).toBe("akt-3");
+    // ХАРИЛЦАГЧИЙН хуудасны шинэ мөрүүд ч өөрийн угтвартай
+    expect(freshMark("entry", 3)).toBe("entry-3");
+    expect(freshMark("note", 3)).toBe("note-3");
+    expect(freshMark("contact", 3)).toBe("contact-3");
   });
 
   it("дугааргүй бол тэмдэг ч байхгүй — хий тодруулга хийхгүй", () => {
     expect(freshMark("mv", undefined)).toBeUndefined();
     expect(freshMark("pay", null)).toBeUndefined();
+  });
+});
+
+/* ХАРИЛЦАГЧИЙН ХУУДАС — гэрээний хуудастай НЭГ хэл. Урьд нь энэ хуудсан
+   дээр зурвас ОГТ байгаагүй: `PayModal` нь `payOutcome(...)`-оо дамжуулдаг
+   байсныг хуудас нь чимээгүй хаядаг байв. */
+describe("харилцагчийн хуудасны өгүүлбэрүүд", () => {
+  it("бичилт нь юуны төлөө, хэдээр, авлага хаашаа гэдгээ хэлнэ", () => {
+    const o = entryOutcome({ kindLabel: "Олгосон зээл",
+                             label: "2025 онд бэлэн мөнгө зээлсэн",
+                             signed: 164_492_000,
+                             before: 335_333_564, after: 499_825_564, entryId: 7 });
+    expect(o.text).toBe("Бичилт хийгдлээ — Олгосон зээл · 2025 онд бэлэн мөнгө "
+                        + "зээлсэн · +164,492,000₮ · авлага 335,333,564₮ → 499,825,564₮");
+    expect(o.mark).toBe("entry-7");
+  });
+
+  it("кредит бичилт хасах тэмдгээрээ гарна", () => {
+    expect(entryOutcome({ kindLabel: "Залруулга", label: "хоёр удаа бичсэн",
+                          signed: -500_000, before: 1_000_000, after: 500_000 }).text)
+      .toContain("−500,000₮");
+  });
+
+  it("тоо хөдлөөгүй бол «авлага X → X» гэсэн хий мөр гарахгүй", () => {
+    expect(receivableShift(500_000, 500_000)).toBe("");
+    expect(receivableShift(500_000, 0)).toBe("авлага 500,000₮ → 0₮");
+  });
+
+  it("цуцлалт нь ЮУ сулрахыг тоогоор хэлнэ", () => {
+    expect(voidPayOutcome({ amount: 5_000_000, date: "2026-09-05",
+                            released: 5_000_000, reason: "дүнг буруу бичсэн" }).text)
+      .toBe("Төлбөр хүчингүй болов — 5,000,000₮ · 2026-09-05 · "
+            + "5,000,000₮ нэхэмжлэлээс сулрав · дүнг буруу бичсэн");
+    expect(voidEntryOutcome({ label: "кран", signed: 10_000_000,
+                              before: 20_000_000, after: 10_000_000,
+                              reason: "хоёр удаа бичсэн" }).text)
+      .toBe("Бичилт хүчингүй болов — кран · 10,000,000₮ · "
+            + "авлага 20,000,000₮ → 10,000,000₮ · хоёр удаа бичсэн");
+  });
+
+  it("гарын үсэгтний дөрвөн үйлдэл дөрвөн өөр өгүүлбэр", () => {
+    const who = { name: "Н.Соль", role: "Нярав", phone: "99966285", contactId: 2 };
+    expect(contactOutcome("add", who).text)
+      .toBe("Холбоо барих хүн нэмэгдлээ — Н.Соль · Нярав · 99966285");
+    expect(contactOutcome("off", who).text).toContain("идэвхгүй болов");
+    expect(contactOutcome("on", who).text).toContain("идэвхжлээ");
+    expect(contactOutcome("edit", who).mark).toBe("contact-2");
+    // Албан тушаал, утасгүй хүн дээр тусгаарлагч дангаараа үлдэхгүй
+    expect(contactOutcome("add", { name: "Б.Дорж" }).text)
+      .toBe("Холбоо барих хүн нэмэгдлээ — Б.Дорж");
+  });
+
+  it("файл, талбарын засвар нь НЭРЭЭРЭЭ", () => {
+    expect(fileOutcome("geree-2024.pdf").text)
+      .toBe("Файл хавсаргагдлаа — geree-2024.pdf");
+    expect(fieldOutcome("Компанийн нэр", "Бутангууд ХХК").text)
+      .toBe("Компанийн нэр засагдлаа — Бутангууд ХХК");
+    expect(fieldOutcome("Утас", "  ").text).toBe("Утас засагдлаа — хоосон болов");
+  });
+
+  it("амлалт нь ХЭЗЭЭ, юу ярьсан, юу амласныг гурвууланг хэлнэ", () => {
+    const o = promiseOutcome({ date: "2026-09-05", kindLabel: "Утсаар",
+                               note: "Даваа гарагт 5 сая шилжүүлнэ",
+                               promiseDate: "2026-09-08", promiseAmount: 5_000_000,
+                               noteId: 11 });
+    expect(o.text).toBe("Амлалт бичигдлээ — 2026-09-05 · Утсаар · Даваа гарагт "
+                        + "5 сая шилжүүлнэ · амлалт 2026-09-08 · 5,000,000₮");
+    expect(o.mark).toBe("note-11");
+  });
+
+  it("захын тэмдэглэл — огноо, үг, шар туг", () => {
+    expect(noteOutcome("add", { date: "2026-09-05", text: "нөат шивсэн",
+                                flag: true }).text)
+      .toBe("Тэмдэглэл бичигдлээ — 2026-09-05 · нөат шивсэн · анхаарах ⚑");
+    expect(noteOutcome("add", { date: "2026-09-05", text: "модонд" }).text)
+      .toBe("Тэмдэглэл бичигдлээ — 2026-09-05 · модонд");
+    expect(noteOutcome("void", { date: "2026-09-05", text: "модонд",
+                                 reason: "буруу гэрээнд бичсэн" }).text)
+      .toBe("Тэмдэглэл хүчингүй болов — 2026-09-05 · модонд · буруу гэрээнд бичсэн");
+  });
+
+  it("амлалтгүй дуудлага дээр «амлалт» гэсэн хий мөр гарахгүй", () => {
+    expect(promiseOutcome({ date: "2026-09-05", kindLabel: "Утсаар",
+                            note: "утас авсангүй" }).text)
+      .toBe("Амлалт бичигдлээ — 2026-09-05 · Утсаар · утас авсангүй");
   });
 });

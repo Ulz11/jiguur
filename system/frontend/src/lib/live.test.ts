@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Poller } from "./live";
+import { Poller, dialogOpen } from "./live";
 
 // Тайлангууд өөрсдөө шинэчлэгдэнэ (X3). Poller нь ХЭЗЭЭ дахин татахыг шийддэг
 // цэвэр логик: интервал бүрэн өнгөрсөн үед, эсвэл цонх руу буцаж ирэхэд —
@@ -49,5 +49,14 @@ describe("Poller", () => {
     p.markFetched(10_000);
     expect(p.shouldFetch("focus", 10_500, false)).toBe(false);
     expect(p.shouldFetch("focus", 11_000, false)).toBe(true);
+  });
+});
+
+/* ЦОНХ НЭЭЛТТЭЙ БАЙХАД чимээгүй шинэчлэлт ХИЙХГҮЙ. Хуудас өөрийн
+   цонхнуудаа мэддэг ч ХҮҮХЭД бүрэлдэхүүнийхийг (холбоо барих хүн нэмэх,
+   тэмдэглэл) мэдэхгүй — `role="dialog"` нь бүгдийн нийтлэг тэмдэг. */
+describe("dialogOpen", () => {
+  it("DOM байхгүй орчинд УНАХГҮЙ, зүгээр л худал", () => {
+    expect(dialogOpen()).toBe(false);
   });
 });

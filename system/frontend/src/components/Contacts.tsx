@@ -2,7 +2,8 @@ import { useId, useState } from "react";
 import { api } from "../api";
 import { ConfirmModal, FormModal, InlineEdit, SubmitButton, useToast } from "../ui";
 import { formDirty } from "../lib/dirty";
-import { contactRolePill, telHref, type Contact } from "../lib/contact";
+import { contactNote, contactRolePill, telHref, type Contact } from "../lib/contact";
+import { contactOutcome, type Outcome } from "../lib/outcome";
 
 /* ХОЛБОО БАРИХ — харилцагчийн гарын үсэгтнүүд (№72, 73).
  *
@@ -20,14 +21,19 @@ import { contactRolePill, telHref, type Contact } from "../lib/contact";
  * (`lib/contact.ts`). Отгоо дугаар хуулж бичихээ болино.
  */
 
-export function ContactsCard({ clientId, contacts, canWrite, onChanged }: {
+export function ContactsCard({ clientId, contacts, canWrite, onChanged, freshMark }: {
   clientId: number;
   contacts: Contact[] | null | undefined;
   canWrite: boolean;
-  onChanged: () => void;
+  /** Хийгдсэн зүйлээ ЗУРВАС болгож дамжуулна (`lib/outcome.ts`) — хуудас
+   *  түүнийг толгойн доор үлдээнэ. */
+  onChanged: (o?: Outcome) => void;
+  /** Дөнгөж хөндөгдсөн мөрийн түлхүүр («contact-2») — нүдэнд өөрөө оочихно. */
+  freshMark?: string | null;
 }) {
   const [adding, setAdding] = useState(false);
   const [off, setOff] = useState<Contact | null>(null);
+  const [on, setOn] = useState<Contact | null>(null);
   const toast = useToast();
   const rows = contacts || [];
   const live = rows.filter((c) => c.active !== false);
@@ -36,15 +42,19 @@ export function ContactsCard({ clientId, contacts, canWrite, onChanged }: {
      БҮТЭН мөр явна — эс бөгөөс PUT нь бөглөөгүй талбаруудыг цэвэрлэнэ. */
   async function saveField(c: Contact, patch: Partial<Contact>) {
     try {
-      await api(`/api/contacts/${c.id}`, { method: "PUT", body: JSON.stringify({
-        name: c.name, role: c.role || "", phone: c.phone || "",
-        phone2: c.phone2 || "", note: c.note || "", ...patch }) });
+      const next = { name: c.name, role: c.role || "", phone: c.phone || "",
+                     phone2: c.phone2 || "", note: c.note || "", ...patch };
+      await api(`/api/contacts/${c.id}`, { method: "PUT", body: JSON.stringify(next) });
       toast("Хадгалагдлаа");
-      onChanged();
+      onChanged(contactOutcome("edit", { name: next.name, role: next.role,
+                                         phone: next.phone, contactId: c.id }));
     } catch (e: any) { toast(e.message, "err"); throw e; }
   }
 
-  const th = "th !text-[11px] !py-1.5 !px-2.5";
+  /* Толгойн үсэг 11px байв — Отгоо эгчийн 1366×768 дэлгэц дээр «Албан тушаал»
+     гэсэн үг уншигдахаа больж, багана нь нэргүй мэт харагдана. §4-ийн доод
+     шат нь 12.5px (мөрийн бичигтэй ижил). */
+  const th = "th !text-[12.5px] !py-1.5 !px-2.5";
   const td = "td !text-[12.5px] !py-2 !px-2.5 align-top";
 
   return (
@@ -72,20 +82,24 @@ export function ContactsCard({ clientId, contacts, canWrite, onChanged }: {
               {rows.map((c) => {
                 const gone = c.active === false;
                 return (
-                  <tr key={c.id} className={gone ? "opacity-60" : undefined}>
+                  <tr key={c.id} className={[gone ? "opacity-60" : "",
+                    freshMark === `contact-${c.id}` ? "row-fresh" : ""]
+                    .filter(Boolean).join(" ") || undefined}>
                     <td className={td}>
                       {canWrite && !gone ? (
                         <InlineEdit label={`${c.name} — нэр`} value={c.name} width="w-36"
                           confirmText="Хадгалах уу?"
                           onSave={(v) => saveField(c, { name: v })} />
                       ) : <b className="text-ink">{c.name}</b>}
-                      {/* `note` ЗУРАГДАХГҮЙ. Шилжүүлэг тэр талбарт Excel-ийн
-                          НҮДНИЙ ХАЯГ хадгалсан байв («БЛҮҮМ-2!O39») — Отгоо
-                          эгч нэрийнхээ доор ийм юм харах ёсгүй: энэ бол
-                          системийн дотоод тэмдэглэгээ, түүний мэдээлэл БИШ.
-                          Талбар нь өгөгдөл дээрээ үлдэнэ (устгал байхгүй),
-                          зөвхөн ХАРАГДАХАА болино — шилжүүлэг ч бичихээ
-                          болино. */}
+                      {/* ХҮНИЙ бичсэн тэмдэглэл нэрийнхээ доор гарна («тооцоо
+                          нийлдэг», «амралттай»). Шилжүүлэг энэ талбарт
+                          Excel-ийн НҮДНИЙ ХАЯГ хадгалсан байв («БЛҮҮМ-2!O39») —
+                          тэр нь системийн дотоод тэмдэглэгээ, түүний мэдээлэл
+                          БИШ тул НУУГДАНА (`lib/contact.contactNote`).
+                          Өгөгдөл нь бүтнээрээ үлдэнэ (устгал байхгүй). */}
+                      {contactNote(c.note) && (
+                        <span className="block text-[12px] text-t3">{contactNote(c.note)}</span>
+                      )}
                     </td>
                     <td className={td}>
                       {/* Албан тушаал нь ЧИМЭГ БИШ: тооцоо нийлдэг хүнийг
@@ -113,11 +127,22 @@ export function ContactsCard({ clientId, contacts, canWrite, onChanged }: {
                              onSave={(v) => saveField(c, { phone2: v })} />
                     </td>
                     {canWrite && (
+                      /* ҮЙЛДЭЛ НЬ ҮЙЛ ҮГЭЭР (UI-ЗАРЧИМ §3). Урьд нь мөрийн
+                         төгсгөлд «Идэвхгүй» гэсэн ГАНЦ үг зогсдог байсан —
+                         тэр нь ТӨЛӨВИЙН шошготой (мөн «Идэвхгүй») яг ижил үг:
+                         аль нь мэдээлэл, аль нь товч болох нь ялгарахгүй.
+                         Одоо товч нь юу хийхээ бүтнээрээ хэлнэ, идэвхгүй мөр
+                         нь буцаж ирэх ХААЛГАТАЙ болов. */
                       <td className={`${td} text-right`}>
-                        {!gone && (
+                        {gone ? (
+                          <button type="button" className="btn-row text-brand-ink"
+                                  onClick={() => setOn(c)}>
+                            Идэвхжүүлэх<span className="sr-only"> — {c.name}</span>
+                          </button>
+                        ) : (
                           <button type="button" className="btn-row text-t2"
                                   onClick={() => setOff(c)}>
-                            Идэвхгүй<span className="sr-only"> болгох — {c.name}</span>
+                            Идэвхгүй болгох<span className="sr-only"> — {c.name}</span>
                           </button>
                         )}
                       </td>
@@ -136,9 +161,11 @@ export function ContactsCard({ clientId, contacts, canWrite, onChanged }: {
       )}
 
       {adding && <AddContactModal clientId={clientId} onClose={() => setAdding(false)}
-                                  onDone={() => { setAdding(false); onChanged(); }} />}
+                                  onDone={(o) => { setAdding(false); onChanged(o); }} />}
       {off && <DeactivateModal c={off} onClose={() => setOff(null)}
-                               onDone={() => { setOff(null); onChanged(); }} />}
+                               onDone={(o) => { setOff(null); onChanged(o); }} />}
+      {on && <ReactivateModal clientId={clientId} c={on} onClose={() => setOn(null)}
+                              onDone={(o) => { setOn(null); onChanged(o); }} />}
     </div>
   );
 }
@@ -153,8 +180,10 @@ function Phone({ value, label, canWrite, second, onSave }: {
   return (
     <span className={second ? "block mt-0.5" : "block"}>
       {value ? (
+        /* Дарагддаг дугаар нь 36px өндөртэй (`tap-link`) — 13px бичиг нь
+           18px зогсоол өгдөг байсан тул Отгоо гурав дарж байж ононо. */
         <a href={telHref(value)} title={`${value} руу залгах`}
-           className="text-t2 font-semibold tabular-nums hover:text-brand-ink hover:underline">
+           className="tap-link text-t2 font-semibold tabular-nums hover:text-brand-ink hover:underline">
           ☎ {value}
         </a>
       ) : null}
@@ -170,7 +199,7 @@ function Phone({ value, label, canWrite, second, onSave }: {
 
 /* ---------- «+ Хүн нэмэх» ---------- */
 function AddContactModal({ clientId, onClose, onDone }: {
-  clientId: number; onClose: () => void; onDone: () => void;
+  clientId: number; onClose: () => void; onDone: (o?: Outcome) => void;
 }) {
   const f0 = { name: "", role: "", phone: "", phone2: "", note: "" };
   const [f, setF] = useState(f0);
@@ -217,10 +246,11 @@ function AddContactModal({ clientId, onClose, onDone }: {
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <SubmitButton disabled={!f.name.trim()} onSubmit={async () => {
           try {
-            await api(`/api/clients/${clientId}/contacts`, {
+            const r = await api(`/api/clients/${clientId}/contacts`, {
               method: "POST", body: JSON.stringify(f) });
             toast("Хүн нэмэгдлээ");
-            onDone();
+            onDone(contactOutcome("add", { name: f.name, role: f.role,
+                                           phone: f.phone, contactId: r?.id }));
           } catch (e: any) { toast(e.message, "err"); }
         }}>Хадгалах</SubmitButton>
       </div>
@@ -230,7 +260,7 @@ function AddContactModal({ clientId, onClose, onDone }: {
 
 /* ---------- Идэвхгүй болгох (устгал БАЙХГҮЙ) ---------- */
 function DeactivateModal({ c, onClose, onDone }: {
-  c: Contact; onClose: () => void; onDone: () => void;
+  c: Contact; onClose: () => void; onDone: (o?: Outcome) => void;
 }) {
   const toast = useToast();
   return (
@@ -249,7 +279,44 @@ function DeactivateModal({ c, onClose, onDone }: {
         try {
           await api(`/api/contacts/${c.id}/deactivate`, { method: "POST" });
           toast("Идэвхгүй боллоо");
-          onDone();
+          onDone(contactOutcome("off", { name: c.name, role: c.role,
+                                         phone: c.phone, contactId: c.id }));
+        } catch (e: any) { toast(e.message, "err"); }
+      }} />
+  );
+}
+
+/* ---------- Идэвхжүүлэх (буцаж ирсэн хүн) ----------
+ *
+ * Хүн ажлаасаа гарч, дараа нь буцаж ирдэг; андуурч идэвхгүй болгосон ч байж
+ * болно. Хаалга нь БАЙГААГҮЙ тул Отгоо эгч ганц гарцтай байв: ШИНЭ мөр нэмэх.
+ * Тэгвэл нэг «Н.Соль» хоёр болж, аль нь одоогийнх болохыг мэдэх аргагүй.
+ * Мөнгө хөдлөхгүй тул `danger` АВАХГҮЙ — улаан бол «хэтэрсэн · акт · устгах»-
+ * ын өнгө (UI-ЗАРЧИМ §4).
+ */
+function ReactivateModal({ clientId, c, onClose, onDone }: {
+  clientId: number; c: Contact; onClose: () => void; onDone: (o?: Outcome) => void;
+}) {
+  const toast = useToast();
+  return (
+    <ConfirmModal
+      title="Идэвхжүүлэх"
+      intro={<>
+        <b className="text-ink">{c.name}</b>{c.role ? ` · ${c.role}` : ""} — энэ хүн
+        залгах жагсаалтад буцаж орно. Шинэ мөр ҮҮСЭХГҮЙ: түүний хуучин
+        дугаар, албан тушаал хэвээрээ.
+      </>}
+      rows={[{ label: c.name, sub: c.role || undefined,
+               value: c.phone || "—", accent: "dim" as const }]}
+      confirmLabel="Идэвхжүүлэх"
+      onClose={onClose}
+      onConfirm={async () => {
+        try {
+          await api(`/api/clients/${clientId}/contacts/${c.id}/reactivate`,
+                    { method: "POST" });
+          toast("Идэвхтэй боллоо");
+          onDone(contactOutcome("on", { name: c.name, role: c.role,
+                                        phone: c.phone, contactId: c.id }));
         } catch (e: any) { toast(e.message, "err"); }
       }} />
   );

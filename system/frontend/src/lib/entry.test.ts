@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   ENTRY_KINDS, entryAmountText, entryError, entryKindLabel, entryKindPill,
-  entryModeLabel, entrySign, entrySubText, receivableAfter, signedAmount,
+  entryModeLabel, entryNoteText, entrySign, entrySubText, isMigrationNote,
+  receivableAfter, signedAmount,
 } from "./entry";
 
 const money = (v: number) => `${Math.round(v).toLocaleString("en-US")}₮`;
@@ -26,9 +27,16 @@ describe("Дебит / Кредит сонголт", () => {
     expect(signedAmount("credit", -500_000)).toBe(-500_000);
   });
 
-  it("сонголт бүр авлага ХААШАА хөдлөхийг ӨГҮҮЛБЭРЭЭР хэлнэ", () => {
-    expect(entryModeLabel("debit")).toBe("Дебит — авлага нэмэгдэнэ");
-    expect(entryModeLabel("credit")).toBe("Кредит — авлага буурна");
+  /* ӨРГӨТГӨВ (2026-09): «Дебит»/«Кредит» гэсэн нягтлангийн хос үг УНАВ.
+     Хоёулаа «Д»-ээр эхэлж, зөвхөн хоёр дахь үгээрээ ялгарах нь нэг агшин
+     хараад БУРУУ товч дарах эрсдэл. Тэмдэг нь эхэндээ, ХЭН хийх нь араас нь. */
+  it("сонголт бүр авлага ХААШАА хөдлөх ба ХЭН хийхийг хэлнэ", () => {
+    expect(entryModeLabel("debit")).toBe("+ Авлага нэмэгдэнэ (тэр төлнө)");
+    expect(entryModeLabel("credit")).toBe("− Авлага буурна (бид хасна)");
+  });
+
+  it("хоёр сонголт эхний тэмдгээрээ ялгарна (нэг агшин хараад таних)", () => {
+    expect(entryModeLabel("debit")[0]).not.toBe(entryModeLabel("credit")[0]);
   });
 
   it("хоосон/утгагүй оролт 0 болно — NaN дэлгэц рүү гарахгүй", () => {
@@ -82,13 +90,28 @@ describe("маягтын алдаа", () => {
   });
 });
 
+/* ЧАНГАРУУЛАВ (2026-09): `ref` нь ЭХ СУРВАЛЖ — Excel-ийн нүдний хаяг
+   («2026 тооцоо!R24 · Бутан-Өнөорд»). Түүнийг шошгын доор 12px-ээр бичих
+   нь Отгоо эгчийн дэлгэц дээр МАШИНЫ хэл гаргаж, жинхэнэ тэмдэглэл байх
+   мөрийг эзэлж байв. Өгөгдөл нь хэвээр, ХАРАГДАХАА л болив. */
 describe("мөрийн хоёрдогч мөр", () => {
-  it("баримтын №, эх сурвалж, тэмдэглэл нэг өгүүлбэр болно", () => {
+  it("баримтын № ба ЖИНХЭНЭ тэмдэглэл гарна — эх сурвалж ГАРАХГҮЙ", () => {
     expect(entrySubText({ invoice_no: "A-4-1", ref: "Бутан-Өнөорд!G23", note: "актаар" }))
-      .toBe("№A-4-1 · Бутан-Өнөорд!G23 · актаар");
+      .toBe("№A-4-1 · актаар");
+  });
+  it("шилжүүлэгчийн ӨӨРИЙНХ нь тэмдэг мөр болж гарахгүй", () => {
+    expect(entrySubText({ invoice_no: "A-4-1", ref: "2026 тооцоо!R24 · Бутан-Өнөорд",
+                          note: "Шилжүүлэлт — хуучин системээс" })).toBe("№A-4-1");
+    expect(isMigrationNote("Шилжүүлэлт — хуучин системээс")).toBe(true);
+    expect(isMigrationNote("хуучин системээс — WB3!R24")).toBe(true);
+    expect(isMigrationNote("Өнө Ордоос ирсэн акт")).toBe(false);
+    expect(isMigrationNote("")).toBe(false);
+    expect(entryNoteText("Шилжүүлэлт — хуучин системээс")).toBe("");
+    expect(entryNoteText("  Өнө Ордоос ирсэн акт  ")).toBe("Өнө Ордоос ирсэн акт");
   });
   it("хоосон хэсэг нь тусгаарлагчаа авч явахгүй", () => {
     expect(entrySubText({ invoice_no: null, ref: "", note: "" })).toBe("");
-    expect(entrySubText({ invoice_no: null, ref: "акт №7", note: "" })).toBe("акт №7");
+    expect(entrySubText({ invoice_no: null, ref: "акт №7", note: "" })).toBe("");
+    expect(entrySubText({ invoice_no: null, ref: "", note: "актаар" })).toBe("актаар");
   });
 });

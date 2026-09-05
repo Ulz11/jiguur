@@ -7,6 +7,8 @@ import {
   eventsOn,
   addMonth,
   dayCellLabel,
+  eventsKey,
+  seedMonth,
   type TLEvent,
 } from "./calendar";
 
@@ -34,6 +36,53 @@ describe("monthsWithEvents / latestMonth", () => {
   it("хоосон оролт дээр latestMonth null буцаана", () => {
     expect(latestMonth([])).toBeNull();
     expect(monthsWithEvents([])).toEqual([]);
+  });
+});
+
+/* ХУАНЛИ ӨНӨӨДРӨӨС ЭХЭЛНЭ — түүхийн архиваас БИШ.
+   Бутангуудын сүүлчийн явдал 6-р сард; 9-р сарын 5-нд бүртгэсэн төлбөр нь
+   6-р сарын тор дээр ХЭЗЭЭ Ч гарахгүй. */
+describe("seedMonth — хуанли нээгдэх сар", () => {
+  it("өнөөдрийн сарыг сонгоно (сүүлчийн эвенттэй сарыг БИШ)", () => {
+    expect(seedMonth("2026-09-05")).toEqual({ year: 2026, month: 9 });
+  });
+
+  it("эвент огт байхгүй ч өнөөдрийн сар нээгдэнэ", () => {
+    const events: TLEvent[] = [];
+    expect(latestMonth(events)).toBeNull();
+    expect(seedMonth("2026-01-31")).toEqual({ year: 2026, month: 1 });
+  });
+
+  it("гуравхан сарын өмнөх түүхтэй харилцагч ч өнөөдөр дээрээ нээгдэнэ", () => {
+    const events = [ev("2026-06-22"), ev("2026-06-01")];
+    expect(latestMonth(events)).toEqual({ year: 2026, month: 6 });
+    expect(seedMonth("2026-09-05")).toEqual({ year: 2026, month: 9 });
+  });
+});
+
+/* ГАРЫН ҮСЭГ: чимээгүй шинэчлэлт (60 сек) дэлгэцийг ТАТАХГҮЙ, шинэ явдал
+   ирсэн үед л хуанли өнөөдөр рүүгээ эргэнэ. */
+describe("eventsKey — эвент өөрчлөгдсөн үү", () => {
+  it("ЯГ ижил өгөгдөл дээр гарын үсэг хөдлөхгүй", () => {
+    const a = [ev("2026-09-01"), ev("2026-08-30")];
+    const b = [ev("2026-09-01"), ev("2026-08-30")];
+    expect(eventsKey(a)).toBe(eventsKey(b));
+  });
+
+  it("шинэ төлбөр нэмэгдэхэд гарын үсэг солигдоно", () => {
+    const before = [ev("2026-08-30")];
+    const after = [ev("2026-09-05"), ev("2026-08-30")];
+    expect(eventsKey(after)).not.toBe(eventsKey(before));
+  });
+
+  it("эрэмбэ солигдоход гарын үсэг хөдлөхгүй (өгөгдөл нь ижил)", () => {
+    expect(eventsKey([ev("2026-09-05"), ev("2026-08-30")]))
+      .toBe(eventsKey([ev("2026-08-30"), ev("2026-09-05")]));
+  });
+
+  it("огноогүй мөр тоологдохгүй", () => {
+    expect(eventsKey([ev("2026-09-05"), { ...ev("2026-09-05"), date: "" }]))
+      .toBe(eventsKey([ev("2026-09-05")]));
   });
 });
 

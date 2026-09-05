@@ -222,7 +222,7 @@ export function SubmitButton({ children, onSubmit, disabled, className = "btn-pr
    болох гэж буй зүйлээ navy Receipt дээр харуулаад л асууна. */
 export function ConfirmModal({ title, intro, rows, total, note, children, confirmDisabled,
                                confirmLabel, cancelLabel = "Болих",
-                               danger, onConfirm, onClose }: {
+                               danger, dirty, onConfirm, onClose }: {
   title: string;
   intro?: ReactNode;
   rows?: ReceiptRow[];
@@ -254,6 +254,12 @@ export function ConfirmModal({ title, intro, rows, total, note, children, confir
    *  `intro`/`note` дотор «буцаагдахгүй», «сэргэхгүй» гэсэн үг байвал энэ туг
    *  ЗААВАЛ. Мартвал доорх шалгалт хөгжүүлэлтийн үед дуугарна. */
   danger?: boolean;
+  /** `children` дотор БӨГЛӨСӨН зүйл байвал (цуцлалтын «шалтгаан») Escape,
+   *  гадна талын товшилт түүнийг чимээгүй устгахгүй — `FormModal`-тай ЯГ
+   *  ижил хамгаалалт. Отгоо эгч «дүнг буруу бичсэн, 2026-08-30-ны падангаас»
+   *  гэсэн өгүүлбэр бичээд Escape дарахад тэр өгүүлбэр алга болж, дахин
+   *  бичих ёстой болдог байв. */
+  dirty?: boolean;
   onConfirm: () => Promise<void> | void;
   onClose: () => void;
 }) {
@@ -274,7 +280,7 @@ export function ConfirmModal({ title, intro, rows, total, note, children, confir
     }
   }, [danger, title]);
   return (
-    <Modal title={title} onClose={onClose}
+    <Modal title={title} onClose={onClose} dirty={dirty}
            footer={
              <div className="flex justify-end gap-2.5">
                {/* Устгах/хаах төрлийн үйлдэлд Enter дарахад ЦУЦЛАХ нь сонгогдоно —

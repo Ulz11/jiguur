@@ -2202,7 +2202,7 @@ function Num({ label, val, danger, dim, sub }: {
  *  хэлнэ. Сервер PDF нийлүүлэхэд секундууд зарцуулагддаг: дохиогүй товч нь
  *  Отгоог дахин дарахад хүргэж, хоёр таб нээгддэг байв. Алдаа гарвал
  *  `usePdf` серверийн шалтгааныг мэдэгдэл болгож харуулна. */
-function PdfButton({ pdf, path, children, className = "btn-secondary", busyLabel = "…" }: {
+export function PdfButton({ pdf, path, children, className = "btn-secondary", busyLabel = "…" }: {
   pdf: ReturnType<typeof usePdf>;
   path: string;
   children: ReactNode;

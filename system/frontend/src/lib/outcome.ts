@@ -22,7 +22,7 @@ export type Outcome = { text: string; mark?: string };
 const tug = (n: number) => fmt(n) + "₮";
 
 /** Шинээр төрсөн мөрийн түлхүүр — хуудас түүнийг олж тодруулна. */
-export function freshMark(kind: "mv" | "pay" | "akt",
+export function freshMark(kind: "mv" | "pay" | "akt" | "entry" | "note" | "contact",
                           id: number | null | undefined): string | undefined {
   return id == null ? undefined : `${kind}-${id}`;
 }
@@ -108,4 +108,107 @@ export function shipmentOutcome(f: {
     text: line("Ачилт баталгаажлаа", [`${fmt(f.qty)}ш`, `${f.date}-наас тооцоонд орлоо`]),
     mark: freshMark("mv", f.movementId),
   };
+}
+
+/* ══════ ХАРИЛЦАГЧИЙН ХУУДАС ══════
+ *
+ * Гэрээний хуудсан дээр зурвас БАЙСАН, харилцагчийнх дээр БАЙГААГҮЙ: тэнд
+ * `PayModal` нь `payOutcome(...)`-оо дамжуулдаг байсныг хуудас нь чимээгүй
+ * ХАЯЖ (`onDone={() => { setPay(false); load(); }}`), Отгоо төлбөр бүртгээд
+ * толгойн доор ЮУ Ч олдоггүй байв. Хоёр дэлгэц НЭГ хэл ярих ёстой тул
+ * өгүүлбэрүүд нь ижил бүтэцтэй: ЮУ болов — хэн/хэдэн ₮ · ХЭЗЭЭ · тоо
+ * ХЭДЭЭС ХЭД болов.
+ */
+
+/** «авлага 335,333,564₮ → 499,825,564₮» — тоо хөдлөөгүй бол ХООСОН. */
+export function receivableShift(before: number, after: number): string {
+  if (Math.round(before) === Math.round(after)) return "";
+  return `авлага ${tug(before)} → ${tug(after)}`;
+}
+
+/** Түрээс БИШ бичилт — юуны төлөө, хэдээр, авлага хаашаа. */
+export function entryOutcome(f: {
+  kindLabel: string; label: string; signed: number;
+  before: number; after: number; entryId?: number | null;
+}): Outcome {
+  const amount = (f.signed < 0 ? "−" : "+") + tug(Math.abs(f.signed));
+  return {
+    text: line("Бичилт хийгдлээ",
+               [f.kindLabel, f.label.trim(), amount, receivableShift(f.before, f.after)]),
+    mark: freshMark("entry", f.entryId),
+  };
+}
+
+/** Бичилт ХҮЧИНГҮЙ — мөр нь үлдэнэ, тооцооноос л гарна. */
+export function voidEntryOutcome(f: {
+  label: string; signed: number; before: number; after: number; reason: string;
+}): Outcome {
+  return { text: line("Бичилт хүчингүй болов",
+                      [f.label.trim(), tug(Math.abs(f.signed)),
+                       receivableShift(f.before, f.after), f.reason.trim()]) };
+}
+
+/** Төлбөр ХҮЧИНГҮЙ — хэдэн төгрөг нэхэмжлэлээс сулрав. */
+export function voidPayOutcome(f: {
+  amount: number; date: string; released: number; reason: string;
+}): Outcome {
+  return { text: line("Төлбөр хүчингүй болов",
+                      [tug(f.amount), f.date,
+                       f.released > 0 && `${tug(f.released)} нэхэмжлэлээс сулрав`,
+                       f.reason.trim()]) };
+}
+
+/** Гарын үсэгтэн (№72, 73) — дөрвөн үйлдэл, нэг өгүүлбэрийн хэв. */
+export type ContactAction = "add" | "edit" | "off" | "on";
+const CONTACT_HEAD: Record<ContactAction, string> = {
+  add: "Холбоо барих хүн нэмэгдлээ",
+  edit: "Холбоо барих хүн засагдлаа",
+  off: "Холбоо барих хүн идэвхгүй болов",
+  on: "Холбоо барих хүн идэвхжлээ",
+};
+export function contactOutcome(action: ContactAction, f: {
+  name: string; role?: string; phone?: string; contactId?: number | null;
+}): Outcome {
+  return {
+    text: line(CONTACT_HEAD[action], [f.name.trim(), f.role?.trim(), f.phone?.trim()]),
+    mark: freshMark("contact", f.contactId),
+  };
+}
+
+/** Хавсралт — нэрээрээ (Отгоо ямар файл орсныг нүдээрээ тулгана). */
+export function fileOutcome(filename: string): Outcome {
+  return { text: line("Файл хавсаргагдлаа", [filename.trim()]) };
+}
+
+/** Амлалт · холбоо барьсан түүх — ХЭЗЭЭ, юу ярьсан, юу амласан. */
+export function promiseOutcome(f: {
+  date: string; kindLabel: string; note: string;
+  promiseDate?: string; promiseAmount?: number; noteId?: number | null;
+}): Outcome {
+  const promise = f.promiseDate || (f.promiseAmount || 0) > 0
+    ? `амлалт ${[f.promiseDate, (f.promiseAmount || 0) > 0 && tug(f.promiseAmount!)]
+        .filter(Boolean).join(" · ")}`
+    : "";
+  return {
+    text: line("Амлалт бичигдлээ", [f.date, f.kindLabel, f.note.trim(), promise]),
+    mark: freshMark("note", f.noteId),
+  };
+}
+
+/** ЗАХЫН ТЭМДЭГЛЭЛ (P1-22) — «модонд», «нөат шивсэн», ⚑ шар туг. */
+export function noteOutcome(action: "add" | "void", f: {
+  date: string; text: string; flag?: boolean; reason?: string;
+}): Outcome {
+  const head = action === "add" ? "Тэмдэглэл бичигдлээ" : "Тэмдэглэл хүчингүй болов";
+  return {
+    text: line(head, [f.date, f.text.trim(),
+                      action === "add" ? (f.flag ? "анхаарах ⚑" : "") : f.reason?.trim()]),
+  };
+}
+
+/** Дарж зассан талбар — ЮУГ ЮУ болгосныг хэлнэ («засагдлаа» гэдэг дангаараа
+ *  юу ч хэлэхгүй: Отгоо гурван талбар дараалж засаад аль нь суусныг мэдэхгүй). */
+export function fieldOutcome(label: string, value: string): Outcome {
+  const v = value.trim();
+  return { text: line(`${label} засагдлаа`, [v || "хоосон болов"]) };
 }

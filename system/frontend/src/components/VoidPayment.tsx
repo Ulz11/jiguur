@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { api, money } from "../api";
 import { ConfirmModal, useToast } from "../ui";
+import { voidPayOutcome, type Outcome } from "../lib/outcome";
 import { releaseRows, releasedTotal, type Allocation } from "../lib/void";
 
 /* Төлбөр ХҮЧИНГҮЙ болгох — гэрээний хуудас, харилцагчийн хуудас ХОЁУЛАА
@@ -16,7 +17,9 @@ export function VoidPaymentModal({ payment, onClose, onDone }: {
     barter_desc?: string; allocations?: Allocation[];
   };
   onClose: () => void;
-  onDone: () => void;
+  /** Хийгдсэн зүйлээ ЗУРВАС болгож дамжуулна (`lib/outcome.ts`) — дуудагч
+   *  тал түүнийг хуудсан дээрээ үлдээнэ. Хэрэглэхгүй ч болно. */
+  onDone: (o?: Outcome) => void;
 }) {
   const [reason, setReason] = useState("");
   const toast = useToast();
@@ -47,13 +50,18 @@ export function VoidPaymentModal({ payment, onClose, onDone }: {
       confirmLabel="Хүчингүй болгох"
       confirmDisabled={!reason.trim()}
       danger
+      /* Бичсэн шалтгаан нь ЭРГЭЖ САНАГДАХГҮЙ мэдээлэл: «2026-08-30-ны
+         паданг хоёр удаа бичсэн» гэсэн өгүүлбэрийг Escape чимээгүй
+         устгаж байв. */
+      dirty={!!reason.trim()}
       onClose={onClose}
       onConfirm={async () => {
         try {
           await api(`/api/payments/${payment.id}/void`, {
             method: "POST", body: JSON.stringify({ reason: reason.trim() }) });
           toast("Төлбөр хүчингүй болов");
-          onDone();
+          onDone(voidPayOutcome({ amount: payment.amount, date: payment.date,
+                                  released: freed, reason: reason.trim() }));
         } catch (e: any) { toast(e.message, "err"); }
       }}>
       {/* Шалтгаан нь ЗААВАЛ: цуцлалт бүр яагаад болсныг хожим уншиж чадах

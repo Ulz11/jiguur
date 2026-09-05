@@ -1,18 +1,30 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useId, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { api, money, sayaFmt, sayaFmtLike, user } from "../api";
-import { Spinner, FormModal, SubmitButton, useToast, Empty,
+import { Spinner, FormModal, Modal, SubmitButton, useToast, Empty,
          FinanceDisclosure, FinanceBlock } from "../ui";
 import { formDirty } from "../lib/dirty";
 import { useDownload } from "../lib/docs";
+import { dialogOpen, useLive } from "../lib/live";
+import { duplicateInfo, duplicateLinkText, type DuplicateInfo } from "../lib/clientAdmin";
 import { rowClickProps } from "../lib/rowClick";
 import { clientHref } from "../lib/links";
 import { UNCHARGED } from "../lib/penalty";
 import { receivableSplit, uninvoicedLine } from "../lib/receivable";
 
+/** Импортын хариу — нэрсээ авч явна (`routers/reports.import_clients`). */
+type ImportResult = { added_names?: string[]; skipped_names?: string[];
+                      created: number; skipped: number };
+
 export default function Clients() {
   const [rows, setRows] = useState<any[] | null>(null);
+  /* АЧААЛАЛТ УНАВАЛ ЭРГЭЛДЭГЧ ҮҮРД ЭРГЭНЭ гэсэн үг байсан: `load()` нь
+     `.catch`-гүй тул сүлжээ тасрахад «Ачаалж байна…» гэсэн мөр мөнхөд
+     зогсоно. Отгоо тэр дэлгэцийг харж суугаад «систем гацлаа» гэж дүгнэнэ
+     — дахин оролдох гарц ч байхгүй. */
+  const [err, setErr] = useState("");
   const [show, setShow] = useState(false);
+  const [imported, setImported] = useState<ImportResult | null>(null);
   const [q, setQ] = useState("");
   const nav = useNavigate();
   const toast = useToast();
@@ -23,9 +35,29 @@ export default function Clients() {
      «Санхүү» задаргаа дотор (эзэний шийдвэр: нууц биш, ЦЭГЦ). */
   const seesMoney = u?.role !== "factory";
 
-  const load = () => api("/api/clients").then(setRows);
-  useEffect(() => { load(); }, []);
-  if (!rows) return <Spinner />;
+  const load = (background = false) => api("/api/clients")
+    .then((r) => { setRows(r); setErr(""); })
+    .catch((e) => {
+      if (background) return;   // чимээгүй шинэчлэлт — хуучин тоо байрандаа
+      setErr(e.message);
+      toast(e.message, "err");
+    });
+  /* Жагсаалт АМЬД: төлбөр өөр компьютер дээр бүртгэгддэг тул авлагын тоо
+     хуудсыг дахин нээхгүйгээр шинэчлэгдэнэ. Цонх нээлттэй бол хүлээнэ. */
+  const busyForm = show || !!imported;
+  useLive((bg) => { if (bg && (busyForm || dialogOpen())) return; load(bg); }, []);
+
+  if (!rows) {
+    return err ? (
+      <div className="card p-6 text-center">
+        <p className="text-[14px] font-semibold text-danger mb-1">Жагсаалт ачаалагдсангүй</p>
+        <p className="text-[13px] text-t2 mb-4">{err}</p>
+        <button className="btn-primary" onClick={() => { setErr(""); load(); }}>
+          Дахин оролдох
+        </button>
+      </div>
+    ) : <Spinner />;
+  }
 
   async function importFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -34,7 +66,11 @@ export default function Clients() {
     fd.append("file", f);
     try {
       const r = await api("/api/import/clients", { method: "POST", body: fd });
-      toast(`Импорт: ${r.created} нэмэгдэв, ${r.skipped} давхардал алгасав`);
+      /* ҮР ДҮН НЬ ЦОНХОНД ЗОГСОНО. Урьд нь «Импорт: 12 нэмэгдэв, 3 давхардал
+         алгасав» гэсэн 3.2 секундын мэдэгдэл байв: Отгоо ХЭН алгасагдсаныг
+         мэдэхгүй тул файлаа Excel дээр нээж, 200 мөр дундуур нүдээрээ хайж
+         эхэлнэ (эсвэл шалгахаа больж, дутуу орсон нэрийг хожим олно). */
+      setImported(r as ImportResult);
       load();
     } catch (er: any) { toast(er.message, "err"); }
     e.target.value = "";
@@ -172,15 +208,83 @@ export default function Clients() {
         </FinanceDisclosure>
       )}
 
-      {show && <NewClientModal onClose={() => setShow(false)} onDone={() => { setShow(false); load(); }} />}
+      {/* ШИНЭ ХАРИЛЦАГЧ БҮРТГЭГДМЭГЦ ТҮҮНИЙ ХУУДАС РУУ ОРНО. Урьд нь
+          жагсаалт А–Я эрэмбээр дахин ачаалагдаж, шинэ мөр 200 нэрийн дунд
+          хаа нэгтээ суудаг байв: Отгоо түүнийг олохын тулд хайлт руу нэрээ
+          дахин бичнэ. Бүртгэсэн хүн дараа нь ГЭРЭЭ хийнэ — тэр ажил
+          профайл дээр эхэлдэг. */}
+      {show && <NewClientModal onClose={() => setShow(false)}
+                               onDone={(id) => { setShow(false); nav(clientHref(id)); }} />}
+      {imported && <ImportResultModal r={imported} onClose={() => setImported(null)} />}
     </div>
   );
 }
 
-function NewClientModal({ onClose, onDone }: any) {
+/* ---------- ИМПОРТЫН ҮР ДҮН ----------
+ *
+ * Хоёр тоо («12 нэмэгдэв, 3 алгасав») нь ХЭН алгасагдсаныг хэлдэггүй. Тэр
+ * гурав нь аль хэдийн байсан ЯГ тэр гурав уу, эсвэл нэрээ өөрөөр бичсэн
+ * гурав уу? Excel дээрээ 200 мөр дундуур нүдээрээ хайхаас өөр арга байхгүй
+ * байв. Одоо нэр бүр өөрөө зогсоно; цонх нь «Хаах» дартал явахгүй.
+ */
+function ImportResultModal({ r, onClose }: { r: ImportResult; onClose: () => void }) {
+  const added = r.added_names || [];
+  const skipped = r.skipped_names || [];
+  return (
+    <Modal title="Импортын үр дүн" onClose={onClose}
+           footer={<div className="flex justify-end">
+             <button className="btn-primary" onClick={onClose}>Хаах</button>
+           </div>}>
+      <div className="grid grid-cols-2 gap-5 max-sm:grid-cols-1">
+        <div>
+          <h3 className="text-[13px] font-bold text-money mb-2">
+            Нэмэгдсэн ({added.length})
+          </h3>
+          {added.length === 0
+            ? <p className="text-[13px] text-t3">Шинэ харилцагч нэмэгдсэнгүй.</p>
+            : <ul className="list-none p-0 m-0 space-y-1">
+                {added.map((n) => (
+                  <li key={n} className="text-[13px] text-ink border-b border-sunken py-1
+                                         last:border-0">{n}</li>))}
+              </ul>}
+        </div>
+        <div>
+          <h3 className="text-[13px] font-bold text-t2 mb-2">
+            Алгассан — аль хэдийн байсан ({skipped.length})
+          </h3>
+          {skipped.length === 0
+            ? <p className="text-[13px] text-t3">Давхардал гараагүй.</p>
+            : <ul className="list-none p-0 m-0 space-y-1">
+                {skipped.map((n) => (
+                  <li key={n} className="text-[13px] text-t2 border-b border-sunken py-1
+                                         last:border-0">{n}</li>))}
+              </ul>}
+        </div>
+      </div>
+      {/* Нэрс ирээгүй хуучин сервертэй ярьж байвал тоонууд нь хэвээр */}
+      {added.length === 0 && skipped.length === 0 && (r.created > 0 || r.skipped > 0) && (
+        <p className="text-[13px] text-t2 mt-4">
+          {r.created} нэмэгдэв, {r.skipped} давхардал алгасав.
+        </p>
+      )}
+    </Modal>
+  );
+}
+
+function NewClientModal({ onClose, onDone }: {
+  onClose: () => void;
+  /** Шинэ харилцагчийн дугаар — дуудагч тал ТҮҮНИЙ хуудас руу аваачна. */
+  onDone: (id: number) => void;
+}) {
   const toast = useToast();
   const f0 = { name: "", reg: "", person: "", phone: "", note: "" };
   const [f, setF] = useState(f0);
+  /* ДАВХАРДАЛ нь ЦОНХОН ДОТОР зогсоно. Сервер 409-д «Энэ нэртэй харилцагч
+     аль хэдийн бүртгэлтэй: Бутангууд (№4)» гэж хэлээд ХААНА байгааг нь ч
+     хэлдэг (`existing_id`) — тэр өгүүлбэр 3.2 секундын мэдэгдэл болж
+     өнгөрвөл Отгоо бөглөсөн цонхныхоо өмнө «яагаад болохгүй байна?» гэж
+     сууна, дараа нь тэр харилцагчийг гараар хайж эхэлнэ. */
+  const [dup, setDup] = useState<DuplicateInfo | null>(null);
   const uid = useId();
   return (
     <FormModal title="Шинэ харилцагч" onClose={onClose} dirty={formDirty(f0, f)}>
@@ -196,11 +300,29 @@ function NewClientModal({ onClose, onDone }: any) {
         <div className="col-span-2 max-sm:col-span-1"><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
           <input id={`${uid}-note`} className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
       </div>
+      {dup && (
+        <div className="mt-4 rounded-xl bg-danger-50 px-4 py-3" role="alert">
+          <p className="text-[13.5px] font-semibold text-danger">⚠ {dup.msg}</p>
+          {/* «Аль хэдийн бүртгэлтэй» гэдэг нь ХААНА байгааг хэлэхгүй бол
+              мухардмал хана — тэр хүн рүү очих гарц энд зогсоно. */}
+          <Link to={clientHref(dup.existingId)} onClick={onClose}
+                className="tap-link mt-1 text-[13px] font-bold text-brand-ink hover:underline">
+            {duplicateLinkText(dup)} →
+          </Link>
+        </div>
+      )}
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <SubmitButton disabled={!f.name.trim()} onSubmit={async () => {
-          try { await api("/api/clients", { method: "POST", body: JSON.stringify(f) }); toast("Харилцагч бүртгэгдлээ"); onDone(); }
-          catch (e: any) { toast(e.message, "err"); }
+          setDup(null);
+          try {
+            const r = await api("/api/clients", { method: "POST", body: JSON.stringify(f) });
+            toast("Харилцагч бүртгэгдлээ");
+            onDone(r.id);
+          } catch (e: any) {
+            const info = duplicateInfo(e);
+            if (info) setDup(info); else toast(e.message, "err");
+          }
         }}>Бүртгэх</SubmitButton>
       </div>
     </FormModal>

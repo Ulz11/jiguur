@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { preferredContact, isReconciler, contactRolePill, telHref,
-         type Contact } from "./contact";
+import { contactNote, preferredContact, isReconciler, isSheetRef, contactRolePill,
+         telHref, type Contact } from "./contact";
 
 /** Бутангууд-7!E79:H81 — ГУРВАН гарын үсэгтэн, хуудсан дээрх дарааллаараа. */
 const BUTAN: Contact[] = [
@@ -80,5 +80,23 @@ describe("telHref — дарахад залгадаг дугаар", () => {
 
   it("улсын код (+) үлдэнэ", () => {
     expect(telHref("+976 99966285")).toBe("tel:+97699966285");
+  });
+});
+
+/* Тэмдэглэл нь БИЧИГДЭЭД хэзээ ч гардаггүй байв — шилжүүлэг тэнд Excel-ийн
+   нүдний хаяг («БЛҮҮМ-2!O39») хадгалсан тул. Машины хаяг нуугдаж, хүний
+   бичсэн үг нэрийнхээ доор гарна. */
+describe("contactNote — нэрийн доорх мөр", () => {
+  it("Excel-ийн нүдний хаяг дэлгэц дээр гарахгүй", () => {
+    expect(isSheetRef("БЛҮҮМ-2!O39")).toBe(true);
+    expect(contactNote("БЛҮҮМ-2!O39")).toBe("");
+    expect(contactNote("Бутангууд-7!E79")).toBe("");
+  });
+
+  it("хүний бичсэн тэмдэглэл ҮЛДЭНЭ", () => {
+    expect(isSheetRef("тооцоо нийлдэг хүн")).toBe(false);
+    expect(contactNote("  тооцоо нийлдэг хүн ")).toBe("тооцоо нийлдэг хүн");
+    expect(contactNote("")).toBe("");
+    expect(contactNote(undefined)).toBe("");
   });
 });

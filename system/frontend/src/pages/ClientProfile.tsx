@@ -4,16 +4,24 @@ import { api, fmt, money, sayaFmt, sayaFmtLike, user } from "../api";
 import { Spinner, StatePill, TypePill, Empty, useToast, Prog, InlineEdit,
          FormModal, ConfirmModal, Receipt, SubmitButton,
          FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
-import { PayModal } from "./ContractDetail";
+import { PayModal, PdfButton } from "./ContractDetail";
 import { VoidButton, VoidPaymentModal } from "../components/VoidPayment";
 import { NotesStrip } from "../components/Notes";
 import { ContactsCard } from "../components/Contacts";
+import { PromiseNoteModal, PromisePanel } from "../components/PromiseNote";
 import { isVoided, voidRowClass, voidTitle } from "../lib/void";
 import { ClientEntry, ENTRY_KINDS, EntryKind, EntryMode, entryAmountText,
          entryError, entryKindLabel, entryKindPill, entryModeLabel,
          entrySubText, receivableAfter, signedAmount } from "../lib/entry";
-import { invoiceLabel } from "../lib/invoice";
-import { useDownload } from "../lib/docs";
+import { clientInvoiceLabel } from "../lib/invoice";
+import { useDownload, usePdf } from "../lib/docs";
+import { dialogOpen, useLive } from "../lib/live";
+import { Outcome, contactOutcome, entryOutcome, fieldOutcome, fileOutcome,
+         voidEntryOutcome, voidPayOutcome } from "../lib/outcome";
+import { clientState, creditLine, exactBelow, unallocatedCredit } from "../lib/credit";
+import { canDeleteClient } from "../lib/clientAdmin";
+import { STATEMENT_CHOICES, StatementChoice, statementError, statementRange,
+         statementRangeText, statementUrl } from "../lib/statement";
 import { rowClickProps } from "../lib/rowClick";
 import { contractHref } from "../lib/links";
 import { contractCount, contractNoLabel, contractTitle, isOpeningRow, openingUntil,
@@ -23,9 +31,14 @@ import { penaltySplit, UNCHARGED } from "../lib/penalty";
 import { uninvoicedLine } from "../lib/receivable";
 import { withoutMoney } from "../lib/timeline";
 import {
-  buildMonthGrid, latestMonth, latestDayInMonth, eventsOn, addMonth, dayCellLabel,
-  parseIso, isoOf, WEEKDAYS_MN, monthLabelMN, type TLEvent, type YearMonth,
+  buildMonthGrid, eventsKey, latestDayInMonth, eventsOn, addMonth, dayCellLabel,
+  parseIso, isoOf, seedMonth, WEEKDAYS_MN, monthLabelMN, type TLEvent, type YearMonth,
 } from "../lib/calendar";
+
+/* Шинээр төрсөн мөр ХЭД ХУГАЦААНД тодрох вэ — гэрээний хуудастай ИЖИЛ.
+   Отгоо цонх хаагаад нүдээрээ мөрөө хайдаг; 1.5 секундын анивчаа нь түүний
+   хувьд огт болоогүйтэй адил. */
+const FRESH_MS = 10_000;
 
 export default function ClientProfile() {
   const { id } = useParams();
@@ -36,14 +49,53 @@ export default function ClientProfile() {
   /* ТҮРЭЭС БИШ бичилт (H11): шинэ бичилтийн цонх ба цуцлах гэж буй мөр. */
   const [entryNew, setEntryNew] = useState(false);
   const [voidEntry, setVoidEntry] = useState<ClientEntry | null>(null);
+  /* Амлалт бичих цонх (Авлага цуглуулахтай ИЖИЛ), хуулгын хугацаа, устгал. */
+  const [promise, setPromise] = useState(false);
+  const [stmt, setStmt] = useState(false);
+  const [del, setDel] = useState(false);
+  /* ҮР ДҮНГИЙН ЗУРВАС (`lib/outcome.ts`) — мутаци бүрийн дараа ЮУ БОЛСНЫГ
+     тоонуудтай нь хуудсан дээр үлдээнэ. Гэрээний хуудсан дээр энэ БАЙСАН,
+     энд БАЙГААГҮЙ: `PayModal` нь `payOutcome(...)`-оо дамжуулдаг байсныг
+     хуудас нь чимээгүй хаядаг байв. Зурвас нь «Хаах» дартал зогсоно. */
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [fresh, setFresh] = useState<string | null>(null);
+  const freshTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (freshTimer.current) window.clearTimeout(freshTimer.current); }, []);
   const nav = useNavigate();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const dl = useDownload();
+  const pdf = usePdf();
   const u = user();
 
-  const load = () => api(`/api/clients/${id}`).then(setD).catch((e) => toast(e.message, "err"));
-  useEffect(() => { load(); }, [id]);
+  const load = (background = false) => api(`/api/clients/${id}`).then(setD)
+    .catch((e) => { if (!background) toast(e.message, "err"); });
+
+  /* ХУУДАС АМЬД (X3) — гэрээний хуудастай ижил журам. Ачилтыг ДАРГА өөр
+     компьютер дээр баталгаажуулдаг, төлбөрийг санхүүч бичдэг: Отгоо энэ
+     хуудсыг нээгээд суувал хуучин тоо ширтэнэ.
+     ⚠ ЦОНХ НЭЭЛТТЭЙ бол чимээгүй шинэчлэлт ХИЙХГҮЙ — бөглөж байгаа зүйлийнх
+     нь доогуур дата солигдвол бичсэн юм нь эргэлзээ болно. */
+  const busyForm = pay || entryNew || !!voidPay || !!voidEntry || promise || stmt || del;
+  useLive((bg) => { if (bg && (busyForm || dialogOpen())) return; load(bg); }, [id]);
+
+  /* ---------- ЗУРВАС ба ТОДРОЛ ----------
+     Мутаци бүр НЭГ замаар зарлагдана: юу болсныг тоонуудтай нь бичээд,
+     шинэ мөрөө нэрлэнэ. «Дараад юу ч болсонгүй» гэсэн мэдрэмж үлдэхгүй. */
+  function announce(o?: Outcome | null) {
+    if (!o) return;
+    setOutcome(o.text);
+    setFresh(o.mark ?? null);
+    if (freshTimer.current) window.clearTimeout(freshTimer.current);
+    if (o.mark) freshTimer.current = window.setTimeout(() => setFresh(null), FRESH_MS);
+  }
+  /** Цонх хаагдана → зурвас үлдэнэ → хуудас дахин уншина. */
+  const finish = (close: () => void, fallback?: string) => (o?: Outcome) => {
+    close();
+    announce(o ?? (fallback ? { text: fallback } : null));
+    load();
+  };
+
   if (!d) return <Spinner />;
   const upcoming = d.upcoming || [];
   const today = todayIso();
@@ -59,12 +111,15 @@ export default function ClientProfile() {
      чимээгүй залгидаг байв: Отгоо регистр/утсаа засаад ✓ дарахад дэлгэц дээр
      ЮУ Ч болохгүй, хуучин утга нь эргэж ирнэ. Одоо Loans/Salary/Machines/
      ContractDetail-ийн `doPatch`-тай ЯГ ижил зам — toast + throw. */
-  async function saveClient(patch: Record<string, string>) {
+  async function saveClient(label: string, patch: Record<string, string>) {
     try {
       await api(`/api/clients/${id}`, { method: "PUT", body: JSON.stringify({
         name: d.name, reg: d.reg || "", person: d.person || "", phone: d.phone || "",
         note: d.note || "", ...patch }) });
       toast("Хадгалагдлаа");
+      // Зурвас нь ЮУГ ЮУ болгосныг хэлнэ: Отгоо гурван талбар дараалж
+      // засаад аль нь суусныг toast-аас мэдэхгүй (сүүлийнх нь өмнөхийг дарна).
+      announce(fieldOutcome(label, Object.values(patch)[0] ?? ""));
       load();
     } catch (e: any) { toast(e.message, "err"); throw e; }
   }
@@ -94,9 +149,20 @@ export default function ClientProfile() {
     try {
       await api(`/api/files/client/${id}`, { method: "POST", body: fd });
       toast("Файл хавсаргагдлаа");
+      announce(fileOutcome(f.name));
       load();
     } catch (er: any) { toast(er.message, "err"); }
   }
+
+  /* ИЛҮҮ ТӨЛӨЛТ (`lib/credit.ts`) — хуваарилагдаагүй төлбөрийн нийлбэр.
+     Хурд групп 78,165,000₮ илүү төлсөн атал толгой нь «Авлага 0₮ · Хэвийн»
+     гэж зогсдог байв: тэр мөнгө зөвхөн «Төлбөр» табын нэг мөрөнд амьдарна. */
+  const credit = unallocatedCredit(d.payments);
+  const state = clientState(d.receivable, d.overdue, credit);
+  /* УСТГАЛ нь ЗӨВХӨН хоосон харилцагч дээр (сервер ч тэгнэ). Товч нь
+     наалдсан зүйлтэй харилцагч дээр ОГТ гарахгүй — дарж болдоггүй товч бол
+     хамгийн муу төрлийн эвдрэл. */
+  const canDelete = u?.role === "manager" && canDeleteClient(d);
 
   return (
     <div>
@@ -107,34 +173,44 @@ export default function ClientProfile() {
             {d.name.slice(0, 2)}
           </div>
           <div className="flex-1 min-w-[230px]">
+            {/* КОМПАНИЙН НЭР нь ХААНА Ч засагддаггүй байв — «Бутангуд» гэж
+                бичсэн үсгийн алдаа мөнхөд үлдэж, Отгоо хайхдаа олдоггүй.
+                Сервер (`PUT /api/clients/{id}`) нэрийг хүлээж авдаг байсан;
+                зөвхөн хаалга нь байхгүй байв. Хоёр алхамт (`InlineEdit`) —
+                нэр солих нь бүх дэлгэц, бүх баримт дээр гарна. */}
             <h1 className="text-[22px] font-extrabold text-ink tracking-tight flex items-center gap-2.5 flex-wrap">
-              {d.name}
-              {d.overdue ? <span className="pill-red">Хэтэрсэн өртэй</span> :
-               d.receivable > 0 ? <span className="pill-amber">Үлдэгдэлтэй</span> :
-               <span className="pill-green">Хэвийн</span>}
+              {u?.role === "manager"
+                ? <InlineEdit label="Компанийн нэр" value={d.name} width="w-72"
+                              confirmText="Нэрийг солих уу?"
+                              onSave={(v) => saveClient("Компанийн нэр", { name: v })} />
+                : d.name}
+              <span className={state.cls}>{state.label}</span>
             </h1>
             <div className="text-[13px] text-t2 mt-1.5 flex gap-x-4 gap-y-1.5 flex-wrap items-center">
               <span className="inline-flex items-center gap-1.5">Регистр:
                 <InlineEdit label="Регистр" value={d.reg} width="w-28" confirmText="Хадгалах уу?"
-                  onSave={(v) => saveClient({ reg: v })} /></span>
+                  onSave={(v) => saveClient("Регистр", { reg: v })} /></span>
               <span className="inline-flex items-center gap-1.5">Хариуцагч:
                 <InlineEdit label="Хариуцагч" value={d.person} width="w-36" confirmText="Хадгалах уу?"
-                  onSave={(v) => saveClient({ person: v })} /></span>
+                  onSave={(v) => saveClient("Хариуцагч", { person: v })} /></span>
               <span className="inline-flex items-center gap-1.5">Утас:
                 <InlineEdit label="Утас" value={d.phone} width="w-32" confirmText="Хадгалах уу?"
-                  onSave={(v) => saveClient({ phone: v })} /></span>
+                  onSave={(v) => saveClient("Утас", { phone: v })} /></span>
               {/* «Хамтран ажилласан» нь ХАРИЛЦААНЫ нас — системд бүртгүүлсэн
                   өдөр биш. Шилжүүлсэн харилцагч бүрд бүртгэлийн огноо нь
                   ачаалсан өдөр (2026-09-04) тул хоёр жилийн түнш «өнөөдөр
                   эхэлсэн» гэж харагддаг байв. Үнэн нь хамгийн хуучин
-                  гэрээний эхлэл (`lib/opening`). */}
-              <span>Хамтран ажилласан:{" "}
-                <b className="text-t1">{partnerSince(d.contracts, d.since)}-с</b></span>
+                  гэрээний эхлэл; ГЭРЭЭГҮЙ бол мөр нь ОГТ гарахгүй
+                  (`lib/opening.partnerSince`). */}
+              {partnerSince(d.contracts) && (
+                <span>Хамтран ажилласан:{" "}
+                  <b className="text-t1">{partnerSince(d.contracts)}-с</b></span>
+              )}
             </div>
             <div className="mt-2.5 text-[12.5px] text-t2 inline-flex items-center gap-2">💬
               <InlineEdit label="Тэмдэглэл" value={d.note} display={d.note || "тэмдэглэл нэмэх…"} width="w-80"
                 confirmText="Хадгалах уу?"
-                onSave={(v) => saveClient({ note: v })} />
+                onSave={(v) => saveClient("Тэмдэглэл", { note: v })} />
             </div>
           </div>
           {/* Дөрвөн үзүүлэлт нэг мөрөнд багтах ёстой тул гол тоо нь «сая»-гаараа
@@ -149,9 +225,14 @@ export default function ClientProfile() {
                 байхад «13,200₮» гэж бичвэл нэг үзүүлэлт дотор хоёр хэмжүүр
                 зэрэгцэнэ. «0.01 сая₮» гэдэг нь богино ч БҮРЭН үнэн; яг дүн нь
                 доорх бүтэн ₮ мөр ба hover дээр хэвээр. */}
+            {/* ИЛҮҮ ТӨЛӨЛТ нь тоон нүдэндээ, БҮТЭН төгрөгөөрөө зогсоно:
+                «Авлага 0₮» гэсэн толгойн доор «Илүү төлөлт (кредит):
+                78,165,000₮ — дараагийн нэхэмжлэлээс хасагдана». Тэр мөнгө
+                байгаа эсэхийг мэдэхийн тулд таб нээх шаардлагагүй боллоо. */}
             <Stat label="Авлага" val={sayaFmt(d.receivable) + "₮"} exact={money(d.receivable)}
                   danger={d.overdue}
-                  note={uninvoicedLine(d.receivable_uninvoiced, d.receivable) || undefined} />
+                  note={uninvoicedLine(d.receivable_uninvoiced, d.receivable) || undefined}
+                  extra={creditLine(credit, money) || undefined} />
             {/* АЛДАНГИ ХОЁР НҮҮРТЭЙ (R25 / H2): нэхэгдсэн нь ӨР (улаан),
                 нэхэгдээгүй нь зөвхөн ТООЦООЛОЛ — ≈ угтвартай, бүдэг, доор нь
                 «нэхэгдээгүй» гэж бичигдэнэ. Нэг тоо болгож нийлүүлбэл Отгоо
@@ -175,8 +256,36 @@ export default function ClientProfile() {
           </div>
         </div>
         {u?.role !== "factory" && (
-          <div className="mt-4 flex gap-2.5">
+          <div className="mt-4 flex gap-2.5 flex-wrap items-center">
             <button className="btn-secondary !min-h-10" onClick={() => setPay(true)}>Төлбөр бүртгэх</button>
+            {/* ТООЦООНЫ ХУУЛГА — тэр тооцоо нийлэхээр очихдоо ЦААС барьж
+                явдаг. Систем дотор тэр хуудас байсан ч гаргах товч байгаагүй
+                тул Excel рүүгээ буцдаг байв. */}
+            <button className="btn-secondary !min-h-10" onClick={() => setStmt(true)}>
+              Хуулга хэвлэх
+            </button>
+            {/* Наалдсан зүйлгүй бол л онгойно (сервер ч тэгнэ) — андуурч
+                бичсэн нэр жагсаалтыг мөнхөд бохирдуулах ёсгүй. */}
+            {canDelete && (
+              <button className="btn-ghost !min-h-10 !text-danger ml-auto"
+                      onClick={() => setDel(true)}>Харилцагч устгах</button>
+            )}
+          </div>
+        )}
+
+        {/* ═══ ҮР ДҮНГИЙН ЗУРВАС — ХИЙГДСЭН ЗҮЙЛ ДЭЛГЭЦЭН ДЭЭР ҮЛДЭНЭ ═══
+            Амжилтын мэдэгдэл 3.2 секундын дараа өөрөө арилдаг (`ui.tsx`) —
+            Отгоо тэр агшинд цаас руугаа харж, утсаа авч байна. Гэрээний
+            хуудсан дээрхтэй ЯГ ижил биет, ижил өгүүлбэрийн хэв. */}
+        {outcome && (
+          <div role="status"
+               className="mt-4 rounded-2xl border border-money bg-money-50 px-4 py-3
+                          flex items-start gap-3 flex-wrap">
+            <span aria-hidden="true" className="text-money font-bold leading-6">✓</span>
+            <span className="flex-1 min-w-[200px] text-[13.5px] font-semibold text-ink
+                             leading-6 tabular-nums break-words">{outcome}</span>
+            <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]"
+                    onClick={() => { setOutcome(null); setFresh(null); }}>Хаах</button>
           </div>
         )}
 
@@ -249,27 +358,48 @@ export default function ClientProfile() {
                 </div>
               )}
               <h2 className="font-bold text-[14.5px] mb-3.5">Нэхэмжлэлийн байдал</h2>
-              {d.invoices.slice(0, 6).map((inv: any) => (
+              {/* НЭР НЬ НЭХЭМЖЛЭЛИЙНХ, ГЭРЭЭНИЙХ БИШ (`lib/invoice`).
+                  Урьд нь мөр нь гэрээний дугаараар шийдэгддэг байсан тул
+                  ХУУЧИН ҮЛДЭГДЛИЙН зохиомол гэрээн дээр суусан гараар
+                  бичсэн бичилт бүр «Хуучин үлдэгдэл · 2026-09-01 хүртэл»
+                  гэж нэрлэгддэг байв: Бутангуудын «Өнө Ордтой тооцоо»
+                  139,648,000₮ ч мөн адил. */}
+              {d.invoices.slice(0, 6).map((inv: any) => {
+                const lb = clientInvoiceLabel(inv);
+                return (
                 <div key={inv.id} className="flex items-center justify-between gap-3 py-2.5 border-b border-sunken last:border-0">
-                  <div>
-                    <Link to={contractHref(inv.contract_id)}
-                          className="text-[13px] font-bold text-ink hover:underline">
-                      {contractNoLabel(inv.contract_no)}
-                    </Link>
-                    {/* Хуучин үлдэгдлийн «цикл» нь нэг өдөр — «· 2026-09-01»
-                        гэсэн мөр нь тэр өдөр ЭХЭЛСЭН гэж уншигдана. Үнэн нь
-                        тэр өдрөөр ТООЛСОН. */}
-                    <b className="text-[13px] text-ink">
-                      {" · "}{isOpeningRow({ no: inv.contract_no })
-                                ? openingUntil(inv.cycle_start) : inv.cycle_start}</b>
+                  <div className="min-w-0">
+                    <b className="text-[13px] text-ink">{lb.title}</b>
+                    {lb.sub && <span className="text-[13px] text-t2">{" · "}{lb.sub}</span>}
+                    {/* ЗОХИОМОЛ гэрээ мөр дээр ГАРАХГҮЙ. Хуучин үлдэгдэл ба
+                        гараар бичсэн бичилтүүд `OB-{id}` гэсэн ДАНСНЫ гэрээн
+                        дээр суудаг — Отгоо тийм гэрээнд гарын үсэг зурч
+                        байгаагүй. Түүнийг холбоос болгож зурвал «Хуучин
+                        үлдэгдэл» гэсэн үг нэг мөрөнд ХОЁР удаа зогсоно. */}
+                    {!isOpeningRow({ no: inv.contract_no }) && (
+                      <span className="block text-xs text-t3">
+                        {/* Гэрээ рүү очих холбоос — 36px хүрэх талбайтай */}
+                        <Link to={contractHref(inv.contract_id)}
+                              className="tap-link text-t2 hover:text-ink hover:underline">
+                          {contractTitle(inv.contract_no)}
+                        </Link>
+                      </span>
+                    )}
                     <span className="block text-xs text-t3 tabular-nums">{money(inv.total)}
                       {inv.penalty_due > 0 && <span className="text-danger"> + алданги {money(inv.penalty_due)}</span>}
                       {inv.penalty_unbooked > 0 && <span className="text-t3"> · ≈{money(inv.penalty_unbooked)} {UNCHARGED}</span>}</span>
                   </div>
                   <StatePill state={inv.status} />
                 </div>
-              ))}
+                );
+              })}
               {d.invoices.length === 0 && <Empty title="Нэхэмжлэл алга" />}
+
+              {/* АМЛАЛТ · ХОЛБОО БАРЬСАН ТҮҮХ — сервер илгээж байсныг хуудас
+                  ЗУРДАГГҮЙ байв. Тэр харилцагч руу залгахаасаа өмнө «энэ хүн
+                  юу гэж байсан билээ» гэдгээ энэ хуудсан дээрээс уншина. */}
+              <PromisePanel notes={d.notes} today={today} canWrite={seesMoney}
+                            freshMark={fresh} onAdd={() => setPromise(true)} />
             </div>
             )}
           </div>
@@ -313,20 +443,34 @@ export default function ClientProfile() {
 
         {tab === "invoices" && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px]">
+            <table className="w-full min-w-[860px]">
               <thead><tr><th className="th">Нэхэмжлэл</th><th className="th text-right">Дүн</th>
                 <th className="th text-right">Төлсөн</th><th className="th text-right">Үлдэгдэл</th>
-                <th className="th text-right">Нэхэгдсэн алданги</th><th className="th">Төлөв</th></tr></thead>
+                <th className="th text-right">Нэхэгдсэн алданги</th><th className="th">Төлөв</th>
+                <th className="th">Хэвлэх</th></tr></thead>
               <tbody>
-                {d.invoices.map((inv: any) => (
+                {d.invoices.map((inv: any) => {
+                  const lb = clientInvoiceLabel(inv);
+                  /* Хавсралт нь ЗӨВХӨН түрээст: худалдаа, хуучин үлдэгдэл,
+                     гараар бичсэн бичилтэд хоногийн цонх, материалын мөр
+                     байхгүй тул сервер 400 буцаана (дарахад юу ч болохгүй
+                     товч бол хамгийн муу төрлийн эвдрэл). */
+                  const rent = !!inv.cycle_start && !!inv.cycle_end
+                            && inv.cycle_start !== inv.cycle_end;
+                  return (
                   <tr key={inv.id}>
-                    {/* Гэрээний дэлгэрэнгүй ба төлбөрийн модалтой ИЖИЛ нэр */}
-                    <td className="td"><b className="text-ink">{invoiceLabel(inv).title}</b>
+                    <td className="td"><b className="text-ink">{lb.title}</b>
                       <span className="block text-xs text-t3">
-                        {invoiceLabel(inv).sub && <>{invoiceLabel(inv).sub} · </>}
-                        <Link to={contractHref(inv.contract_id)} className="text-t2 hover:underline">
-                          {contractTitle(inv.contract_no)}
-                        </Link>
+                        {lb.sub}
+                        {/* Дансны ЗОХИОМОЛ гэрээ мөр дээр гарахгүй (дээрх
+                            «Нэхэмжлэлийн байдал»-тай ижил дүрэм). */}
+                        {!isOpeningRow({ no: inv.contract_no }) && (
+                          <>{lb.sub && " · "}
+                            <Link to={contractHref(inv.contract_id)}
+                                  className="tap-link text-t2 hover:underline">
+                              {contractTitle(inv.contract_no)}
+                            </Link></>
+                        )}
                       </span></td>
                     <td className="td text-right tabular-nums">{money(inv.total)}</td>
                     <td className="td text-right tabular-nums">{money(inv.paid)}</td>
@@ -346,8 +490,23 @@ export default function ClientProfile() {
                           ≈{money(inv.penalty_unbooked)} {UNCHARGED}</span>)}
                     </td>
                     <td className="td"><StatePill state={inv.status} /></td>
+                    {/* ХЭВЛЭХ нь гэрээний хуудсан дээр байсан, ЭНД БАЙГААГҮЙ:
+                        Отгоо нэхэмжлэл хэвлэхийн тулд гэрээ рүү орох ёстой
+                        байв (аль гэрээ болохыг нь эхлээд олж). Ижил товч,
+                        ижил зам (`lib/docs.usePdf`). */}
+                    <td className="td">
+                      <div className="flex gap-1.5 flex-wrap">
+                        <PdfButton pdf={pdf} className="btn-ghost btn-row"
+                                   path={`/api/invoices/${inv.id}/pdf`}>Хэвлэх</PdfButton>
+                        {rent && (
+                          <PdfButton pdf={pdf} className="btn-ghost btn-row"
+                                     path={`/api/invoices/${inv.id}/appendix-pdf`}>Хавсралт</PdfButton>
+                        )}
+                      </div>
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             {d.invoices.length === 0 && <Empty title="Нэхэмжлэл алга" />}
@@ -366,7 +525,10 @@ export default function ClientProfile() {
                      тэмдэг, шалтгаантайгаа хамт үлдэнэ. Гэрээний хуудсан дээрх
                      дүрэмтэй ЯГ ижил (lib/void.ts) — нэг бичилт хоёр дэлгэц
                      дээр өөр харагдвал аль нь үнэн бэ гэж эргэлзэнэ. */
-                  <tr key={p.id} title={voidTitle(p)}>
+                  /* Дөнгөж бүртгэсэн төлбөр цөөн хормын турш тодорч, нүдэнд
+                     өөрөө оочихно (`row-fresh`, 10 секунд). */
+                  <tr key={p.id} title={voidTitle(p)}
+                      className={fresh === `pay-${p.id}` ? "row-fresh" : undefined}>
                     <td className={`td ${voidRowClass(p)}`}>{p.date}</td>
                     <td className={`td text-right tabular-nums font-bold text-ink ${voidRowClass(p)}`}>
                       {money(p.amount)}
@@ -437,7 +599,8 @@ export default function ClientProfile() {
                   {canVoid && <th className="th">Үйлдэл</th>}</tr></thead>
                 <tbody>
                   {(d.entries || []).map((e: ClientEntry) => (
-                    <tr key={e.id} title={voidTitle(e)}>
+                    <tr key={e.id} title={voidTitle(e)}
+                        className={fresh === `entry-${e.id}` ? "row-fresh" : undefined}>
                       <td className={`td ${voidRowClass(e)}`}>{e.date}</td>
                       <td className="td">
                         <span className={`${entryKindPill(e.kind)} ${voidRowClass(e)}`}>
@@ -548,7 +711,8 @@ export default function ClientProfile() {
           залгадаг гэдгийг энэ карт мэднэ. */}
       <div className="mt-4">
         <ContactsCard clientId={d.id} contacts={d.contacts} canWrite={seesMoney}
-                      onChanged={load} />
+                      freshMark={fresh}
+                      onChanged={(o) => { announce(o); load(); }} />
       </div>
 
       {/* ЗАХЫН ТЭМДЭГЛЭЛ (P1-22) — «модонд», «нөат шивсэн», «хаав». Табны
@@ -556,7 +720,8 @@ export default function ClientProfile() {
           Харилцагчийн дэвтэр нь мөнгөнийх тул үйлдвэрийн даргад унших нь
           нээлттэй, бичих нь хаалттай (сервер ч тэгнэ). */}
       <div className="mt-4">
-        <NotesStrip entityType="client" entityId={d.id} canWrite={seesMoney} />
+        <NotesStrip entityType="client" entityId={d.id} canWrite={seesMoney}
+                    onOutcome={announce} />
       </div>
 
       {/* САНХҮҮ — зөвхөн даргад, түүхийнх нь ХОЙНО. Хураангуй нь §3-ын бүтэн
@@ -564,14 +729,136 @@ export default function ClientProfile() {
           гэсэн асуултын ГАНЦ хариу (H9 — нэг тоо, хаа сайгүй ижил). */}
       {!seesMoney && <ClientFinance d={d} />}
 
-      {pay && <PayModal client_id={d.id} d={null} invoices={d.invoices} onClose={() => setPay(false)} onDone={() => { setPay(false); load(); }} />}
+      {/* Цонх бүр ХИЙГДСЭН ЗҮЙЛЭЭ зурвас болгож буцаана — урьд нь `PayModal`
+          нь `payOutcome(...)`-оо дамжуулдаг байсныг энэ хуудас чимээгүй
+          хаяж, толгойн доор ЮУ Ч үлддэггүй байв. */}
+      {pay && <PayModal client_id={d.id} d={null} invoices={d.invoices}
+                        onClose={() => setPay(false)}
+                        onDone={finish(() => setPay(false), "Төлбөр бүртгэгдлээ")} />}
       {voidPay && <VoidPaymentModal payment={voidPay} onClose={() => setVoidPay(null)}
-                                    onDone={() => { setVoidPay(null); load(); }} />}
+                                    onDone={finish(() => setVoidPay(null))} />}
       {entryNew && <EntryModal d={d} onClose={() => setEntryNew(false)}
-                               onDone={() => { setEntryNew(false); load(); }} />}
+                               onDone={finish(() => setEntryNew(false))} />}
       {voidEntry && <VoidEntryModal d={d} e={voidEntry} onClose={() => setVoidEntry(null)}
-                                    onDone={() => { setVoidEntry(null); load(); }} />}
+                                    onDone={finish(() => setVoidEntry(null))} />}
+      {promise && <PromiseNoteModal
+        t={{ clientId: d.id, client: d.name, balance: d.receivable,
+             balanceUninvoiced: d.receivable_uninvoiced,
+             penaltyBooked: d.penalty_booked,
+             penaltyUnbooked: Math.max((d.penalty || 0) - (d.penalty_booked || 0), 0),
+             contacts: d.contacts, person: d.person, phone: d.phone }}
+        onClose={() => setPromise(false)} onDone={finish(() => setPromise(false))} />}
+      {stmt && <StatementModal d={d} pdf={pdf} onClose={() => setStmt(false)} />}
+      {del && <DeleteClientModal d={d} onClose={() => setDel(false)}
+                                 onDone={() => nav("/clients")} />}
     </div>
+  );
+}
+
+/* ---------- ТООЦООНЫ ХУУЛГА (PDF) ----------
+ *
+ * Отгоо эгч тооцоо нийлэхээр очихдоо ЦААС барьж явдаг: харилцагч бүрийн
+ * Excel хуудсаа хэвлэдэг. Систем дотор тэр хуудас (нэхэмжлэл, төлбөр,
+ * бичилт, үлдэгдэл) БАЙГАА ч гаргах товч байгаагүй тул тэр Excel рүүгээ
+ * буцна.
+ *
+ * Хугацаа нь ГУРВАН бэлэн товч + гараар заах (`lib/statement.ts`): тэр
+ * ихэвчлэн «бүгдийг» эсвэл «энэ сар» гэдэг, гэхдээ тооцоо нийлэх үе нь
+ * дурын байдаг тул гар оролт үлдэнэ.
+ */
+function StatementModal({ d, pdf, onClose }: {
+  d: any; pdf: ReturnType<typeof usePdf>; onClose: () => void;
+}) {
+  const uid = useId();
+  const today = todayIso();
+  const [choice, setChoice] = useState<StatementChoice>("all");
+  const [custom, setCustom] = useState({ from: "", to: "" });
+  const range = statementRange(choice, today, custom);
+  const err = statementError(range);
+  const dirty = choice !== "all" || !!custom.from || !!custom.to;
+  return (
+    <FormModal title="Тооцооны хуулга хэвлэх" onClose={onClose} dirty={dirty}
+      footer={
+        <div className="flex justify-end gap-2.5">
+          <button className="btn-secondary" onClick={onClose}>Болих</button>
+          <SubmitButton disabled={!!err} busyLabel="Гаргаж байна…"
+                        onSubmit={async () => {
+                          await pdf.open(statementUrl(d.id, range));
+                          onClose();
+                        }}>Хэвлэх</SubmitButton>
+        </div>}>
+      <p className="text-[13.5px] text-t2 mb-4">
+        <b className="text-ink">{d.name}</b> — нэхэмжлэл, төлбөр, бичилт бүхий
+        нэг хуудас. Тооцоо нийлэхэд авч явна.
+      </p>
+      <div className="lbl" id={`${uid}-period`}>Хугацаа</div>
+      <div className="flex gap-2 flex-wrap mb-3.5" role="group" aria-labelledby={`${uid}-period`}>
+        {STATEMENT_CHOICES.map(([v, l]) => (
+          <button key={v} type="button" onClick={() => setChoice(v)} aria-pressed={choice === v}
+            className={`rounded-[7px] border px-4 py-2 font-semibold text-[13px] min-h-10 transition ${
+              choice === v ? "border-brand bg-brand-50 text-brand-ink"
+                           : "border-line-strong text-t2"}`}>{l}</button>
+        ))}
+      </div>
+      {choice === "custom" && (
+        <div className="grid grid-cols-2 gap-3.5">
+          <div><label className="lbl" htmlFor={`${uid}-from`}>Эхлэх огноо</label>
+            <input id={`${uid}-from`} type="date" className="inp" value={custom.from}
+                   onChange={(e) => setCustom({ ...custom, from: e.target.value })} /></div>
+          <div><label className="lbl" htmlFor={`${uid}-to`}>Дуусах огноо</label>
+            <input id={`${uid}-to`} type="date" className="inp" value={custom.to}
+                   onChange={(e) => setCustom({ ...custom, to: e.target.value })} /></div>
+        </div>
+      )}
+      {/* Сонгосон хугацаа нь ҮГЭЭРЭЭ давтагдана — дарахаасаа өмнө юу гарахыг
+          нь мэдэж байх ёстой. */}
+      <p className="text-[13px] text-t2 mt-3.5">
+        Хамрах хугацаа: <b className="text-ink tabular-nums">{statementRangeText(range)}</b>
+      </p>
+      {err && <p className="text-[12.5px] text-danger mt-2.5">⚠ {err}</p>}
+    </FormModal>
+  );
+}
+
+/* ---------- ХООСОН ХАРИЛЦАГЧИЙГ УСТГАХ ----------
+ *
+ * H1 «устгал байхгүй» нь ТҮҮХИЙГ хамгаалдаг дүрэм; ХООСОН харилцагчид түүх
+ * байхгүй — андуурч бичсэн нэр, хоёр дахин оруулсан мөр. Хаалга нь сервер
+ * дээр нарийн (`_attached`); тэр татгалзвал ӨӨРИЙНХ нь өгүүлбэр цонхон
+ * дотор үлдэнэ (toast болж өнгөрөхгүй).
+ */
+function DeleteClientModal({ d, onClose, onDone }: {
+  d: any; onClose: () => void; onDone: () => void;
+}) {
+  const toast = useToast();
+  const [err, setErr] = useState("");
+  return (
+    <ConfirmModal
+      title="Харилцагч устгах"
+      intro={<>
+        <b className="text-ink">{d.name}</b> — энэ харилцагчид гэрээ, төлбөр,
+        бичилт, тэмдэглэл, файл ЮУ Ч бүртгэгдээгүй байна. Устгавал жагсаалтаас
+        бүрмөсөн алга болно: энэ үйлдлийг буцаах боломжгүй.
+      </>}
+      rows={[{ label: d.name, sub: d.reg ? `ТТД ${d.reg}` : undefined,
+               value: `${(d.contacts || []).length} холбоо барих хүн`,
+               accent: "dim" as const }]}
+      note={err || undefined}
+      confirmLabel="Устгах" danger
+      onClose={onClose}
+      onConfirm={async () => {
+        try {
+          await api(`/api/clients/${d.id}`, { method: "DELETE" });
+          toast(`${d.name} устгагдлаа`);
+          onDone();
+        } catch (e: any) {
+          /* Серверийн өгүүлбэр («Энэ харилцагчид 2 гэрээ … бүртгэлтэй тул
+             устгах боломжгүй») цонхон ДОТОР үлдэнэ — 3.2 секундын мэдэгдэл
+             болж өнгөрвөл Отгоо яагаад болоогүйг мэдэхгүй. */
+          setErr(e.message);
+          toast(e.message, "err");
+        }
+      }} />
   );
 }
 
@@ -582,7 +869,9 @@ export default function ClientProfile() {
  * тэмдгийг ӨӨРӨӨ зөөнө (`lib/entry.ts`). Мөнгө хөдөлдөг тул баталгаажуулах
  * цонх нь авлагын БАЙХ ба БОЛОХ тоог navy Receipt дээр харуулна.
  */
-function EntryModal({ d, onClose, onDone }: { d: any; onClose: () => void; onDone: () => void }) {
+function EntryModal({ d, onClose, onDone }: {
+  d: any; onClose: () => void; onDone: (o?: Outcome) => void;
+}) {
   const toast = useToast();
   const uid = useId();
   const f0 = { date: todayIso(), mode: "debit" as EntryMode, kind: "advance" as EntryKind,
@@ -602,11 +891,12 @@ function EntryModal({ d, onClose, onDone }: { d: any; onClose: () => void; onDon
   ];
 
   const save = async () => {
-    await api(`/api/clients/${d.id}/entries`, { method: "POST", body: JSON.stringify({
+    const r = await api(`/api/clients/${d.id}/entries`, { method: "POST", body: JSON.stringify({
       date: f.date, amount: signed, kind: f.kind, label: f.label.trim(),
       ref: f.ref.trim(), note: f.note.trim() }) });
     toast("Бичилт хийгдлээ");
-    onDone();
+    onDone(entryOutcome({ kindLabel: entryKindLabel(f.kind), label: f.label,
+                          signed, before: d.receivable, after, entryId: r?.id }));
   };
 
   if (ask) {
@@ -624,7 +914,25 @@ function EntryModal({ d, onClose, onDone }: { d: any; onClose: () => void; onDon
   }
 
   return (
-    <FormModal title="Бусад бичилт" onClose={onClose} dirty={JSON.stringify(f) !== JSON.stringify(f0)}>
+    /* БАРИМТ ба ГОЛ ТОВЧ нь ГҮЙЛТИЙН ГАДНА (`FormModal.footer`).
+       Отгоогийн дэлгэц 768px өндөртэй; энэ цонх «Юуны төлөө», «Тэмдэглэл»,
+       баримттайгаа 900px давдаг тул «Үргэлжлүүлэх» нүднээс доош унана: тэр
+       талбараа бөглөөд «дараа нь юу хийх вэ» гэдгээ олохгүй (цонх ДОТОР
+       гүйлгэх гэсэн зүйл түүний толгойд байхгүй — Excel-ийн 20 жилд ийм
+       юм байгаагүй). Одоо баримт нь мөнгө хаашаа хөдлөхийг ҮРГЭЛЖ нүдний
+       өмнө барина: «Одоогийн авлага X → Авлага болно Y». */
+    <FormModal title="Бусад бичилт" onClose={onClose}
+               dirty={JSON.stringify(f) !== JSON.stringify(f0)}
+               footer={
+                 <div className="flex items-end justify-between gap-3 flex-wrap">
+                   <Receipt className="flex-1 min-w-[240px] !mt-0" rows={rows}
+                            total={{ label: "Авлага болно", value: money(after) }} />
+                   <div className="flex gap-2.5">
+                     <button className="btn-secondary" onClick={onClose}>Болих</button>
+                     <SubmitButton disabled={!!err || !(Math.abs(amount) > 0) || !f.label.trim()}
+                                   onSubmit={() => setAsk(true)}>Үргэлжлүүлэх</SubmitButton>
+                   </div>
+                 </div>}>
       <p className="text-[13.5px] text-t2 mb-4">
         <b className="text-ink">{d.name}</b> · одоогийн авлага{" "}
         <b className="text-ink tabular-nums">{money(d.receivable)}</b>
@@ -672,18 +980,12 @@ function EntryModal({ d, onClose, onDone }: { d: any; onClose: () => void; onDon
         <input id={`${uid}-note`} className="inp" value={f.note}
                onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
       {err && <p className="text-[12.5px] text-danger mt-2.5">⚠ {err}</p>}
-      <Receipt className="mt-4" rows={rows} total={{ label: "Авлага болно", value: money(after) }} />
-      <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <SubmitButton disabled={!!err || !(Math.abs(amount) > 0) || !f.label.trim()}
-                      onSubmit={() => setAsk(true)}>Үргэлжлүүлэх</SubmitButton>
-      </div>
     </FormModal>
   );
 }
 
 function VoidEntryModal({ d, e, onClose, onDone }: {
-  d: any; e: ClientEntry; onClose: () => void; onDone: () => void;
+  d: any; e: ClientEntry; onClose: () => void; onDone: (o?: Outcome) => void;
 }) {
   const toast = useToast();
   const [reason, setReason] = useState("");
@@ -703,13 +1005,18 @@ function VoidEntryModal({ d, e, onClose, onDone }: {
                accent: "danger" }]}
       total={{ label: "Авлага болно", value: money(after) }}
       confirmLabel="Хүчингүй болгох" confirmDisabled={!reason.trim()} danger
+      /* Бичсэн шалтгаан нь ЭРГЭЖ САНАГДАХГҮЙ — Escape түүнийг чимээгүй
+         устгах ёсгүй (`ui.tsx` ConfirmModal.dirty). */
+      dirty={!!reason.trim()}
       onClose={onClose}
       onConfirm={async () => {
         try {
           await api(`/api/client-entries/${e.id}/void`, {
             method: "POST", body: JSON.stringify({ reason: reason.trim() }) });
           toast("Бичилт хүчингүй болов");
-          onDone();
+          onDone(voidEntryOutcome({ label: e.label, signed: e.amount,
+                                    before: d.receivable, after,
+                                    reason: reason.trim() }));
         } catch (er: any) { toast(er.message, "err"); }
       }}>
       <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
@@ -762,7 +1069,7 @@ function ClientFinance({ d }: { d: any }) {
             <tbody>
               {d.invoices.map((inv: any) => (
                 <tr key={inv.id}>
-                  <td className="td"><b className="text-ink">{invoiceLabel(inv).title}</b>
+                  <td className="td"><b className="text-ink">{clientInvoiceLabel(inv).title}</b>
                     <span className="block text-xs text-t3">{contractTitle(inv.contract_no)}</span></td>
                   <td className="td text-right tabular-nums">{money(inv.total)}</td>
                   <td className="td text-right tabular-nums">{money(inv.paid)}</td>
@@ -808,14 +1115,21 @@ function ClientFinance({ d }: { d: any }) {
  *  багана дээр шатлан харуулна. */
 /** `note` — тооны доорх нэг үгийн тайлбар («нэхэгдээгүй»): тоо нь ЮУ болохыг
  *  хэлнэ, бүтэн дүнгээ орлохгүй. */
-function Stat({ label, val, exact, danger, note }: any) {
+/** `extra` — тоон доорх БҮТЭН өгүүлбэр (илүү төлөлт). `note`-оос ялгаатай нь
+ *  тоо биш, ӨГҮҮЛБЭР тул мөрөө эвхэж болно. */
+function Stat({ label, val, exact, danger, note, extra }: any) {
+  /* ДУГУЙЛСАН ба БҮТЭН тоо ижил байвал хоёр дахь мөр гарахгүй: тэг авлагатай
+     харилцагч дээр «0₮» гэсэн мөр хоёр удаа дараалж зогсдог байв
+     (`lib/credit.exactBelow`). */
+  const below = exactBelow(val, exact);
   return (
     <div>
       <div className="text-[12px] text-t3 font-bold uppercase tracking-wider mb-1">{label}</div>
       <div className={`text-lg font-extrabold tabular-nums ${danger ? "text-danger" : "text-ink"}`}
            title={exact}>{val}</div>
-      {exact && <div className="text-[12px] text-t2 tabular-nums mt-0.5">{exact}</div>}
+      {below && <div className="text-[12px] text-t2 tabular-nums mt-0.5">{below}</div>}
       {note && <div className="text-[12px] text-t3 tabular-nums">{note}</div>}
+      {extra && <div className="text-[12px] text-money font-semibold tabular-nums mt-0.5">{extra}</div>}
     </div>
   );
 }
@@ -847,10 +1161,27 @@ const dotCls = (k: string) => KIND_DOT[k] || "bg-brand";
 function TimelineCalendar({ events, money = true }: { events: TLEvent[]; money?: boolean }) {
   const now = new Date();
   const todayIso = isoOf(now.getFullYear(), now.getMonth() + 1, now.getDate());
-  const [view, setView] = useState<YearMonth>(
-    () => latestMonth(events) ?? { year: now.getFullYear(), month: now.getMonth() + 1 });
+  /* ХУАНЛИ ӨНӨӨДРИЙН САР ДЭЭР НЭЭГДЭНЭ.
+     Урьд нь `latestMonth(events)` байв — Бутангуудын сүүлчийн бичилт 6-р
+     сард тул хуудас 9-р сарын 5-нд ч 6-р сарыг үзүүлж зогсоно. Отгоо тэр
+     агшинд төлбөр бүртгэвэл ТЭР ТӨЛБӨР ХАРАГДАХГҮЙ: өнөөдрийн цэг нүднээс
+     гурван сарын цаана байна («дараад юу ч болсонгүй»). */
+  const [view, setView] = useState<YearMonth>(() => seedMonth(todayIso));
   const [selected, setSelected] = useState<string | null>(
     () => latestDayInMonth(events, view.year, view.month));
+
+  /* ШИНЭ ЯВДАЛ ИРВЭЛ ХУАНЛИ ӨНӨӨДӨР РҮҮГЭЭ ЭРГЭНЭ. Ижил өгөгдөл дахин
+     ирэхэд (60 секундын чимээгүй шинэчлэлт) ЮУ Ч болохгүй — эс бөгөөс 6-р
+     сарыг уншиж байхад дэлгэц доороос нь татагдана (`lib/calendar.eventsKey`). */
+  const key = eventsKey(events);
+  const seen = useRef(key);
+  useEffect(() => {
+    if (seen.current === key) return;
+    seen.current = key;
+    const nv = seedMonth(todayIso);
+    setView(nv);
+    setSelected(latestDayInMonth(events, nv.year, nv.month));
+  }, [key, todayIso, events]);
 
   const grid = useMemo(() => buildMonthGrid(events, view.year, view.month), [events, view]);
   const dayEvents = selected ? eventsOn(events, selected) : [];

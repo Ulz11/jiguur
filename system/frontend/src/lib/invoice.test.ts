@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { agreedMark, agreedTitle, invoiceLabel, isAgreed } from "./invoice";
+import { agreedMark, agreedTitle, clientInvoiceLabel, invoiceLabel, isAgreed,
+         isEntryNo } from "./invoice";
 
 // Нэг нэхэмжлэлийг хоёр өөр нэрээр дуудвал Отгоо тэднийг хоёр өөр объект гэж
 // уншина. Тиймээс нэр нь НЭГ дүрмээс гарна: түрээсийнх — үе, бусад нь — №.
@@ -33,6 +34,49 @@ describe("invoiceLabel", () => {
 
   it("үеийн огноо алга бол № рүү унана", () => {
     expect(invoiceLabel({ no: "R-9" })).toEqual({ title: "№R-9" });
+  });
+});
+
+/* ХАРИЛЦАГЧИЙН ХУУДАС — нэг жагсаалт дотор гурван гэрээ, хуучин үлдэгдэл,
+   гараар бичсэн бичилт зэрэгцэн сууна. Мөр бүр ЮУНЫХ болохоо өөрөө хэлнэ. */
+describe("clientInvoiceLabel", () => {
+  it("хуучин үлдэгдлийг ҮГЭЭР нь, хамрах огноотой нь нэрлэнэ", () => {
+    expect(clientInvoiceLabel({ no: "OB-4", cycle_start: "2026-09-01",
+                                cycle_end: "2026-09-01" }))
+      .toEqual({ title: "Хуучин үлдэгдэл", sub: "2026-09-01 хүртэл" });
+  });
+
+  /* ГОЛ ЗАСВАР: `A-…` нь ХУУЧИН ҮЛДЭГДЛИЙН зохиомол гэрээн дээр суудаг.
+     Гэрээгээр нь таньдаг байсан тул Бутангуудын «Өнө Ордтой тооцоо»
+     139,648,000₮ нь «Хуучин үлдэгдэл · 2026-09-01 хүртэл» гэж нэрлэгдэж байв. */
+  it("гараар бичсэн бичилтийг өөрийнх нь шошгоор нэрлэнэ (хуучин үлдэгдэл БИШ)", () => {
+    expect(clientInvoiceLabel({ no: "A-4-1", cycle_start: "2026-06-22",
+                                cycle_end: "2026-06-22",
+                                label: "Өнө Ордтой тооцоо — 2026.06.22 акт" }))
+      .toEqual({ title: "Өнө Ордтой тооцоо — 2026.06.22 акт", sub: "2026-06-22" });
+  });
+
+  it("шошгогүй бичилт хоосон гарчиг зурахгүй", () => {
+    expect(clientInvoiceLabel({ no: "A-4-2", label: "" })).toEqual({ title: "Бичилт" });
+  });
+
+  it("түрээсийн нэхэмжлэл ЮУ болохоо хэлж, хилээ БАГТААМЖТАЙ зурна", () => {
+    expect(clientInvoiceLabel({ no: "25.19-4", cycle_start: "2026-07-13",
+                                cycle_end: "2026-08-12" }))
+      .toEqual({ title: "Түрээс 2026-07-13 – 2026-08-11" });
+  });
+
+  it("худалдааны нэхэмжлэлд үе байхгүй тул № нь өөрөө нэр", () => {
+    expect(clientInvoiceLabel({ no: "S-3", cycle_start: "2026-05-04",
+                                cycle_end: "2026-05-04" }))
+      .toEqual({ title: "№S-3" });
+  });
+
+  it("isEntryNo нь ЗӨВХӨН `A-{харилцагч}-{n}` хэлбэрийг таньна", () => {
+    expect(isEntryNo("A-4-1")).toBe(true);
+    expect(isEntryNo("OB-4")).toBe(false);
+    expect(isEntryNo("A-мөр")).toBe(false);
+    expect(isEntryNo(null)).toBe(false);
   });
 });
 

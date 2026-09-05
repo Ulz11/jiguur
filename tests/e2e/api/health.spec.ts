@@ -63,7 +63,9 @@ test('үйлдвэрийн дарга мөнгөний API руу орж чад�
     for (const path of MONEY_ROUTES) {
       const res = await factory.get(path);
       expect(res.status(), `${path} — дарга руу нээгдчихлээ`).toBe(403);
-      expect((await res.json()).detail).toBe('Энэ үйлдлийг хийх эрх байхгүй');
+      // ӨРГӨСГӨВ (2026-09): сервер одоо ХЭН хийж болохыг нь нэрлэдэг болсон
+      // («… — зөвхөн менежер, санхүү»). Татгалзсан нь хэвээр, өгүүлбэр уртассан.
+      expect((await res.json()).detail).toContain('Энэ үйлдлийг хийх эрх байхгүй');
     }
   } finally {
     await factory.dispose();

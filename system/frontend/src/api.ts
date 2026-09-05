@@ -44,8 +44,20 @@ export async function api(path: string, opts: RequestInit = {}): Promise<any> {
     // FastAPI 422 нь detail-ыг МАССИВ болгож буцаадаг — errorMessage бүх
     // хэлбэрийг хүн уншихаар мөр болгоно (lib/errors.ts).
     let msg = FALLBACK_ERROR;
-    try { msg = errorMessage(await res.json()); } catch { /* JSON биш хариу */ }
-    throw new Error(msg);
+    let detail: unknown;
+    try {
+      const body = await res.json();
+      msg = errorMessage(body);
+      detail = body?.detail;
+    } catch { /* JSON биш хариу */ }
+    /* ТҮҮХИЙ биетийг ХАЯХГҮЙ. Зарим 409 нь өгүүлбэрээс ГАДНА үйлдэл авч
+       явдаг: давхардсан харилцагчийн `existing_id` нь «тэр хүн рүү очих»
+       холбоос болно (`lib/clientAdmin.ts`). Мөрөнд шахчихвал тэр холбоос
+       үүрд алга болно. Бүх хуучин баригч тал `e.message`-ээ хэвээр уншина. */
+    const err = new Error(msg) as Error & { detail?: unknown; status?: number };
+    err.detail = detail;
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }

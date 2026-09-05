@@ -4,6 +4,7 @@ import { Chevron, ConfirmModal, FormModal, SubmitButton, useToast } from "../ui"
 import { disclosureProps, panelId } from "../lib/disclosure";
 import { formDirty } from "../lib/dirty";
 import { NOTE_CAP, capRows, noteSummary, rankNotes, showAllLabel, type Note } from "../lib/note";
+import { noteOutcome, type Outcome } from "../lib/outcome";
 import { todayIso } from "../lib/schedule";
 import { isVoided, voidRowClass, voidTitle } from "../lib/void";
 import { VoidButton } from "./VoidPayment";
@@ -23,13 +24,16 @@ import { VoidButton } from "./VoidPayment";
 
 export type NoteEntity = "client" | "contract" | "invoice" | "movement" | "material";
 
-export function NotesStrip({ entityType, entityId, canWrite, compact }: {
+export function NotesStrip({ entityType, entityId, canWrite, compact, onOutcome }: {
   entityType: NoteEntity;
   entityId: number;
   /** Бичих эрх (менежер/санхүү үргэлж; дарга — гэрээ ба хөдөлгөөн дээр). */
   canWrite: boolean;
   /** Хөдөлгөөний мөрөнд суух хэлбэр — картгүй, жижиг. */
   compact?: boolean;
+  /** Хийгдсэн зүйлээ ЗУРВАС болгож дуудагч тал руу дамжуулна
+   *  (`lib/outcome.ts`). Өгөөгүй бол хуучин зам — зөвхөн toast. */
+  onOutcome?: (o: Outcome) => void;
 }) {
   const [rows, setRows] = useState<Note[] | null>(null);
   const [open, setOpen] = useState(false);
@@ -168,11 +172,13 @@ export function NotesStrip({ entityType, entityId, canWrite, compact }: {
     {adding && (
       <AddNoteModal entityType={entityType} entityId={entityId}
                     onClose={() => setAdding(false)}
-                    onDone={() => { setAdding(false); setOpen(true); void load(); }} />
+                    onDone={(o) => { setAdding(false); setOpen(true); void load();
+                                     if (o) onOutcome?.(o); }} />
     )}
     {voiding && (
       <VoidNoteModal note={voiding} onClose={() => setVoiding(null)}
-                     onDone={() => { setVoiding(null); void load(); }} />
+                     onDone={(o) => { setVoiding(null); void load();
+                                      if (o) onOutcome?.(o); }} />
     )}
   </>);
 
@@ -183,7 +189,8 @@ export function NotesStrip({ entityType, entityId, canWrite, compact }: {
 
 /* ---------- «+ Тэмдэглэл» ---------- */
 function AddNoteModal({ entityType, entityId, onClose, onDone }: {
-  entityType: NoteEntity; entityId: number; onClose: () => void; onDone: () => void;
+  entityType: NoteEntity; entityId: number; onClose: () => void;
+  onDone: (o?: Outcome) => void;
 }) {
   const f0 = { text: "", date: todayIso(), flag: false };
   const [f, setF] = useState(f0);
@@ -226,7 +233,7 @@ function AddNoteModal({ entityType, entityId, onClose, onDone }: {
               entity_type: entityType, entity_id: entityId,
               date: f.date, text: f.text.trim(), flag: f.flag }) });
             toast("Тэмдэглэл хадгалагдлаа");
-            onDone();
+            onDone(noteOutcome("add", { date: f.date, text: f.text, flag: f.flag }));
           } catch (e: any) { toast(e.message, "err"); }
         }}>Хадгалах</SubmitButton>
       </div>
@@ -236,7 +243,7 @@ function AddNoteModal({ entityType, entityId, onClose, onDone }: {
 
 /* ---------- Тэмдэглэл ХҮЧИНГҮЙ болгох (H1) ---------- */
 function VoidNoteModal({ note, onClose, onDone }: {
-  note: Note; onClose: () => void; onDone: () => void;
+  note: Note; onClose: () => void; onDone: (o?: Outcome) => void;
 }) {
   const [reason, setReason] = useState("");
   const toast = useToast();
@@ -255,13 +262,17 @@ function VoidNoteModal({ note, onClose, onDone }: {
       confirmLabel="Хүчингүй болгох"
       confirmDisabled={!reason.trim()}
       danger
+      /* Бичсэн шалтгаан нь ЭРГЭЖ САНАГДАХГҮЙ — Escape түүнийг чимээгүй
+         устгах ёсгүй (`ui.tsx` ConfirmModal.dirty). */
+      dirty={!!reason.trim()}
       onClose={onClose}
       onConfirm={async () => {
         try {
           await api(`/api/notes/${note.id}/void`, {
             method: "POST", body: JSON.stringify({ reason: reason.trim() }) });
           toast("Тэмдэглэл хүчингүй болов");
-          onDone();
+          onDone(noteOutcome("void", { date: note.date, text: note.text,
+                                       reason: reason.trim() }));
         } catch (e: any) { toast(e.message, "err"); }
       }}>
       <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>

@@ -1,22 +1,14 @@
-import { useId, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, money, sayaFmt, sayaFmtLike } from "../api";
-import { Spinner, FormModal, SubmitButton, useToast, Empty } from "../ui";
-import { parseMoney } from "../lib/num";
-import { formDirty } from "../lib/dirty";
+import { Spinner, useToast, Empty } from "../ui";
 import { useLive } from "../lib/live";
 import { nextSort, ariaSort, sortByNumber, type SortState } from "../lib/sort";
 import { clientHref } from "../lib/links";
 import { contactRolePill, preferredContact, telHref } from "../lib/contact";
-import { todayIso } from "../lib/schedule";
+import { PromiseNoteModal, type PromiseTarget } from "../components/PromiseNote";
 import { UNCHARGED } from "../lib/penalty";
 import { uninvoicedLine } from "../lib/receivable";
-
-// Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
-// хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
-const today = () => todayIso();
-const KINDS: [string, string][] = [["call", "Утсаар"], ["visit", "Уулзсан"],
-                                   ["message", "Мессеж"], ["other", "Бусад"]];
 
 type SortKey = "overdue" | "oldest";
 
@@ -235,83 +227,22 @@ export default function Collections() {
         )}
       </div>
 
-      {note && <NoteModal r={note} onClose={() => setNote(null)}
-                          onDone={() => { setNote(null); load(); }} />}
+      {/* Цонх нь `components/PromiseNote.tsx`-д НҮҮСЭН: харилцагчийн профайл
+          ЯГ тэр цонхыг дуудна. Нэг цонх хоёр газарт хоёр өөр асуулт болж
+          салбал Отгоо аль нэгэнд нь итгэхээ болино. */}
+      {note && <PromiseNoteModal t={collectionTarget(note)} onClose={() => setNote(null)}
+                                 onDone={() => { setNote(null); load(); }} />}
     </div>
   );
 }
 
-function NoteModal({ r, onClose, onDone }: any) {
-  const toast = useToast();
-  const f0 = { date: today(), kind: "call", note: "", promise_date: "", promise_amount: "" };
-  const [f, setF] = useState(f0);
-  const uid = useId();
-  return (
-    /* Ярианы тэмдэглэл нь дахин сэргээгдэхгүй мэдээлэл — залгасны дараа
-       санамсаргүй товшилтод алдагдвал дахин залгах шаардлагатай болно. */
-    <FormModal title={`Тэмдэглэл — ${r.client}`} onClose={onClose} dirty={formDirty(f0, f)}>
-      <div className="bg-sunken rounded-lg px-3.5 py-2.5 mb-4 text-[13px] text-t2">
-        Хэтэрсэн <b className="text-danger tabular-nums">{money(r.overdue)}</b>
-        {/* Утсаар ярихад бүтэн авлага нь хэрэгтэй: «нийт X, үүнээс Y нь
-            хугацаа хэтэрсэн» — хоёр тоо хоёулаа энд, дэлгэцтэйгээ ижил. */}
-        {" · "}авлага <b className="tabular-nums text-ink">{money(r.balance)}</b>
-        {r.balance_uninvoiced > 0 && (
-          <> (<span className="tabular-nums">{uninvoicedLine(r.balance_uninvoiced)}</span>)</>)}
-        {r.penalty_booked > 0 && <> · нэхэгдсэн алданги <b className="tabular-nums">{money(r.penalty_booked)}</b></>}
-        {r.penalty_unbooked > 0 && <> · тооцоолол <b className="tabular-nums text-t3">≈{money(r.penalty_unbooked)}</b> ({UNCHARGED})</>}
-        {/* Залгах хүн нь мөрөн дээрхтэй ЯГ ижил дүрмээр (`lib/contact.ts`) —
-            цонх өөр дугаар үзүүлбэл аль нь зөв бэ гэсэн асуулт төрнө. */}
-        {(() => {
-          const pick = preferredContact(r.contacts);
-          const who = pick?.name || r.person;
-          const phone = pick?.phone || r.phone;
-          return phone ? (
-            <> · {who ? `${who} · ` : ""}
-              <a href={telHref(phone)} title={`${phone} руу залгах`}
-                 className="font-bold text-ink hover:text-brand-ink hover:underline">☎ {phone}</a>
-            </>
-          ) : null;
-        })()}
-      </div>
-
-      {/* Товчны бүлэг — ганц талбар биш тул `label` биш, нэрлэсэн бүлэг */}
-      <div className="lbl" id={`${uid}-kind`}>Хэлбэр</div>
-      <div className="flex gap-2 mb-3.5 flex-wrap" role="group" aria-labelledby={`${uid}-kind`}>
-        {KINDS.map(([v, l]) => (
-          <button key={v} onClick={() => setF({ ...f, kind: v })} aria-pressed={f.kind === v}
-            className={`rounded-[7px] border px-4 py-2 font-semibold text-[13px] min-h-10 transition ${
-              f.kind === v ? "border-brand bg-brand-50 text-brand-ink" : "border-line-strong text-t2"}`}>{l}</button>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3.5">
-        <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
-          <input id={`${uid}-date`} type="date" className="inp" value={f.date}
-                 onChange={(e) => setF({ ...f, date: e.target.value })} /></div>
-        <div><label className="lbl" htmlFor={`${uid}-pamt`}>Амлах дүн ₮</label>
-          <input id={`${uid}-pamt`} className="inp" inputMode="numeric" placeholder="0" value={f.promise_amount}
-                 onChange={(e) => setF({ ...f, promise_amount: e.target.value })} /></div>
-      </div>
-      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-pdate`}>Амлах огноо</label>
-        <input id={`${uid}-pdate`} type="date" className="inp" value={f.promise_date}
-               onChange={(e) => setF({ ...f, promise_date: e.target.value })} /></div>
-      <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-note`}>Юу ярьсан бэ?</label>
-        <input id={`${uid}-note`} className="inp" autoFocus placeholder="ж: Даваа гарагт 5 сая шилжүүлнэ гэв"
-               value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
-
-      <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <SubmitButton disabled={!f.note.trim()} onSubmit={async () => {
-          try {
-            await api(`/api/clients/${r.client_id}/notes`, { method: "POST", body: JSON.stringify({
-              date: f.date, kind: f.kind, note: f.note,
-              promise_date: f.promise_date || null,
-              promise_amount: parseMoney(f.promise_amount) }) });
-            toast("Тэмдэглэл хадгалагдлаа");
-            onDone();
-          } catch (e: any) { toast(e.message, "err"); }
-        }}>Хадгалах</SubmitButton>
-      </div>
-    </FormModal>
-  );
+/** Жагсаалтын мөр → цонхны оролт. «Авлага цуглуулах» дээр хугацаа хэтэрсэн
+ *  ДҮН нь мэдэгддэг тул цонх түүнийг ч харуулна (профайл дээр байхгүй). */
+function collectionTarget(r: any): PromiseTarget {
+  return {
+    clientId: r.client_id, client: r.client, overdue: r.overdue,
+    balance: r.balance, balanceUninvoiced: r.balance_uninvoiced,
+    penaltyBooked: r.penalty_booked, penaltyUnbooked: r.penalty_unbooked,
+    contacts: r.contacts, person: r.person, phone: r.phone,
+  };
 }
