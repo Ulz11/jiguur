@@ -38,7 +38,11 @@ def _check_allocations(db: Session, body: schemas.PaymentIn,
             raise HTTPException(400, "Нэхэмжлэл олдсонгүй")
         if inv.contract.client_id != body.client_id:
             raise HTTPException(400, f"Нэхэмжлэл {inv.no} энэ харилцагчийнх биш")
-        if body.contract_id and inv.contract_id != body.contract_id:
+        # ХАРИЛЦАГЧИЙН ДАНС (`OB-`) нь гэрээ БИШ — гэрээ бүрийн ард зогсох нэг
+        # данс тул гэрээний хуудсан дээр бүртгэсэн төлбөр ч түүнийг хааж чадна
+        # (автомат хуваарилалттай ижил дүрэм — `billing._fill_invoices`).
+        if (body.contract_id and inv.contract_id != body.contract_id
+                and not billing.is_opening_invoice(inv)):
             raise HTTPException(400, f"Нэхэмжлэл {inv.no} сонгосон гэрээнийх биш")
         if a["amount"] <= 0:
             raise HTTPException(400, f"Нэхэмжлэл {inv.no}: дүн 0-ээс их байх ёстой")

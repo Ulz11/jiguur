@@ -27,6 +27,15 @@ def _safe(name: str) -> str:
 
 
 CYCLE_MODE_ERR = "Тооцооны цикл «30 хоног» эсвэл «Календарь сар» байна"
+#: Тооцоог бүхэлд нь хөдөлгөдөг талбарууд — ЗӨВХӨН менежерийн, дахин
+#: бодолтын хаалгаар. Аль нь ч ХООСОН (null) байж болохгүй: гурвуулаа
+#: циклийн торыг зурдаг тул нэг нь алга болбол тооцоо эхлэлгүй болно.
+HEAVY_FIELDS = ("start_date", "cycle_days", "cycle_mode")
+HEAVY_NULL_ERR = {
+    "start_date": "Гэрээний эхлэх огноо хоосон байж болохгүй",
+    "cycle_days": "Циклийн хоног хоосон байж болохгүй",
+    "cycle_mode": "Тооцооны цикл хоосон байж болохгүй",
+}
 # «Худалдаа болгох» (H7) нь ЗӨВХӨН түрээсийн гэрээнд утгатай — худалдааны
 # гэрээнд ачилт нь өөрөө худалдаа бөгөөс өөрийн нэхэмжлэлтэй.
 SALE_ONLY_RENT_ERR = ("«Худалдаа болгох» нь зөвхөн ТҮРЭЭСИЙН гэрээнд бүртгэгдэнэ — "
@@ -428,10 +437,16 @@ def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
     data = body.model_dump(exclude_unset=True)
     data.pop("clear_end_date", None)
     confirm = bool(data.pop("confirm", False))
-    heavy = {k: data.pop(k) for k in ("start_date", "cycle_days", "cycle_mode")
-             if data.get(k) is not None}
+    # ХААЛГЫГ НЭЭДЭГ НЬ ТҮЛХҮҮР, утга нь БИШ: урьд нь `is not None` гэж
+    # шүүдэг байсан тул `{"start_date": null}` нь `heavy`-д ОРОЛГҮЙ ердийн
+    # талбар мэт өнгөрч, менежерийн шалгуур ба дахин бодолтын хаалга
+    # ХОЁУЛАНГ нь тойрч, гэрээний эхлэлийг ЧИМЭЭГҮЙ хоосолдог байв.
+    heavy = {k: data.pop(k) for k in HEAVY_FIELDS if k in data}
     if heavy and getattr(user, "role", "") != "manager":
         raise HTTPException(403, "Гэрээний эхлэх огноо, мөчлөгийг зөвхөн менежер өөрчилнө")
+    for k, v in heavy.items():
+        if v is None:
+            raise HTTPException(400, HEAVY_NULL_ERR[k])
     if heavy.get("cycle_days") is not None and heavy["cycle_days"] < 1:
         raise HTTPException(400, "Циклийн хоног 1-ээс бага байж болохгүй")
     if heavy.get("cycle_mode") is not None and heavy["cycle_mode"] not in billing.CYCLE_MODES:
@@ -1201,6 +1216,16 @@ def add_movement(cid: int, body: schemas.MovementIn, db: Session = Depends(get_d
                 raise HTTPException(400, f"Түрээсэнд байгаагаас их "
                                          f"{'худалдаа' if body.type == 'SALE' else 'буцаалт'} "
                                          f"(гадаа: {out:g})")
+            # ЗАСВАР ба АКТ нь БҮРТГЭХ агшинд ч нягтлагдана — засварын зам
+            # (`PATCH /movement-lines/{id}`) дээрхтэй ЯГ ИЖИЛ хоёр шалгуур,
+            # ИЖИЛ үгээр. Урьд нь энд хаалга байхгүй тул 40ш буцаалт дээр
+            # «30 засвар + 20 акт» бичигдэж, сөрөг тоо нь СӨРӨГ МӨНГӨ болж
+            # нэхэмжлэлд ордог байв — засах гэсэн хүн л барьж чаддаг.
+            if body.type == "RETURN":
+                if ln.repair_qty < 0 or ln.writeoff_qty < 0:
+                    raise HTTPException(400, "Засвар, актын тоо сөрөг байж болохгүй")
+                if ln.repair_qty + ln.writeoff_qty > ln.qty + 0.001:
+                    raise HTTPException(400, "Засвар + акт нь буцаалтын тооноос их байна")
             # Заалт ба гар хоног нь одоо БҮРТГЭХ АГШИНД ирдэг (UI илгээнэ) —
             # засварын замтай ЯГ ижил хаалгаар нягтлагдана.
             if ln.issue_line_id:
@@ -1307,14 +1332,47 @@ def confirm_movement(mid: int, db: Session = Depends(get_db),
     return {"ok": True}
 
 
+def _extend_date_error(c: models.Contract, nd: date, today: date) -> str | None:
+    """Дуусах огнооны шалгуурууд — хаалтын мөрүүдтэй НЭГ хэлээр (H7).
+
+    ДАРААЛАЛ нь санаатай: эхлээд ТООЦООНЫ хилүүд (эхлэл, сүүлийн хөдөлгөөн),
+    дараа нь өнөөдөр. Эсрэгээр нь тавибал өнгөрсөн бүх огноо «өнөөдрөөс өмнө»
+    гэсэн НЭГ хариу авч, «яагаад» гэдэг нь Отгоогоос нуугдана.
+    """
+    origin = billing.billing_origin(c)
+    if nd < origin:
+        return f"Дуусах огноо тооцооны эхлэлээс ({origin}) өмнө байж болохгүй"
+    last = billing.last_movement_day(c)
+    if last is not None and nd < last:
+        return (f"Дуусах огноо сүүлийн хөдөлгөөнөөс ({last}) өмнө байж болохгүй — "
+                f"тэр хөдөлгөөн гэрээнээс гадна үлдэнэ")
+    # БОГИНОСГОХ нь зөвшөөрөгдөнө (гэрээ эрт дуусах нь бодит явдал) — ХАРИН
+    # өнгөрсөн өдрөөр дуусгах нь «хаах» үйлдэл бөгөөс тэр нь ӨӨРИЙН ёслолтой.
+    if nd < today:
+        return "Дуусах огноо өнөөдрөөс өмнө байж болохгүй"
+    return None
+
+
 @router.post("/contracts/{cid}/extend")
 def extend(cid: int, body: schemas.ExtendIn, db: Session = Depends(get_db),
            user=Depends(auth.require_roles("manager"))):
+    """Гэрээний ДУУСАХ огноог тавина — сунгах ч, богиносгох ч энэ зам.
+
+    Урьд нь ямар ч огноо нягтлалгүй бичигддэг, /audit дээр НЭГ Ч мөр
+    үлдээдэггүй байв: «хэн, хэзээ, юунаас юу болгосон» гэдэг алга.
+    """
     c = db.get(models.Contract, cid)
     if not c:
         raise HTTPException(404, "Гэрээ олдсонгүй")
+    err = _extend_date_error(c, body.end_date, date.today())
+    if err:
+        raise HTTPException(400, err)
+    before = {"end_date": c.end_date}
     c.end_date = body.end_date
     db.commit()
+    audit.log(db, user, "update", "contract", c.id,
+              f"№{c.no}: " + (audit.changes_text(before, {"end_date": c.end_date})
+                              or "дуусах огноо хэвээр"))
     return {"ok": True, "end_date": str(c.end_date)}
 
 
@@ -1582,7 +1640,15 @@ def close(cid: int, body: CloseIn | None = None, db: Session = Depends(get_db),
 
 
 @router.post("/contracts/{cid}/generate-invoices")
-def gen_invoices(cid: int, db: Session = Depends(get_db), user=Depends(auth.current_user)):
+def gen_invoices(cid: int, db: Session = Depends(get_db),
+                 user=Depends(auth.require_roles("manager", "finance"))):
+    """Хоцорсон циклүүдийг ЦААС болгоно — нэхэмжлэл бол МӨНГӨ.
+
+    Энэ зам нь router-ийн бусад бүх бичих замаас ялгаатай нь зөвхөн
+    «нэвтэрсэн эсэх»-ийг шалгадаг байв: үйлдвэрийн дарга нэхэмжлэл
+    төрүүлж чаддаг байсан. Нэхэмжлэлийн бусад товчнуудтай (`/agree`,
+    `/unagree`, акт) ИЖИЛ хаалга — менежер ба санхүүч.
+    """
     c = db.get(models.Contract, cid)
     if not c:
         raise HTTPException(404, "Гэрээ олдсонгүй")

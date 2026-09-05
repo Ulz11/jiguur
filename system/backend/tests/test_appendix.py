@@ -118,18 +118,17 @@ def test_build_appendix_is_empty_for_a_window_with_no_movements(db):
     assert ap.total == pytest.approx(0)
 
 
-def test_row_lines_date_the_segments_only_when_a_group_has_several(db):
-    """Нэг материал 12 ба 18 хоногийн ХОЁР мөр болж гарахад харилцагч аль мөр нь
-    аль хугацаа болохыг ялгах аргагүй болно — иймд ОЛОН зурвастай бүлгийн мөр бүрд
-    огнооны бүдэг дэд мөр нэмнэ. Ганц зурвастай мөрд нэмэхгүй: түүний огноо
-    толгой дээрх тооцооны хугацаатай яг давхцана."""
+def test_row_lines_date_only_the_segments_that_split_the_period(db):
+    """Огнооны дэд мөр нь ЗӨВХӨН тасархайн төлөө. Нэг материал 12 ба 18 хоногийн
+    ХОЁР мөр болж гарахад харилцагч аль мөр нь аль хугацаа болохыг ялгах аргагүй
+    болно — тэр хоёрт л огноо нэмнэ. Цонхоо БҮТНЭЭР эзэлсэн мөрд нэмэхгүй:
+    түүний огноо толгой дээрх тооцооны хугацаатай яг давхцана."""
     c, m, ga, gb = issue_240(db)
     gmap, mmap = maps(m, ga, gb)
     ap = pdfappendix.build_appendix(c, gmap, mmap, date(2026, 3, 20), date(2026, 4, 19))
     doc = pdflayout.start_doc()
 
-    multi = pdfappendix._multi_segment_keys(ap.rows)
-    lines = [pdfappendix._row_lines(doc, r, multi) for r in ap.rows]
+    lines = [pdfappendix._row_lines(doc, r, ap) for r in ap.rows]
 
     # ШОШГЫН ФОРМАТ (M5/R4): зурвасын дэд мөр ч БАГТААМЖТАЙ — 12 хоногийн
     # зурвас «3.20 – 3.31» гэж уншигдана (урьд нь «3.20 – 4.01» гэж 13 хоног
@@ -139,8 +138,96 @@ def test_row_lines_date_the_segments_only_when_a_group_has_several(db):
     assert (ap.rows[0].seg_to, ap.rows[1].seg_to) == (date(2026, 4, 1), date(2026, 4, 19))
     # ганц зурвас — дэд мөргүй
     solo = pdfappendix.build_appendix(c, gmap, mmap, date(2026, 3, 20), date(2026, 4, 1))
-    assert [pdfappendix._row_lines(doc, r, pdfappendix._multi_segment_keys(solo.rows))
-            for r in solo.rows] == [["Хэв хашмал 6012"]]
+    assert [pdfappendix._row_lines(doc, r, solo) for r in solo.rows] == [["Хэв хашмал 6012"]]
+
+
+def test_the_period_sub_line_is_dropped_when_the_row_covers_the_whole_period(db):
+    """ХОЁР МӨР, НЭГ Л ОГНОО. 3.20-нд гарсан падан циклийг БҮТНЭЭР эзэлнэ,
+    4.1-нд нэмж гарсан нь зөвхөн сүүлийн 18 хоногийг эзэлнэ.
+
+    Урьд нь дэд мөр нь «энэ бүлэгт хэдэн мөр байна» гэдгээр шийдэгддэг байсан
+    тул хоёулаа огноотой гарч, эхнийх нь толгой дээрх тооцооны хугацааг ҮГЧЛЭН
+    давтдаг байв. Одоо толгойгоосоо ЗӨРСӨН мөр л огноогоо авч явна."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20), [dict(material_id=m.id, grade_id=ga.id, qty=100)])
+    mv(db, c, "ISSUE", date(2026, 4, 1), [dict(material_id=m.id, grade_id=ga.id, qty=40)])
+    gmap, mmap = maps(m, ga, gb)
+    ap = pdfappendix.build_appendix(c, gmap, mmap, date(2026, 3, 20), date(2026, 4, 19))
+    doc = pdflayout.start_doc()
+
+    assert [(r.qty, r.days) for r in ap.rows] == [(100, 30), (40, 18)]
+    assert [pdfappendix._row_lines(doc, r, ap) for r in ap.rows] == [
+        ["Хэв хашмал 6012"],
+        ["Хэв хашмал 6012", "2026-04-01 – 2026-04-18"]]
+
+
+# ---------- падан бол дотоод бүртгэл: НЭГ материал — НЭГ мөр ----------
+
+def test_identical_lots_of_one_material_collapse_into_a_single_row(db):
+    """ГУРВАН ТАЛБАЙ дээр нэг өдөр гарсан нэг материал НЭГ мөр болно.
+
+    Шилжсэн гэрээн дээр Отгоо эгчийн хуудсан дээр «Хэв хашмал 6012 · 1,079»,
+    «… · 10», «… · 736» гэсэн гурван мөр гардаг байв — түүний өөрийнх нь
+    дэвтэр дээр НЭГ мөр. Падангийн хуваарь бол манай ДОТООД бүртгэл: тариф,
+    хоног, огноо нь ижил байхад цаасан дээр гарах шалтгаангүй."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20), [
+        dict(material_id=m.id, grade_id=ga.id, qty=1079),
+        dict(material_id=m.id, grade_id=ga.id, qty=10),
+        dict(material_id=m.id, grade_id=ga.id, qty=736)])
+    gmap, mmap = maps(m, ga, gb)
+
+    ap = pdfappendix.build_appendix(c, gmap, mmap, date(2026, 3, 20), date(2026, 4, 19))
+
+    assert [(r.qty, r.days, r.rate) for r in ap.rows] == [(1825, 30, 330)]
+    assert ap.rows[0].amount == pytest.approx(1825 * 330 * 30)
+    # ТЭНЦЭЛ: нийлүүлэлт нь зөвхөн ХАРАГДАЦ — хөдөлгүүрийн дүн хэвээр.
+    assert ap.subtotal == pytest.approx(
+        billing.accrue_rent(c, date(2026, 3, 20), date(2026, 4, 19))[0])
+    # Цонхоо бүтнээр эзэлсэн ганц мөр — огнооны дэд мөргүй.
+    doc = pdflayout.start_doc()
+    assert pdfappendix._row_lines(doc, ap.rows[0], ap) == ["Хэв хашмал 6012"]
+
+
+def test_a_mid_cycle_return_still_splits_the_lot_it_touched(db):
+    """Нийлүүлэлт нь ЗУРВАСЫГ ИДЭХГҮЙ. Гурван ижил падангийн ЭХНИЙХЭЭС нь
+    циклийн дундуур 825ш буцахад тэр падан ҮНЭХЭЭР хоёр хуваагдана
+    (1,079ш×12 хоног → 254ш×18 хоног) ба хоёулаа огноотой хэвлэгдэнэ.
+    ХӨНДӨГДӨӨГҮЙ хоёр падан хэвээрээ нэг мөр (746ш×30 хоног), огноогүй —
+    түүний хугацаа толгой дээрх тооцооны хугацаа мөн."""
+    c, m, ga, gb = setup_contract(db)
+    mv(db, c, "ISSUE", date(2026, 3, 20), [
+        dict(material_id=m.id, grade_id=ga.id, qty=1079),
+        dict(material_id=m.id, grade_id=ga.id, qty=10),
+        dict(material_id=m.id, grade_id=ga.id, qty=736)])
+    mv(db, c, "RETURN", date(2026, 4, 1), [dict(material_id=m.id, grade_id=ga.id, qty=825,
+                                                return_grade_id=ga.id)])
+    gmap, mmap = maps(m, ga, gb)
+
+    ap = pdfappendix.build_appendix(c, gmap, mmap, date(2026, 3, 20), date(2026, 4, 19))
+
+    assert [(r.qty, r.days) for r in ap.rows] == [(1079, 12), (746, 30), (254, 18)]
+    assert ap.subtotal == pytest.approx(
+        billing.accrue_rent(c, date(2026, 3, 20), date(2026, 4, 19))[0])
+    doc = pdflayout.start_doc()
+    assert [pdfappendix._row_lines(doc, r, ap) for r in ap.rows] == [
+        ["Хэв хашмал 6012", "2026-03-20 – 2026-03-31"],
+        ["Хэв хашмал 6012"],
+        ["Хэв хашмал 6012", "2026-04-01 – 2026-04-18"]]
+
+
+def test_merge_keeps_the_hand_agreed_day_mark_apart(db):
+    """ГАР ХОНОГ (H5) нь чимээгүй нийлэхгүй: од нь «хоёр тал тохирсон» гэсэн
+    тэмдэг тул тэмдэггүй мөртэй нэг мөр болбол тэр баримт алдагдана."""
+    rows = [pdfappendix.AppendixRow(material="Хэв хашмал 6012", grade="А", qty=100,
+                                    rate=330, days=30, amount=100 * 330 * 30),
+            pdfappendix.AppendixRow(material="Хэв хашмал 6012", grade="А", qty=40,
+                                    rate=330, days=30, amount=40 * 330 * 30,
+                                    override=True)]
+
+    merged = pdfappendix.merge_rows(rows)
+
+    assert [(r.qty, r.override) for r in merged] == [(100, False), (40, True)]
 
 
 def test_render_appendix_produces_a_pdf(db):

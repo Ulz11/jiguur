@@ -19,7 +19,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
 from . import billing
@@ -94,6 +94,38 @@ class Appendix:
     total: float = 0.0
 
 
+# ---------- мөр нийлүүлэх ----------
+
+def merge_rows(rows: list[AppendixRow]) -> list[AppendixRow]:
+    """ЯГ ИЖИЛ мөрүүдийг НЭГТГЭНЭ — зөвхөн тоо ба дүнг нь нэмж.
+
+    Хөдөлгүүр нь ПАДАН бүрээр зурвас гаргадаг (`accrue_rent_segments`): нэг
+    материал ГУРВАН ТАЛБАЙ дээр нэг өдөр гарсан шилжсэн гэрээнд «Хэв хашмал
+    6012 · 1,079», «… · 10», «… · 736» гэсэн ГУРВАН мөр хэвлэгддэг байв —
+    тариф, хоног, огноо нь цөм ижил. Отгоо эгчийн дэвтэр дээр тэр нь НЭГ мөр:
+    падан бол манай дотоод бүртгэл, түүний хуудсан дээр гарах шалтгаангүй.
+
+    Задаргаа нь ХУГАЦАА ХУВААГДСАН үед л утгатай — циклийн дундуур ирсэн
+    буцаалт, тариф солигдсон (`accrue_rent_segments`-ийн ганц зорилго). Тэр
+    үед түлхүүрийн (хоног, зурвасын огноо, тариф) хэсэг зөрөх тул мөрүүд
+    ТУСДАА үлдэнэ. ГАР ХОНОГ (H5) ч түлхүүрт орно: тэмдэгтэй мөр тэмдэггүйтэй
+    чимээгүй нийлж, од нь алга болох ёсгүй.
+
+    НИЙТ ДҮН ХЭВЭЭР: бусад талбар нь түлхүүрийн бүрэлдэхүүн тул зөвхөн
+    `qty`/`amount` нэмэгдэнэ.
+    """
+    out: dict[tuple, AppendixRow] = {}
+    for r in rows:
+        key = (r.material, r.grade, r.rate, r.days, r.seg_from, r.seg_to, r.note, r.override)
+        cur = out.get(key)
+        if cur is None:
+            out[key] = replace(r)   # оролтын мөрийг ХӨНДӨХГҮЙ (хуулбар дээр нэмнэ)
+        else:
+            cur.qty += r.qty
+            cur.amount += r.amount
+    return list(out.values())
+
+
 # ---------- өгөгдөл цуглуулах (DB хэрэггүй) ----------
 
 def build_appendix(c, gmap: dict, mmap: dict, d_from: date, d_to: date, *,
@@ -125,6 +157,10 @@ def build_appendix(c, gmap: dict, mmap: dict, d_from: date, d_to: date, *,
         rows.append(AppendixRow(material="", grade="", qty=0.0, rate=0.0, days=0,
                                 amount=ch["amount"],
                                 note=f"{ch['desc']} ({ch['date']})"))
+
+    # ПАДАН бол дотоод бүртгэл — хуудсан дээр НЭГ материал НЭГ мөр (тооцоо
+    # хуваагдаагүй л бол). Нийт дүн үүнээс хөдлөхгүй.
+    rows = merge_rows(rows)
 
     subtotal = sum(r.amount for r in rows)
     vat = subtotal * c.vat_percent / 100
@@ -200,30 +236,32 @@ def _total_row(doc: Doc, label: str, value: float, strong: bool = False) -> None
     move_down(doc, advance)
 
 
-def _multi_segment_keys(rows: list[AppendixRow]) -> set[tuple]:
-    """Нэгээс олон зурвастай (материал, зэрэглэл, тариф) бүлгүүд.
+def row_is_split(row: AppendixRow, ap: "Appendix") -> bool:
+    """Энэ мөрийн зурвас толгой дээрх ТООЦООНЫ ХУГАЦААНААС зөрөх үү?
 
-    Ийм бүлэгт л огнооны дэд мөр хэвлэнэ: эс бөгөөс харилцагч нэг материалын
-    12 ба 18 хоногийн хоёр мөрийг хараад АЛЬ нь аль хугацаа болохыг ялгах
-    аргагүй болно. Ганц зурвастай мөрийн огноо нь толгой дээрх тооцооны
-    хугацаатай давхардах тул дарамт болно."""
-    seen: dict[tuple, int] = {}
-    for r in rows:
-        if r.seg_from is None:
-            continue
-        key = (r.material, r.grade, r.rate)
-        seen[key] = seen.get(key, 0) + 1
-    return {k for k, n in seen.items() if n > 1}
+    Огнооны дэд мөр нь ЗӨВХӨН тасархайн төлөө байдаг: циклийн дундуур ирсэн
+    буцаалт (240ш×12 хоног, дараа нь 210ш×18 хоног) эсвэл тариф солигдсон.
+    Цонхоо БҮТНЭЭР эзэлсэн мөрийн доор «2026-03-20 – 2026-04-18» гэж бичих нь
+    толгой дээрх мөрийг ҮГЧЛЭН давтаж, «энэ нь өөр хугацаа юм болов уу» гэсэн
+    эргэлзээ л төрүүлнэ.
+
+    Урьд нь энэ шийдвэр (материал, зэрэглэл, тариф) бүлгийн мөрийн ТООГООР
+    гардаг байсан: гурван талбайн гурван падан гурван мөр болж, бүгд нь ЯГ
+    циклийн хугацаатай байхад доор нь тэр хугацаа гурван удаа давтагдаж
+    хэвлэгдэж байв."""
+    if row.seg_from is None or row.seg_to is None:
+        return False
+    return (row.seg_from, row.seg_to) != (ap.period_start, ap.period_end)
 
 
-def _row_lines(doc: Doc, row: AppendixRow, multi: set[tuple]) -> list[str]:
+def _row_lines(doc: Doc, row: AppendixRow, ap: "Appendix") -> list[str]:
     """Нэрний баганад багтах мөрүүд — эхнийх нь үндсэн мөрд, үлдсэн нь бүдэг
     үргэлжлэлд хэвлэгдэнэ.
 
     30 тэмдэгтээр таслах нь «Хавтан 50×50 · 2026.04.01–2026.04.30»-ыг юу ч
     үлдээхгүй хайчилдаг байсан ба хавсралт нь ЯГ ЭНЭ мэдээллийн төлөө байдаг."""
     lines = wrap_to_width(doc, row.note or row.material, ROW_SIZE, NAME_WIDTH)
-    if row.seg_from and row.seg_to and (row.material, row.grade, row.rate) in multi:
+    if row_is_split(row, ap):
         lines += wrap_to_width(doc, billing.cycle_label(row.seg_from, row.seg_to),
                                ROW_SIZE, NAME_WIDTH)
     return lines
@@ -248,12 +286,11 @@ def _render(ap: Appendix, company: dict, logo_path: str | None = None):
     rule(doc)
     move_down(doc, 14)
 
-    multi = _multi_segment_keys(ap.rows)
     _table_header(doc)
     # ЗАСВАР №1: давталтын доторх хуудас таслалт бүрд толгойг дахин зурна.
     doc.on_new_page = _table_header
     for row in ap.rows:
-        lines = _row_lines(doc, row, multi)
+        lines = _row_lines(doc, row, ap)
         ensure_space(doc, 24 + (len(lines) - 1) * CONT_STEP)
         b0 = doc.y   # эхний мөрийн baseline — нүдний дээд ирмэгийг эндээс бодно
         text(doc, lines[0], size=ROW_SIZE)

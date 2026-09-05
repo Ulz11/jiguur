@@ -19,6 +19,7 @@ import json
 import threading
 from calendar import monthrange
 from datetime import date, datetime, timedelta
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from .. import models
 
@@ -1229,6 +1230,29 @@ def live_invoices(contract: models.Contract) -> list[models.Invoice]:
     return [i for i in contract.invoices if invoice_active(i)]
 
 
+# ---------- ХАРИЛЦАГЧИЙН ДАНС (`OB-`) ----------
+#
+# `OB-{харилцагч}` гэрээ нь ГЭРЭЭ БИШ (`migration.account_contract`): тэр нь
+# түрээсийн мөчлөгт хамаарахгүй бүх бичилтийг (хуучин үлдэгдэл, зээл, цалин,
+# кран) авч явдаг НЭГ данс — гэрээ бүрийн АРД зогсоно. Иймд «энэ гэрээнийх
+# биш» гэсэн шүүлтүүрүүд түүнийг ХАСАХ ЁСГҮЙ: харилцагчийн өр НЭГ.
+OPENING_PREFIX = "OB-"
+
+# SQL талын ижил шалгуур (`_fill_invoices`-ийн `join(Contract)`-ыг шаардана).
+OPENING_INVOICE = or_(models.Invoice.no.startswith(OPENING_PREFIX),
+                      models.Contract.no.startswith(OPENING_PREFIX))
+
+
+def is_opening_invoice(inv: models.Invoice) -> bool:
+    """Нэхэмжлэл ХАРИЛЦАГЧИЙН ДАНСНЫХ уу — дугаараар нь ч, гэрээгээр нь ч.
+
+    Хоёулаа шалгагдана: шилжүүлэлтийн нэхэмжлэл `OB-{id}` нэртэй, дансан дээрх
+    хожмын бичилтүүд `A-{id}-{n}` нэртэй ч гэрээ нь ижилхэн `OB-` угтвартай.
+    """
+    return ((inv.no or "").startswith(OPENING_PREFIX)
+            or (inv.contract.no or "").startswith(OPENING_PREFIX))
+
+
 def void_invoice(db: Session, inv: models.Invoice, reason: str,
                  user_name: str = "") -> list[dict]:
     """Нэхэмжлэлийг ХҮЧИНГҮЙ болгоно — мөрийг нь УСТГАХГҮЙ.
@@ -1605,12 +1629,21 @@ def _fill_invoices(db: Session, payment: models.Payment, remain: float,
     Дараалал: хамгийн хуучин нэхэмжлэлийг БҮТНЭЭР хаана (үндсэн → алданги),
     дараа нь дараагийнх руу. Хаана ч алданги бүртгэгдээгүй үед энэ нь
     хуучин зан төлөвтэй яг ижил.
+
+    ГЭРЭЭНД харьяалагдсан төлбөрийн НЭР ДЭВШИГЧ нь тэр гэрээний нэхэмжлэл
+    ДЭЭР НЬ харилцагчийн ДАНСНЫ (`OB-`) нэхэмжлэл. Отгоо эгчийн толгойд НЭГ
+    харилцагч — НЭГ өр — ХУУЧНААС нь: гэрээний хуудсан дээр 1.5 сая₮ бүртгээд
+    382 сая₮-ийн хуучин үлдэгдэл нь хөдөлгөөнгүй үлдэж, мөнгө нь «урьдчилсан
+    төлбөр» болж дараагийн ШИНЭ нэхэмжлэл рүү үсэрдэг байсан нь түүний
+    дэвтрийн дүрэмтэй зөрчилдөж байв. Данс нь гэрээ БИШ — тэр нь гэрээ
+    бүрийн ард зогсох нэг данс тул нэр дэвшигчээс хасагдах учиргүй.
     """
     q = (db.query(models.Invoice).join(models.Contract)
          .filter(models.Contract.client_id == payment.client_id)
          .filter(LIVE_INVOICE))
     if payment.contract_id:
-        q = q.filter(models.Invoice.contract_id == payment.contract_id)
+        q = q.filter(or_(models.Invoice.contract_id == payment.contract_id,
+                         OPENING_INVOICE))
     filled = 0.0
     for inv in sorted(q.all(), key=lambda i: (i.due_date, i.id)):
         if remain <= 0:
