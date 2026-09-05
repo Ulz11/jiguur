@@ -17,9 +17,10 @@ export const MOVEMENT_NAMES: Record<string, string> = {
   SALE: "Худалдаа болгов",
 };
 
-/** Хөдөлгөөний нэр. Танихгүй төрөл нь ӨӨРӨӨРӨӨ гарна — хоосон нүд үлдэхгүй. */
+/** Хөдөлгөөний нэр. Танихгүй төрөл нь МОНГОЛООР гарна: түүхий «TRANSFER»
+ *  гэсэн үг нь хоосон нүднээс ялгаагүй — Отгоо эгч англи мэдэхгүй. */
 export function mvName(type: string): string {
-  return MOVEMENT_NAMES[type] || type;
+  return MOVEMENT_NAMES[type] || "Бусад";
 }
 
 export type MvTone = "brand" | "warn" | "danger" | "violet";

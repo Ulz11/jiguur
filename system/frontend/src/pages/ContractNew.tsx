@@ -38,7 +38,7 @@ export default function ContractNew() {
      нийлүүлэгдэх утга нь 0: алданги бол ХӨШҮҮРЭГ, автомат төлбөр биш
      (Чадварын харьцуулалт R25 / H2). */
   const [penDefault, setPenDefault] = useState(PENALTY_FALLBACK);
-  /* Тооцооны мөчлөг: анхны утга «30 хоног» — олонхи гэрээ ийм. Цөөнх нь
+  /* Тооцооны цикл: анхны утга «30 хоног» — олонхи гэрээ ийм. Цөөнх нь
      гэрээндээ КАЛЕНДАРЬ САРААР тохирсон (H3/R5); тэднийг эндээс оруулахгүй
      бол тэр хуудсууд Excel-д үлдэнэ. */
   const cond0 = useMemo(() => ({ start_date: today(), penalty_percent: penDefault,
@@ -301,7 +301,7 @@ export default function ContractNew() {
                 Худалдаанд цикл гэж байхгүй — сонголт ч гарахгүй. */}
             {type === "rent" && (
               <div className="mt-4">
-                <span className="lbl" id={`${uid}-mode-label`}>Тооцооны мөчлөг</span>
+                <span className="lbl" id={`${uid}-mode-label`}>Тооцооны цикл</span>
                 <div className="inline-flex bg-white border border-line rounded-full p-1 gap-0.5"
                      role="group" aria-labelledby={`${uid}-mode-label`}
                      aria-describedby={`${uid}-mode-hint`}>
@@ -369,7 +369,7 @@ export default function ContractNew() {
                   ? [{ label: "…", value: `бас ${picked.length - 3} мөр`, accent: "dim" }] : []),
                 ...(type === "rent"
                   ? [{ label: "Өдрийн тооцоо", value: money(daySum) },
-                     { label: "Тооцооны мөчлөг", value: cycleModeLabel(cond.cycle_mode) },
+                     { label: "Тооцооны цикл", value: cycleModeLabel(cond.cycle_mode) },
                      /* Календарь горимд циклийн урт нь 28–31 хоног — тогтмол
                         дүн ХУДАЛ болно. Тэр үед ≈ угтвартай, 30 хоногоор
                         жишсэн тоо гарна (тэр ≈-г уншиж сурсан). */

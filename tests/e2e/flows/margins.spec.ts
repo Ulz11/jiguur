@@ -23,6 +23,23 @@ import { parseTugrik, scaleOf } from '../../support/money';
  * гэрээн дээр үлдээд дашбоард дээр гарахгүй бол шар нүд алга болсонтой ижил.
  */
 
+/**
+ * Дашбоардын «Анхаарах» самбар нь эхний НАЙМ мөрийг зурдаг (40 мөр нь
+ * хуудасны талыг эзэлдэг байв). Самбар нь СИСТЕМ ДАЯАРХ тул зэрэгцээ гүйж
+ * буй проектуудын тэмдэглэл дээрээс нь нэмэгдэж болно — тиймээс баталгаа
+ * тавихаасаа ӨМНӨ бүгдийг нээнэ. Хумигдсан самбар дээр «мөр байна/алга»
+ * гэдэг нь юу ч гэрчлэхгүй.
+ */
+async function openAllFlagged(page: import('@playwright/test').Page): Promise<void> {
+  const more = page.getByRole('button', { name: /^Бүгдийг харах \(\d+\)$/ });
+  if (await more.count() === 0) return;
+  /* `exact` — хажуугийн цэсийг хураадаг товч нь «Цэсийг хураах» гэсэн
+     нэртэй тул хэсэгчилсэн таарал ХОЁР товч олно. */
+  await clickToOpen(more.first(),
+                    page.getByRole('button', { name: 'Хураах', exact: true }),
+                    'Дашбоардын «Анхаарах» — бүгдийг харах');
+}
+
 // ---------- 1. Захын тэмдэглэл: гэрээн дээр бичээд ДАШБОАРД дээр ----------
 
 test('⚑ тэмдэглэсэн мөр ДАШБОАРДЫН «Анхаарах» самбар дээр гарч, ГЭРЭЭ рүүгээ буулгана',
@@ -56,6 +73,7 @@ test('⚑ тэмдэглэсэн мөр ДАШБОАРДЫН «Анхаарах�
        хуудсан дээрээ үлдэхгүй, НЭГ дэлгэц дээр цуглана. */
     await managerPage.goto('/');
     await expect(managerPage.getByRole('heading', { name: 'Анхаарах' })).toBeVisible();
+    await openAllFlagged(managerPage);
     const row = managerPage.getByText(mark, { exact: true });
     await expect(row, 'дашбоардын «Анхаарах» самбар дээр тэмдэглэл алга').toBeVisible();
 
@@ -100,7 +118,71 @@ test('ХҮЧИНГҮЙ болсон тэмдэглэл мөрөндөө үлдэ
     /* …гэвч дашбоардын самбар дээр АЛГА: унтарсан туг «анхаар» гэж хэлэхгүй. */
     await managerPage.goto('/');
     await expect(managerPage.getByRole('heading', { name: 'Анхаарах' })).toBeVisible();
+    /* БҮГДИЙГ нээнэ: хумигдсан самбар дээр «мөр алга» гэдэг нь хязгаараас
+       болсон ч байж болох тул баталгаа нь СУЛРАХГҮЙН тулд. */
+    await openAllFlagged(managerPage);
     await expect(managerPage.getByText(mark, { exact: true })).toBeHidden();
+  });
+
+/**
+ * ГУЧИН ТЭМДЭГЛЭЛ ГЭРЭЭНИЙ ХУУДСЫГ ЗАЛГИХАА БОЛИВ.
+ *
+ * Бодит датад гэрээ бүр 29–48 тэмдэглэлтэй (Блүүм 29, Бутангууд 42, Марч 48).
+ * Зурвас нь ХЯЗГААРГҮЙ, ГҮЙЛТГҮЙ байсан тул баруун баганыг бүтнээр эзэлж,
+ * «Хөдөлгөөний түүх», «Төлбөрүүд», «Барьцаа», «Гэрээ хаах» дөрвийг ~1,800px
+ * доош түлхдэг байв: Отгоо эгчийн 768px өндөртэй дэлгэц дээр тэдгээр товч
+ * ОРШИН БАЙДАГГҮЙТЭЙ адил.
+ *
+ * Одоо зурвас нь ТАВАН мөрөөр нээгдэнэ. Мөр нэг ч алга болоогүй — тоогоо
+ * өөрөө хэлдэг НЭГ товчийн ард байна.
+ */
+test('12 тэмдэглэлтэй гэрээ ТАВЫГ харуулж, «Бүгдийг харах (12)» нь үлдсэнийг нээнэ',
+  async ({ managerPage, data }) => {
+    const { contract } = await data.rentSetup({ startDaysAgo: 40, qty: 30 });
+    /* Текст нь ДАВТАГДАШГҮЙ: дөрвөн проект нэг сервер дээр зэрэг гүйнэ. */
+    const mark = (i: number) => `${i}-р шийдвэр · ${contract.no}`;
+    /* Хамгийн ХУУЧИН мөрөнд туг тавина: огноогоороо бол 12 дахь байрандаа
+       унах ёстой ч ⚑ нь түүнийг таван мөрийн ДОТОР авчирна — нуугдсан туг
+       нь «анхаарах» гэдгээ хэлж чадахгүй. */
+    for (let i = 1; i <= 12; i += 1) {
+      const r = await data.api.post('/api/notes', { data: {
+        entity_type: 'contract', entity_id: contract.id,
+        date: data.isoDaysAgo(13 - i), text: mark(i), flag: i === 1,
+      } });
+      expect(r.ok(), await r.text()).toBeTruthy();
+    }
+
+    const page = new ContractDetailPage(managerPage);
+    await page.goto(contract.id);
+
+    /* Тугтай мөр байгаа тул зурвас ӨӨРӨӨ задарна — гэхдээ ЗӨВХӨН таван мөр:
+       ганц туг 12 мөрийг хуудсан дээр асгах ёсгүй. */
+    /* Зурвасын толгой нь ТООГООРОО таних: гэрээний толгой дээрх «Тэмдэглэл:»
+       гэсэн нэг мөрийн засвар ч мөн «Тэмдэглэл»-ээр эхэлдэг тул `.first()`
+       нь буруу товч дээр буудаг. */
+    const strip = managerPage.getByRole('button', { name: /Тэмдэглэл 12/ });
+    await expect(strip, 'тугтай мөр байхад зурвас өөрөө задарсангүй')
+      .toHaveAttribute('aria-expanded', 'true');
+
+    const rows = managerPage.locator('li').filter({ hasText: `· ${contract.no}` });
+    await expect(rows, 'хумигдсан зурвас таваас олон мөр зурлаа').toHaveCount(5);
+    /* Тугтай мөр нь тэр таванд ЗААВАЛ — хамгийн хуучин байсан ч. */
+    await expect(managerPage.getByText(mark(1), { exact: true }),
+                 '⚑ тэмдэгтэй мөр хумигдсан зурваст багтсангүй').toBeVisible();
+    await expect(managerPage.getByText(mark(2), { exact: true }),
+                 'хамгийн хуучин ТУГГҮЙ мөр таван мөрөнд орох ёсгүй').toBeHidden();
+
+    /* Товч нь ХЭДИЙГ нээхээ өөрөө хэлнэ — дарахаасаа өмнө мэднэ. */
+    const showAll = managerPage.getByRole('button', { name: 'Бүгдийг харах (12)' });
+    await clickToOpen(showAll, managerPage.getByText(mark(2), { exact: true }),
+                      '«Бүгдийг харах» — үлдсэн тэмдэглэлүүд');
+    await expect(rows, 'задарсан зурвас 12 мөрөө бүтнээр зураагүй').toHaveCount(12);
+
+    /* Буцаад хумина — мөр нь АЛГА БОЛООГҮЙ, нуугдсан. */
+    /* `exact` — хажуугийн цэсийн «Цэсийг хураах» товч мөн «Хураах»-ыг агуулна. */
+    await clickToOpen(managerPage.getByRole('button', { name: 'Хураах', exact: true }),
+                      showAll, '«Хураах» — зурвас буцаад таван мөр болно');
+    await expect(rows).toHaveCount(5);
   });
 
 // ---------- 2. Холбоо барих: тэр ЗАХИРАЛ руу залгадаггүй ----------

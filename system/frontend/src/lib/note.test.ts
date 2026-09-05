@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { orderNotes, noteSummary, type Note } from "./note";
+import { NOTE_CAP, capRows, noteSummary, orderNotes, rankNotes, showAllLabel,
+         type Note } from "./note";
 
 const n = (p: Partial<Note> & { id: number; date: string }): Note => ({
   text: "мөр", flag: false, author: "Ч.Отгонцэцэг", ...p,
@@ -56,5 +57,67 @@ describe("noteSummary — хумигдсан толгойн хоёр тоо", ()
   it("хоосон бол тэг", () => {
     expect(noteSummary([])).toEqual({ count: 0, flagged: 0 });
     expect(noteSummary(null)).toEqual({ count: 0, flagged: 0 });
+  });
+});
+
+describe("rankNotes — анхаарах ⚑ нь ТАВАН мөрөнд ЗААВАЛ багтана", () => {
+  it("тугтай мөр дээрээ, дараа нь огноогоор", () => {
+    const rows = rankNotes([
+      n({ id: 1, date: "2026-08-20", text: "шинэ" }),
+      n({ id: 2, date: "2026-06-01", text: "хуучин ТУГТАЙ", flag: true }),
+      n({ id: 3, date: "2026-08-01", text: "дунд" }),
+    ]);
+    expect(rows.map((r) => r.text)).toEqual(["хуучин ТУГТАЙ", "шинэ", "дунд"]);
+  });
+
+  it("ХҮЧИНГҮЙ болсон туг нь дээшээ гарахгүй (цуцлалт тугийг унтраана)", () => {
+    const rows = rankNotes([
+      n({ id: 1, date: "2026-08-20", text: "шинэ" }),
+      n({ id: 2, date: "2026-06-01", text: "цуцлагдсан", flag: true, voided: true }),
+    ]);
+    expect(rows.map((r) => r.text)).toEqual(["шинэ", "цуцлагдсан"]);
+  });
+
+  it("тугтай хэд хэдэн мөр дотроо огнооны дараалалтай (тогтвортой эрэмбэ)", () => {
+    const rows = rankNotes([
+      n({ id: 1, date: "2026-06-01", text: "туг хуучин", flag: true }),
+      n({ id: 2, date: "2026-08-01", text: "туг шинэ", flag: true }),
+      n({ id: 3, date: "2026-09-01", text: "туггүй хамгийн шинэ" }),
+    ]);
+    expect(rows.map((r) => r.text))
+      .toEqual(["туг шинэ", "туг хуучин", "туггүй хамгийн шинэ"]);
+  });
+});
+
+describe("capRows — 48 тэмдэглэл гэрээний хуудсыг залгихаа болино", () => {
+  const many = Array.from({ length: 12 },
+    (_, i) => n({ id: i + 1, date: `2026-07-${String(i + 1).padStart(2, "0")}` }));
+
+  it("хумигдсан үед ЗӨВХӨН хязгаарын тоо гарна", () => {
+    const v = capRows(many, NOTE_CAP, false);
+    expect(v.shown).toHaveLength(5);
+    expect(v.total).toBe(12);
+    expect(v.hidden).toBe(7);
+  });
+
+  it("задарсан үед БҮГД гарна — мөр алга болохгүй", () => {
+    const v = capRows(many, NOTE_CAP, true);
+    expect(v.shown).toHaveLength(12);
+    expect(v.hidden).toBe(0);
+  });
+
+  it("хязгаараас цөөн бол товч гарах шаардлагагүй", () => {
+    const v = capRows(many.slice(0, 3), NOTE_CAP, false);
+    expect(v.shown).toHaveLength(3);
+    expect(v.hidden).toBe(0);
+  });
+
+  it("хоосон ба байхгүй нь унахгүй", () => {
+    expect(capRows([], NOTE_CAP, false)).toEqual({ shown: [], total: 0, hidden: 0 });
+    expect(capRows(null, NOTE_CAP, false)).toEqual({ shown: [], total: 0, hidden: 0 });
+  });
+
+  it("товчны тоо нь ХЭДИЙГ нээхийг хэлнэ", () => {
+    expect(showAllLabel(12)).toBe("Бүгдийг харах (12)");
   });
 });

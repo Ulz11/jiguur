@@ -79,7 +79,13 @@ export function ContactsCard({ clientId, contacts, canWrite, onChanged }: {
                           confirmText="Хадгалах уу?"
                           onSave={(v) => saveField(c, { name: v })} />
                       ) : <b className="text-ink">{c.name}</b>}
-                      {c.note && <span className="block text-[12px] text-t3">{c.note}</span>}
+                      {/* `note` ЗУРАГДАХГҮЙ. Шилжүүлэг тэр талбарт Excel-ийн
+                          НҮДНИЙ ХАЯГ хадгалсан байв («БЛҮҮМ-2!O39») — Отгоо
+                          эгч нэрийнхээ доор ийм юм харах ёсгүй: энэ бол
+                          системийн дотоод тэмдэглэгээ, түүний мэдээлэл БИШ.
+                          Талбар нь өгөгдөл дээрээ үлдэнэ (устгал байхгүй),
+                          зөвхөн ХАРАГДАХАА болино — шилжүүлэг ч бичихээ
+                          болино. */}
                     </td>
                     <td className={td}>
                       {/* Албан тушаал нь ЧИМЭГ БИШ: тооцоо нийлдэг хүнийг
@@ -202,11 +208,11 @@ function AddContactModal({ clientId, onClose, onDone }: {
                  value={f.phone2} onChange={(e) => setF({ ...f, phone2: e.target.value })} />
         </div>
       </div>
-      <div className="mt-3.5">
-        <label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
-        <input id={`${uid}-note`} className="inp" placeholder="ж: тооцоо нийлдэг"
-               value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
-      </div>
+      {/* «Тэмдэглэл» талбар ЭНД БАЙХГҮЙ: түүний бичсэн юм хүснэгтэн дээр
+          хэзээ ч эргэж гардаггүй байсан тул бичих газар нь ч байх ёсгүй
+          (бичээд алга болдог талбар нь хамгийн муу төрлийн эвдрэл).
+          Харилцагчийн тэмдэглэл нь «Тэмдэглэл» зурвас дээр, огноо ба
+          зохиогчтойгоо үлддэг (`components/Notes.tsx`). */}
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <SubmitButton disabled={!f.name.trim()} onSubmit={async () => {

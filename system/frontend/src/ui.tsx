@@ -425,7 +425,12 @@ export function StatePill({ state }: { state: string }) {
     done: ["pill-green", "Хийгдсэн"],
     opening: ["pill-grey", "Хуучин үлдэгдэл"],
   };
-  const [cls, label] = map[state] || ["pill-grey", state];
+  /* ТАНИХГҮЙ ТӨЛӨВ нь ТҮҮХИЙ түлхүүрээ зурдаг байв («pending_review»):
+     Отгоо эгч англи мэдэхгүй тул тэр пил нь ХООСОН НҮД болно — мөрөнд юу
+     болсныг таамаглах ч аргагүй. Сервер шинэ төлөв нэмэхэд дэлгэц дээр
+     англи үг гарахын оронд ЗӨӨЛӨН унана: «Бусад» гэдэг нь худал биш,
+     зүгээр л бүлэглэсэн үг. */
+  const [cls, label] = map[state] || ["pill-grey", "Бусад"];
   return <span className={cls}>{label}</span>;
 }
 

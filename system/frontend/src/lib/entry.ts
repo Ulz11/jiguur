@@ -39,7 +39,9 @@ export const ENTRY_KINDS: [EntryKind, string][] = [
 const KIND_MN: Record<string, string> = Object.fromEntries(ENTRY_KINDS);
 
 export function entryKindLabel(kind: string): string {
-  return KIND_MN[kind] ?? kind;
+  // Танихгүй төрөл нь ТҮҮХИЙ түлхүүрээ зурдаг байв — Отгоо эгчийн нүдэнд
+  // «adjustment» гэдэг нь хоосон нүд. Монгол үг рүү зөөлөн унана.
+  return KIND_MN[kind] ?? "Бусад";
 }
 
 /** Төрлийн pill — UI-ЗАРЧИМ §4-ийн шатнаас. Өнгө дангаараа утга зөөхгүй тул

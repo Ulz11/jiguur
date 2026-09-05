@@ -357,9 +357,9 @@ export default function Machines() {
                             байрандаа, тэмдэг нь дэргэд нь. */}
                         <button className="btn-ghost btn-row" disabled={pdf.busy}
                                 aria-busy={pdf.busyPath === path || undefined}
-                                aria-label={`№${inv.no} — PDF нээх`}
+                                aria-label={`№${inv.no} — хэвлэх`}
                                 onClick={() => pdf.open(path)}>
-                          PDF{pdf.busyPath === path && <Spin />}
+                          Хэвлэх{pdf.busyPath === path && <Spin />}
                         </button>
                         <button className="w-9 h-9 rounded-lg bg-danger-50 text-danger shrink-0 ml-1.5 align-middle"
                                 title="Нэхэмжлэл устгах" aria-label={`№${inv.no} — нэхэмжлэл устгах`}

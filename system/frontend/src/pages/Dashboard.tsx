@@ -8,6 +8,8 @@ import { useLive } from "../lib/live";
 import { rowClickProps } from "../lib/rowClick";
 import { clientHref, contractHref, contractsHref, flaggedHref, invoiceHref, notificationHref } from "../lib/links";
 import { invoiceLabel } from "../lib/invoice";
+import { FLAGGED_CAP, capRows, showAllLabel } from "../lib/note";
+import { contractNoLabel, contractTitle } from "../lib/opening";
 import { dueLabel, todayIso } from "../lib/schedule";
 import { UNCHARGED } from "../lib/penalty";
 import { uninvoicedLine } from "../lib/receivable";
@@ -26,6 +28,9 @@ export default function Dashboard() {
   const [outQueue, setOutQueue] = useState<any[] | null>(null); // гадаа материалтай гэрээнүүд
   const [busy, setBusy] = useState<number | null>(null);
   const [overdueOpen, setOverdueOpen] = useState(false); // хэтэрсэн нэхэмжлэлийн задаргаа
+  /* «Анхаарах» самбар нь БҮХ харилцагчийн тугийг цуглуулдаг тул 40 мөр болж,
+     дашбоардын талыг эзэлдэг байв. Эхлээд найм — үлдсэн нь товчийн ард. */
+  const [allFlagged, setAllFlagged] = useState(false);
   const [ask, setAsk] = useState<any>(null);          // баталгаажуулах гэж буй ачилт
   const [lines, setLines] = useState<any[] | null>(null); // тухайн ачилтын мөрүүд
   const toast = useToast();
@@ -172,6 +177,7 @@ export default function Dashboard() {
   /* ⚑ АНХААРАХ — Отгоогийн ШАР НҮДНҮҮД (P1-22). Мөр бүр «хаанаас гарсан»-аа
      авч явдаг тул дарахад тэр объект руугаа буулгана (`flaggedHref` —
      `notificationHref`-ийн ЯГ тэр журам: худал холбоос нь холбоосгүйгээс дор). */
+  const flaggedView = capRows(flagged, FLAGGED_CAP, allFlagged);
   const attendCard = (
     <div className="card p-5 mb-3">
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
@@ -185,7 +191,7 @@ export default function Dashboard() {
           Анхаарах тэмдэглэл алга. 🙌 Гэрээ, харилцагчийн «Тэмдэглэл» дээр
           ⚑ тэмдэглэсэн мөр энд цугларна.
         </p>
-      ) : flagged.map((n: any) => {
+      ) : flaggedView.shown.map((n: any) => {
         const to = flaggedHref(n);
         return (
           <div key={n.id}
@@ -203,6 +209,14 @@ export default function Dashboard() {
           </div>
         );
       })}
+      {/* Нуугдсан туг нь АЛГА БОЛООГҮЙ — нэг товчийн ард. Товч нь хэдийг
+          нээхээ өөрөө хэлнэ (гэрээний зурвастай ЯГ ижил дүрэм). */}
+      {flaggedView.total > FLAGGED_CAP && (
+        <button type="button" className="btn-ghost !min-h-9 !py-1.5 !px-3 text-[12.5px] mt-2.5"
+                onClick={() => setAllFlagged(!allFlagged)}>
+          {allFlagged ? "Хураах" : showAllLabel(flaggedView.total)}
+        </button>
+      )}
     </div>
   );
 
@@ -267,7 +281,10 @@ export default function Dashboard() {
     <Refreshing busy={busyScope}>
       <div className="dashboard-header">
         <div>
-          <div className="dashboard-kicker">ӨДРИЙН АЖИЛ <span>•</span> АМЬД</div>
+          {/* «АМЬД» гэдэг нь системийн өөрийнх нь тухай үг — тоо шинэчлэгдэж
+              байгааг зарлах нь Отгоод асуулт төрүүлдэг («амьд биш үе бий
+              юу?»). Хуудас юуны тухай болохоо л хэлнэ. */}
+          <div className="dashboard-kicker">ӨДРИЙН АЖИЛ</div>
           <h1 className="dashboard-title">Өнөөдрийн ажил</h1>
           <p className="dashboard-subtitle">Ачилтаа баталгаажуулж, түрээсэнд байгаа материалаа хараарай.</p>
         </div>
@@ -289,7 +306,7 @@ export default function Dashboard() {
               болохыг гарчигныхаа дээр хэлнэ (хаягтай нэг зүйл). */}
           <div className="dashboard-kicker">УДИРДЛАГЫН ТОЙМ
             {scope !== "all" && <><span>•</span> {SCOPE_LABEL[scope].toUpperCase()}</>}
-            <span>•</span> АМЬД</div>
+          </div>
           <h1 className="dashboard-title">Удирдлагын төв</h1>
           <p className="dashboard-subtitle">
             {scope === "all" ? "Компанийн өнөөдрийн зураг — бүх тоо амьд." :
@@ -438,7 +455,7 @@ export default function Dashboard() {
                        гэрээний толгойд гараад доош нь хайж эхэлдэг байв. */
                     <tr key={o.id} className="cursor-pointer hover:bg-canvas"
                         {...rowClickProps(() => nav(invoiceHref(o.contract_id, o.id)),
-                          `${lb.sub ?? lb.title} · ${o.client} — ${money(o.remaining)}, ${o.days_overdue} хоног хэтэрсэн, гэрээ №${o.contract_no} нээх`,
+                          `${lb.sub ?? lb.title} · ${o.client} — ${money(o.remaining)}, ${o.days_overdue} хоног хэтэрсэн, ${contractTitle(o.contract_no)} нээх`,
                           "row")}>
                       <td className="td">
                         {/* Нэхэмжлэлийн нэр бүх дэлгэц дээр НЭГ дүрмээс гарна.
@@ -448,7 +465,13 @@ export default function Dashboard() {
                             Отгоо таамаглана. */}
                         <b className="text-ink">{lb.title}</b>
                         <span className="block text-xs text-t3">
-                          {lb.sub && <>{lb.sub} · </>}Гэрээ №{o.contract_no} · {o.due_date}-нд төлөгдөх ёстой байсан
+                          {lb.sub && <>{lb.sub} · </>}
+                          {/* Хуучин үлдэгдлийн «гэрээ» нь ЗОХИОМОЛ — толгой
+                              нь аль хэдийн «Хуучин үлдэгдэл» гэж хэлсэн тул
+                              «Гэрээ №OB-2» гэсэн хоёр дахь нэр гарахгүй. */}
+                          {contractTitle(o.contract_no) !== lb.title &&
+                            <>{contractTitle(o.contract_no)} · </>}
+                          {o.due_date}-нд төлөгдөх ёстой байсан
                         </span>
                       </td>
                       {/* Мөр нь ГЭРЭЭ рүү; харилцагчийн нэр ӨӨРИЙН баганадаа
@@ -501,14 +524,14 @@ export default function Dashboard() {
                 {schedule.map((s: any) => (
                   <tr key={s.contract_id} className="cursor-pointer hover:bg-canvas"
                       {...rowClickProps(() => nav(contractHref(s.contract_id)),
-                        `${s.client} — ${s.expected_date}-нд ойролцоогоор ${money(s.projected_amount)}, гэрээ №${s.contract_no} нээх`,
+                        `${s.client} — ${s.expected_date}-нд ойролцоогоор ${money(s.projected_amount)}, ${contractTitle(s.contract_no)} нээх`,
                         "row")}>
                     <td className="td"><b className="text-ink tabular-nums">{s.expected_date}</b>
                       <span className="block text-xs text-t3">{dueLabel(s.expected_date, today)} · {s.cycle_label}</span></td>
                     <td className="td" onClick={(e) => e.stopPropagation()}>
                       <Link to={clientHref(s.client_id)} className="text-ink hover:underline">{s.client}</Link>
                     </td>
-                    <td className="td text-t2">№{s.contract_no}</td>
+                    <td className="td text-t2">{contractNoLabel(s.contract_no)}</td>
                     {/* ≈ нь энэ тоо ТООЦООЛСОН гэдгийг нүдэнд шууд хэлнэ */}
                     <td className="td text-right tabular-nums font-bold text-ink"
                         title={`Төсөөлөл — ${money(s.projected_amount)}`}>≈{money(s.projected_amount)}</td>

@@ -18,6 +18,7 @@ import { daysVarianceText, lotDaysHint, lotDaysMax, lotOptions, materialSections
 import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED,
          chargeLabel, chargedTotal, laterLiveCharge } from "../lib/penalty";
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
+import { OPENING_LABEL, isOpeningRow, openingUntil } from "../lib/opening";
 import { daysBetween, todayIso } from "../lib/schedule";
 import { isVoided, movementStockRows, voidRowClass, voidTitle } from "../lib/void";
 import { DEPOSIT_ACTIONS, DepositEvent, DepositKind, DepositLedger, depositActions,
@@ -49,6 +50,9 @@ const MV_DOT: Record<string, string> = {
 export default function ContractDetail() {
   const { id } = useParams();
   const [d, setD] = useState<any>(null);
+  /* Харилцагчийн БҮТЭН зураг — зөвхөн нийт үлдэгдэл ба хуучин үлдэгдлийн
+     хэсгийг нэрлэхэд. Хуудас үүнгүйгээр ч бүрэн ажиллана. */
+  const [cl, setCl] = useState<any>(null);
   const [grades, setGrades] = useState<any[]>([]);
   const [modal, setModal] = useState<"" | "return" | "sale" | "add" | "pay" | "extend"
                                         | "deposit" | "close" | "penalty">("");
@@ -91,7 +95,20 @@ export default function ContractDetail() {
      мэдээллийг агуулахын шалан дээр асуух хүн бий, тэр нь Отгоо. */
   const seesMoney = u?.role !== "factory";
 
-  const load = () => api(`/api/contracts/${id}`).then(setD).catch((e) => toast(e.message, "err"));
+  const load = () => api(`/api/contracts/${id}`).then((r) => {
+    setD(r);
+    /* ХАРИЛЦАГЧИЙН НИЙТ ҮЛДЭГДЭЛ (H9b). Энэ хуудсан дээрх «үлдэгдэл» нь
+       ГАНЦ гэрээнийх — атал Отгоо утсаар ярихдаа ХАРИЛЦАГЧААС нэхнэ.
+       Хоёр тоо зөрөх нь хэвийн (хуучин үлдэгдэл, өөр гэрээ), гэхдээ тэр
+       зөрүүг ХУУДАС ӨӨРӨӨ хэлэх ёстой — эс бөгөөс «аль нь үнэн бэ» гэсэн
+       асуулт үлдэнэ. Тоо нь харилцагчийн хуудсынхтай ЯГ НЭГ эх сурвалжаас
+       ирнэ (сервер), энд нийлбэр БОДОГДОХГҮЙ.
+       Алдаа гарвал чимээгүй — энэ бол НЭМЭЛТ мөр, гэрээний хуудсыг
+       унагаах шалтгаан биш. */
+    if (u?.role !== "factory" && r?.client_id) {
+      api(`/api/clients/${r.client_id}`).then(setCl).catch(() => setCl(null));
+    }
+  }).catch((e) => toast(e.message, "err"));
   useEffect(() => { load(); api("/api/grades").then(setGrades); }, [id]);
 
   /* ---------- Хаягаар заасан мөр рүү ----------
@@ -166,6 +183,14 @@ export default function ContractDetail() {
   const sections = materialSections(d.items || [], d.material_lines || []);
   const pendingMv = d.movements.filter((m: any) => m.status === "pending").length;
   const showHist = histOpen ?? pendingMv > 0;
+  /* ХУУЧИН ҮЛДЭГДЭЛ (`OB-…`) — Excel-ээс шилжсэн дүн, гэрээ ДҮР ЭСГЭСЭН
+     байдлаар сууна. Отгоо энэ хуудсыг нээхэд «гэрээ» гэсэн бүх зүйл нь
+     ХООСОН: материал алга, акт алга, хөдөлгөөн алга, барьцаа алга, «Гэрээ
+     сунгах» гэсэн товч утгагүй. Тэдгээр хоосон хайрцаг нь «мэдээлэл
+     алдагдсан» гэж уншигдана. Тиймээс энэ хуудас ХОЁР зүйл л үзүүлнэ:
+     тэр үлдэгдлийн нэхэмжлэл ба түүн рүү орсон төлбөрүүд. */
+  const isOB = isOpeningRow(d);
+  const obUntil = openingUntil(d.invoices?.[0]?.cycle_start || d.start_date);
 
   return (
     <div>
@@ -177,11 +202,21 @@ export default function ContractDetail() {
                 суусан ч энэ бол ХОЛБООС — 33px байсныг доод шатанд нь
                 (`--target-sm`) хүргэнэ. `inline-flex items-center` байхгүй бол
                 `min-h` нь inline элементэд огт үйлчлэхгүй. */}
+            {/* Хуучин үлдэгдлийн хуудас нь ӨӨРИЙГӨӨ эхний үгээрээ нэрлэнэ —
+                «Түрээс» гэсэн төрлийн тэмдэг, «Хуучин үлдэгдэл» гэсэн төлөвийн
+                тэмдэг хоёр нь энд давхардал (гарчиг аль хэдийн хэлсэн). */}
+            {isOB && <span>{OPENING_LABEL} —</span>}
             <Link to={clientHref(d.client_id)}
                   className="hover:underline inline-flex items-center min-h-[36px]">{d.client}</Link>
-            <StatePill state={d.state} /><TypePill type={d.type} />
+            {!isOB && <><StatePill state={d.state} /><TypePill type={d.type} /></>}
           </h1>
           <div className="text-t2 text-[13.5px] mt-1.5 flex items-center gap-x-4 gap-y-1.5 flex-wrap">
+            {isOB ? (
+              /* «Гэрээ №OB-2 · 2026-09-01-с» гэдэг нь гурван худал нэг мөрөнд:
+                 гэрээ ч биш, тэр дугаартай ч биш, тэр өдөр эхэлсэн ч биш —
+                 тэр өдрөөр ТООЛСОН. Үнэн нь ганц өгүүлбэр. */
+              <span>{obUntil || "Хуучин системээс шилжсэн үлдэгдэл"}</span>
+            ) : (
             <span className="inline-flex items-center gap-1.5">
               Гэрээ №{d.no} ·{" "}
               {u?.role === "manager" ? (
@@ -191,7 +226,8 @@ export default function ContractDetail() {
                                             "Гэрээний эхлэх огноо шинэчлэгдлээ")} />
               ) : `${d.start_date}-с`}
             </span>
-            {seesMoney ? (
+            )}
+            {seesMoney && !isOB ? (
               <>
                 {/* Дуусах огноо нь ХООСОН байх нь хэвийн — компани гэрээндээ
                     хугацаа тавьдаггүй. «тодорхойгүй» гэдэг нь мэдээлэл дутуу
@@ -207,20 +243,23 @@ export default function ContractDetail() {
                     onSave={(v) => savePatch(`/api/contracts/${d.id}`,
                       v ? { end_date: v } : { clear_end_date: true }, "Дуусах огноо шинэчлэгдлээ")} />
                 </span>
-                {/* ТООЦООНЫ МӨЧЛӨГ (H3 / R5) — цөөнх гэрээ КАЛЕНДАРЬ САРААР
+                {/* ТООЦООНЫ ЦИКЛ (H3 / R5) — цөөнх гэрээ КАЛЕНДАРЬ САРААР
                     нэхэгддэг (31 хоногтой сар ×31/30 илүү). Горим солих нь
                     эхлэх огноо солихтой ижил хүндийн засвар: БҮХ цикл шинээр
                     зурагдана, тиймээс `gatedPatch` — нэхэмжлэлтэй гэрээнд
                     RebuildModal эхлээд зөрүүг харуулна. Дуусах огноо, алданги
-                    шиг ЧӨЛӨӨТЭЙ хадгалагдаж БОЛОХГҮЙ. */}
+                    шиг ЧӨЛӨӨТЭЙ хадгалагдаж БОЛОХГҮЙ.
+                    ⚠ ХОЁР ҮГ НЭГ ЗҮЙЛД: энэ мөр «Мөчлөг», доорх явцын мөр
+                    «Цикл» гэдэг байв — Отгоо хоёр өөр тохиргоо гэж уншина.
+                    Хуудас дээр ГАНЦ үг: «Цикл». */}
                 {d.type === "rent" && (
-                  <span className="inline-flex items-center gap-1.5"><span aria-hidden="true">Мөчлөг:</span>
+                  <span className="inline-flex items-center gap-1.5"><span aria-hidden="true">Цикл:</span>
                     {u?.role === "manager" ? (
-                      <InlineEdit label="Тооцооны мөчлөг" value={d.cycle_mode || "days"}
+                      <InlineEdit label="Тооцооны цикл" value={d.cycle_mode || "days"}
                         display={cycleModeLabel(d.cycle_mode)} options={CYCLE_MODES}
-                        width="w-36" confirmText="Мөчлөг солих уу?"
+                        width="w-36" confirmText="Циклийн горим солих уу?"
                         onSave={(v) => gatedPatch(`/api/contracts/${d.id}`, { cycle_mode: v },
-                                                  "Тооцооны мөчлөг шинэчлэгдлээ")} />
+                                                  "Тооцооны цикл шинэчлэгдлээ")} />
                     ) : cycleModeLabel(d.cycle_mode)}
                   </span>
                 )}
@@ -240,7 +279,7 @@ export default function ContractDetail() {
                       { deposit: parseMoney(v) }, "Барьцаа шинэчлэгдлээ")} />
                 </span>
               </>
-            ) : (
+            ) : seesMoney ? null : (
               /* Алдангийн ХУВЬ нь гэрээний мөнгөн нөхцөл — дуусах огноо нь
                  ажлын хуваарь. Даргад үлдэх нь хугацаа, явахгүй нь хувь. */
               <span>→ {endDateLabel(d.end_date)}</span>
@@ -256,16 +295,22 @@ export default function ContractDetail() {
           )}
         </div>
         <div className="flex gap-2.5 flex-wrap">
-          {/* Гурван PDF-ийн аль нь ч тариф, дүн, алданги авч явдаг — үйлдвэрийн
-              дарга эдгээрийг хэвлэдэггүй, харах ч ёсгүй. */}
+          {/* Гурван хэвлэмэлийн аль нь ч тариф, дүн, алданги авч явдаг —
+              үйлдвэрийн дарга эдгээрийг хэвлэдэггүй, харах ч ёсгүй.
+              «PDF» гэдэг нь ФАЙЛЫН ФОРМАТ — Отгоо цаас хэвлэхээр товч дардаг,
+              формат сонгодоггүй. Товч нь ҮЙЛДЛЭЭ нэрлэнэ. */}
           {seesMoney && (
             <>
+              {/* Зохиомол гэрээний «гэрээ», «акт» хэвлэмэл нь ХООСОН цаас —
+                 хуучин үлдэгдэлд материалын мөр, тариф, акт байхгүй. */}
+              {!isOB && (<>
               <PdfButton pdf={pdf} path={`/api/contracts/${d.id}/pdf`}
-                         busyLabel="Гаргаж байна…">Гэрээ PDF</PdfButton>
+                         busyLabel="Гаргаж байна…">Гэрээ хэвлэх</PdfButton>
               <PdfButton pdf={pdf} path={`/api/contracts/${d.id}/act-pdf`}
-                         busyLabel="Гаргаж байна…">Акт PDF</PdfButton>
+                         busyLabel="Гаргаж байна…">Акт хэвлэх</PdfButton>
+              </>)}
               {/* `cyc` нь явагдаж буй цикл — сервер яг үүн дээр л хавсралт гаргана. */}
-              {d.type === "rent" && cyc && (
+              {d.type === "rent" && cyc && !isOB && (
                 <PdfButton pdf={pdf} path={`/api/contracts/${d.id}/cycle-appendix-pdf`}
                            busyLabel="Гаргаж байна…">Энэ циклийн хавсралт</PdfButton>
               )}
@@ -279,7 +324,7 @@ export default function ContractDetail() {
               )}
             </>
           )}
-          {canManage && d.type === "rent" && d.status === "active" && (
+          {canManage && d.type === "rent" && d.status === "active" && !isOB && (
             <>
               <button className="btn-secondary" onClick={() => setModal("add")}>+ Нэмэлт олголт</button>
               {/* ХУДАЛДАА БОЛГОХ нь зөвхөн хаалтын үйл явдал БИШ — харилцагч
@@ -297,14 +342,18 @@ export default function ContractDetail() {
         {/* «Өдрийн дүн», «Энэ циклд хуримтлагдсан» нь ХУРИМТЛАЛ — авлагын хоёр
             нүүр. Дарга материал тоолдог хүн тул эдгээр нь түүнд харагдахгүй
             (сервер ч талбарыг нь илгээхээ больсон). */}
-        {seesMoney && d.type === "rent" && <Num label="Өдрийн дүн" val={money(d.day_amount)} />}
-        {seesMoney && cyc && <Num label="Энэ циклд хуримтлагдсан" val={money(cyc.accrued)} />}
+        {seesMoney && d.type === "rent" && !isOB && <Num label="Өдрийн дүн" val={money(d.day_amount)} />}
+        {seesMoney && cyc && !isOB && <Num label="Энэ циклд хуримтлагдсан" val={money(cyc.accrued)} />}
         {/* Энэ мөрөнд «Өдрийн дүн», «Хуримтлагдсан» нь ТӨГРӨГӨӨРӨӨ зогсож
             байхад үлдэгдэл нь «12.3 сая» гэж дугуйлагддаг байв — Отгоо яг
             хэдийг нэхэхээ мэдэхгүй, доорх нэхэмжлэлүүдтэй нийлүүлж ч чадахгүй.
             Ганц гэрээний дүн энд бүтнээрээ зогсоно. */}
         {seesMoney && (
-          <Num label="Нийт үлдэгдэл" val={money(d.balance)} danger={d.state === "overdue"} />
+          /* «Нийт үлдэгдэл» гэдэг нь ЮУНЫ нийт вэ гэсэн асуулт үлдээдэг байв:
+             ЯГ ижил нэр харилцагчийн хуудсан дээр ӨӨР тоо (бүх гэрээ + хуучин
+             үлдэгдэл) дээр зогсдог. Нэр нь хэмжигдэхүүнээ өөрөө нэрлэнэ. */
+          <Num label={isOB ? OPENING_LABEL : "Энэ гэрээний үлдэгдэл"}
+               val={money(d.balance)} danger={d.state === "overdue"} />
         )}
         {/* АЛДАНГИ ХОЁР НҮҮРТЭЙ (R25 / H2). «Нэхэгдсэн» нь МӨНГӨ — улаан,
             төлөгдөнө. «Тооцоолол» нь ХӨШҮҮРЭГ — бүдэг, ≈ угтвартай, доор нь
@@ -317,7 +366,7 @@ export default function ContractDetail() {
           <Num label="Алдангийн тооцоолол" val={"≈" + money(pen.unbooked)}
                sub={UNCHARGED} dim />
         )}
-        {cyc && (
+        {cyc && !isOB && (
           <div className="flex-1 min-w-[210px]">
             <div className="text-[12px] text-t3 font-semibold uppercase tracking-wider mb-2.5">
               Цикл {cycleLabel(cyc.cycle_start, cyc.cycle_end)} · {cyc.days_done}/{cyc.days_total} хоног
@@ -331,6 +380,30 @@ export default function ContractDetail() {
           </div>
         )}
       </div>
+
+      {/* ХОЁР ҮЛДЭГДЭЛ, НЭГ ХАРИЛЦАГЧ (H9b).
+          Дээрх тоо нь ГАНЦ гэрээнийх. Отгоо утсаар ярихдаа харилцагчаас
+          нэхдэг тул тэр нийт дүнг нь ЭНД, нэрлээд, ХОЛБООСТОЙГООР хэлнэ —
+          дараа нь харилцагчийн хуудсан дээр өөр тоо олоод «зөрчил» гэж
+          уншихгүй. Зөрүү байхгүй бол мөр огт гарахгүй: тэнцүү хоёр тоог
+          хоёр удаа хэлэх нь зөвхөн эргэлзээ төрүүлнэ. */}
+      {seesMoney && cl && Math.round(cl.receivable) !== Math.round(d.balance) && (
+        <div className="text-[13px] text-t2 -mt-2 mb-4">
+          Харилцагчийн нийт үлдэгдэл:{" "}
+          <Link to={clientHref(d.client_id)}
+                className="font-bold text-ink tabular-nums hover:underline">
+            {money(cl.receivable)}
+          </Link>
+          {(() => {
+            const ob = (cl.contracts || []).filter(isOpeningRow)
+              .reduce((s: number, c: any) => s + (c.balance || 0), 0);
+            return ob > 0
+              ? <> — үүнээс {OPENING_LABEL.toLowerCase()}{" "}
+                  <b className="text-ink tabular-nums">{money(ob)}</b></>
+              : null;
+          })()}
+        </div>
+      )}
 
       {/* АЛДАНГИЙН НЭХЭЛТ (R25 / H2 · H1) — дээрх «Нэхэгдсэн алданги» тооны
           АРД зогсох ШИЙДВЭРҮҮД. Урьд нь нэхэлт бүр явдал болж бичигдээд
@@ -377,7 +450,10 @@ export default function ContractDetail() {
 
       <div className="grid grid-cols-[1.6fr_1fr] gap-4 max-lg:grid-cols-1">
         <div className="space-y-4">
-          {/* Материал — мөр бүр өөрийнхөө хөдөлгөөний түүхийг доороо задална */}
+          {/* Материал — мөр бүр өөрийнхөө хөдөлгөөний түүхийг доороо задална.
+              Хуучин үлдэгдэлд материалын мөр БАЙХГҮЙ (тэр бол зөвхөн дүн) —
+              хоосон хүснэгт нь «мэдээлэл алдагдсан» гэж уншигдана. */}
+          {!isOB && (
           <div className="card overflow-x-auto">
             <div className="flex items-center justify-between px-4 pt-4 pb-1">
               <h2 className="font-bold text-ink text-[15.5px]">
@@ -542,13 +618,14 @@ export default function ContractDetail() {
               </div>
             )}
           </div>
+          )}
 
           {/* ЧӨЛӨӨТ АКТ (R12 / түр R15 / H4) — материал ба нэхэмжлэлийн ДУНД.
               Отгоогийн хуудасны блок нь ЯГ энэ дараалалтай: материалын мөрүүд ×
               хоног → АКТ → НӨАТ → Нийт төлөх дүн. Тиймээс акт нь материалын
               доор, нэхэмжлэлийн дээр зогсоно — түүний 20 жилийн нүдний хөдөлгөөн
               хэвээрээ үлдэнэ. Худалдааны гэрээнд цикл байхгүй тул хэсэг ч алга. */}
-          {seesMoney && d.type === "rent" && (
+          {seesMoney && d.type === "rent" && !isOB && (
           <div className="card overflow-x-auto">
             <div className="flex items-center justify-between px-4 pt-4 pb-1 gap-3 flex-wrap">
               <h2 className="font-bold text-ink text-[15.5px]">Акт бичилтүүд</h2>
@@ -695,10 +772,14 @@ export default function ContractDetail() {
                     <td className="td">
                       <div className="flex gap-1.5 flex-wrap">
                         <PdfButton pdf={pdf} className="btn-ghost btn-row"
-                                   path={`/api/invoices/${inv.id}/pdf`}>PDF</PdfButton>
+                                   path={`/api/invoices/${inv.id}/pdf`}>Хэвлэх</PdfButton>
                         {/* Хавсралт нь ЗӨВХӨН түрээст: худалдааны нэхэмжлэлд
-                            хоногийн цонх байхгүй тул сервер 400 буцаана. */}
-                        {d.type === "rent" && (
+                            хоногийн цонх байхгүй тул сервер 400 буцаана.
+                            Хуучин үлдэгдэлд ч мөн адил — материалын мөр,
+                            хоногийн цонх байхгүй тул тэр товч ажиллахгүй
+                            (дарахад юу ч болохгүй товч бол хамгийн муу
+                            төрлийн эвдрэл). */}
+                        {d.type === "rent" && !isOB && (
                           <PdfButton pdf={pdf} className="btn-ghost btn-row"
                                      path={`/api/invoices/${inv.id}/appendix-pdf`}>Хавсралт</PdfButton>
                         )}
@@ -726,15 +807,11 @@ export default function ContractDetail() {
 
         {/* Хөдөлгөөн + төлбөр */}
         <div className="space-y-4">
-          {/* ЗАХЫН ТЭМДЭГЛЭЛ (P1-22) — «7.06нд тооцов», «ирээгүй», «хаав».
-              Гурван рольд ч бичигдэнэ: талбай дээр «ирээгүй» гэдгийг
-              анзаардаг нь үйлдвэрийн дарга (сервер ч гэрээ/хөдөлгөөнийг
-              түүнд нээлттэй үлдээнэ). */}
-          <NotesStrip entityType="contract" entityId={d.id} canWrite={!!u?.role} />
           {/* Он цагийн дараалсан түүх — материалын доорх дэвтэр гарснаар
               ХОЁРДОГЧ болов. Гэхдээ хумигдсанаас өөр юу ч алдагдаагүй:
               хөдөлгөөний ОГНОО, тэмдэглэл нь ганц хөдөлгөөнд бүхэлд нь
               хамаардаг тул материалын мөрөнд бус, зөвхөн энд засагдана. */}
+          {!isOB && (
           <div className="card p-5">
             {/* Гарчиг нь ТОВЧИЙГ агуулна (button дотор heading биш) — уншигчаар
                 ажилладаг хүн гарчгаар нь үсэрч, тэндээсээ задална. */}
@@ -941,6 +1018,7 @@ export default function ContractDetail() {
             </div>
             )}
           </div>
+          )}
 
           {seesMoney && (
           <div className="card p-5">
@@ -959,7 +1037,7 @@ export default function ContractDetail() {
                 <span className={`ml-auto ${voidRowClass(p)} ${p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green"
                         : p.method === "CREDIT" ? "pill-grey" : "pill-blue"}`}>
                   {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн"
-                         : p.method === "CREDIT" ? "Бичилтийн кредит" : "Данс"}
+                         : p.method === "CREDIT" ? "Тооцоогоор хаасан" : "Данс"}
                 </span>
                 {canVoid && !isVoided(p) && (
                   <VoidButton label={`${money(p.amount)} · ${p.date}`}
@@ -977,12 +1055,24 @@ export default function ContractDetail() {
           </div>
           )}
 
-          {seesMoney && (
+          {seesMoney && !isOB && (
             <DepositCard d={d} canWrite={u?.role !== "factory"}
                          onSettle={() => setModal("deposit")} onDone={load} />
           )}
 
-          {u?.role === "manager" && d.status === "active" && (
+          {/* ЗАХЫН ТЭМДЭГЛЭЛ (P1-22) — «7.06нд тооцов», «ирээгүй», «хаав».
+              Гурван рольд ч бичигдэнэ: талбай дээр «ирээгүй» гэдгийг
+              анзаардаг нь үйлдвэрийн дарга (сервер ч гэрээ/хөдөлгөөнийг
+              түүнд нээлттэй үлдээнэ).
+              ⚠ БАЙРЛАЛ (2026-09): энэ зурвас баганын ЭХЭНД зогсдог байв.
+              Отгоогийн гэрээ бүр 30–48 тэмдэглэлтэй тул «Хөдөлгөөний түүх»,
+              «Төлбөрүүд», «Барьцаа», «Гэрээ хаах» дөрөв нь 1800px доош
+              түлхэгддэг — тэр товчнууд ОРШИН БАЙДАГГҮЙТЭЙ адил болно.
+              Тэмдэглэл нь ТАЙЛБАР, ажлын товч нь ҮЙЛДЭЛ: үйлдэл нь эхэлж
+              гарт бэлэн байна. */}
+          <NotesStrip entityType="contract" entityId={d.id} canWrite={!!u?.role} />
+
+          {u?.role === "manager" && d.status === "active" && !isOB && (
             <div className="card p-5 flex gap-2.5 flex-wrap">
               <button className="btn-secondary" onClick={() => setModal("extend")}>Гэрээ сунгах</button>
               <button className="btn-ghost text-danger" onClick={() => setModal("close")}>Гэрээ хаах</button>
@@ -1202,7 +1292,7 @@ function ContractFinance({ d, cyc, pen, aktSum }: {
               p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green"
                         : p.method === "CREDIT" ? "pill-grey" : "pill-blue"}`}>
               {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн"
-                         : p.method === "CREDIT" ? "Бичилтийн кредит" : "Данс"}
+                         : p.method === "CREDIT" ? "Тооцоогоор хаасан" : "Данс"}
             </span>
           </div>
         ))}
@@ -2828,7 +2918,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
             </span>
             <div className="flex gap-2 flex-wrap">
               <PdfButton pdf={pdf} className="btn-secondary btn-row"
-                         path={`/api/invoices/${inv.id}/pdf`}>PDF</PdfButton>
+                         path={`/api/invoices/${inv.id}/pdf`}>Хэвлэх</PdfButton>
               <PdfButton pdf={pdf} className="btn-ghost btn-row"
                          path={`/api/invoices/${inv.id}/appendix-pdf`}>Хавсралт</PdfButton>
             </div>

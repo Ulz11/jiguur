@@ -42,6 +42,44 @@ export function orderNotes<T extends { id: number; date: string }>(
     (a, b) => (a.date === b.date ? b.id - a.id : (a.date < b.date ? 1 : -1)));
 }
 
+/** ЗУРВАСЫН ДАРААЛАЛ — анхаарах ⚑ нь ДЭЭРЭЭ, дараа нь сүүлийн шийдвэр.
+ *
+ *  Зурвас нь таван мөрөөр хумигддаг болсон тул «энэ рүү эргэж хар» гэсэн мөр
+ *  тэр таванд ЗААВАЛ багтах ёстой: тугтай мөр зургаа дахь байрандаа нуугдвал
+ *  туг нь утгаа алдана. Эрэмбэ нь ТОГТВОРТОЙ — бүлэг дотроо огнооны дараалал
+ *  хэвээр (`orderNotes`). */
+export function rankNotes<T extends { id: number; date: string; flag?: boolean;
+                                      voided?: boolean }>(
+  notes: T[] | null | undefined,
+): T[] {
+  const rank = (n: T) => (n.flag && !n.voided ? 0 : 1);
+  return orderNotes(notes).sort((a, b) => rank(a) - rank(b));
+}
+
+/** ХУМИГДСАН ЖАГСААЛТ — «бүгдийг харах» хүртэл хэдэн мөр гарах вэ.
+ *
+ *  Отгоогийн гэрээ бүр 30–48 тэмдэглэлтэй: тэдгээр нь баганаа бүтнээрээ
+ *  эзэлж, «Төлбөрүүд», «Барьцаа», гэрээ хаах товч гурвыг 1800px доош
+ *  түлхдэг байв. Мөр нь алга болохгүй — НЭГ товчийн ард зогсоно. */
+export function capRows<T>(rows: T[] | null | undefined, cap: number, expanded: boolean):
+    { shown: T[]; total: number; hidden: number } {
+  const all = rows || [];
+  const shown = expanded || all.length <= cap ? all : all.slice(0, cap);
+  return { shown, total: all.length, hidden: all.length - shown.length };
+}
+
+/** Зурвасын анхдагч хязгаар — гэрээ, харилцагч, хөдөлгөөн ГУРВУУЛАА ижил. */
+export const NOTE_CAP = 5;
+/** Дашбоардын «Анхаарах» самбар нь бүх харилцагчийн тугийг цуглуулдаг тул
+ *  арай өгөөмөр — гэхдээ хуудасны талыг эзлэхээ болино. */
+export const FLAGGED_CAP = 8;
+
+/** «Бүгдийг харах (30)» — тоо нь ХЭДИЙГ нээхийг хэлнэ, хэд нуугдсаныг биш:
+ *  дарахаасаа өмнө «за, гучин мөр байна» гэдгээ мэдэж байх нь чухал. */
+export function showAllLabel(total: number): string {
+  return `Бүгдийг харах (${total})`;
+}
+
 /** Хумигдсан толгойн ХОЁР тоо: хэдэн мөр байна, хэд нь ⚑.
  *
  *  ХҮЧИНГҮЙ болсон туг нь «анхаарах» БИШ (цуцлалт нь тугийг унтраана) — гэвч

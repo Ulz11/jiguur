@@ -16,6 +16,8 @@ import { invoiceLabel } from "../lib/invoice";
 import { useDownload } from "../lib/docs";
 import { rowClickProps } from "../lib/rowClick";
 import { contractHref } from "../lib/links";
+import { contractCount, contractNoLabel, contractTitle, isOpeningRow, openingUntil,
+         partnerSince } from "../lib/opening";
 import { dueLabel, todayIso } from "../lib/schedule";
 import { penaltySplit, UNCHARGED } from "../lib/penalty";
 import { uninvoicedLine } from "../lib/receivable";
@@ -72,7 +74,9 @@ export default function ClientProfile() {
      тойм, гэрээ, хавсралт. */
   const TABS = ([
     ["overview", "Тойм"],
-    ["contracts", `Гэрээ`, d.contracts.length],
+    /* Хуучин үлдэгдлийн зохиомол гэрээ ТООНД ОРОХГҮЙ: нэг гэрээтэй
+       харилцагч «2» гэж харагдвал Отгоо байхгүй гэрээ хайж эхэлнэ. */
+    ["contracts", `Гэрээ`, contractCount(d.contracts)],
     ...(seesMoney ? [
       ["invoices", "Нэхэмжлэл", d.invoices.length],
       ["payments", "Төлбөр", d.payments.length],
@@ -119,7 +123,13 @@ export default function ClientProfile() {
               <span className="inline-flex items-center gap-1.5">Утас:
                 <InlineEdit label="Утас" value={d.phone} width="w-32" confirmText="Хадгалах уу?"
                   onSave={(v) => saveClient({ phone: v })} /></span>
-              <span>Хамтран ажилласан: <b className="text-t1">{d.since}-с</b></span>
+              {/* «Хамтран ажилласан» нь ХАРИЛЦААНЫ нас — системд бүртгүүлсэн
+                  өдөр биш. Шилжүүлсэн харилцагч бүрд бүртгэлийн огноо нь
+                  ачаалсан өдөр (2026-09-04) тул хоёр жилийн түнш «өнөөдөр
+                  эхэлсэн» гэж харагддаг байв. Үнэн нь хамгийн хуучин
+                  гэрээний эхлэл (`lib/opening`). */}
+              <span>Хамтран ажилласан:{" "}
+                <b className="text-t1">{partnerSince(d.contracts, d.since)}-с</b></span>
             </div>
             <div className="mt-2.5 text-[12.5px] text-t2 inline-flex items-center gap-2">💬
               <InlineEdit label="Тэмдэглэл" value={d.note} display={d.note || "тэмдэглэл нэмэх…"} width="w-80"
@@ -161,7 +171,7 @@ export default function ClientProfile() {
             <Stat label="Барьцаа" val={d.deposit > 0 ? sayaFmt(d.deposit) + "₮" : "—"}
                   exact={d.deposit > 0 ? money(d.deposit) : undefined} />
             </>)}
-            <Stat label="Гэрээ" val={String(d.contracts.length)} />
+            <Stat label="Гэрээ" val={String(contractCount(d.contracts))} />
           </div>
         </div>
         {u?.role !== "factory" && (
@@ -210,12 +220,12 @@ export default function ClientProfile() {
                     <div key={s.contract_id}
                          className="flex items-center justify-between gap-3 py-2.5 border-b border-sunken cursor-pointer hover:bg-canvas -mx-2 px-2 rounded-lg transition"
                          {...rowClickProps(() => nav(contractHref(s.contract_id)),
-                           `Гэрээ №${s.contract_no} — ${s.expected_date}-нд ойролцоогоор ${money(s.projected_amount)}, нээх`,
+                           `${contractTitle(s.contract_no)} — ${s.expected_date}-нд ойролцоогоор ${money(s.projected_amount)}, нээх`,
                            "link")}>
                       <div className="min-w-0">
                         <b className="text-[13px] text-ink tabular-nums">{s.expected_date}</b>
                         <span className="block text-xs text-t3">
-                          №{s.contract_no} · {dueLabel(s.expected_date, today)}
+                          {contractNoLabel(s.contract_no)} · {dueLabel(s.expected_date, today)}
                         </span>
                       </div>
                       {/* ≈ нь энэ тоо ТООЦООЛСОН гэдгийг нүдэнд шууд хэлнэ */}
@@ -244,9 +254,14 @@ export default function ClientProfile() {
                   <div>
                     <Link to={contractHref(inv.contract_id)}
                           className="text-[13px] font-bold text-ink hover:underline">
-                      №{inv.contract_no}
+                      {contractNoLabel(inv.contract_no)}
                     </Link>
-                    <b className="text-[13px] text-ink"> · {inv.cycle_start}</b>
+                    {/* Хуучин үлдэгдлийн «цикл» нь нэг өдөр — «· 2026-09-01»
+                        гэсэн мөр нь тэр өдөр ЭХЭЛСЭН гэж уншигдана. Үнэн нь
+                        тэр өдрөөр ТООЛСОН. */}
+                    <b className="text-[13px] text-ink">
+                      {" · "}{isOpeningRow({ no: inv.contract_no })
+                                ? openingUntil(inv.cycle_start) : inv.cycle_start}</b>
                     <span className="block text-xs text-t3 tabular-nums">{money(inv.total)}
                       {inv.penalty_due > 0 && <span className="text-danger"> + алданги {money(inv.penalty_due)}</span>}
                       {inv.penalty_unbooked > 0 && <span className="text-t3"> · ≈{money(inv.penalty_unbooked)} {UNCHARGED}</span>}</span>
@@ -270,10 +285,17 @@ export default function ClientProfile() {
                 {d.contracts.map((c: any) => (
                   <tr key={c.id} className="cursor-pointer hover:bg-canvas group"
                       {...rowClickProps(() => nav(contractHref(c.id)),
-                                        `Гэрээ №${c.no} нээх`, "row")}>
-                    <td className="td"><b className="text-ink">№{c.no}</b>
-                      <span className="block text-xs text-t3">{c.start_date}-с</span></td>
-                    <td className="td"><TypePill type={c.type} /></td>
+                                        `${contractTitle(c.no)} нээх`, "row")}>
+                    <td className="td"><b className="text-ink">{contractNoLabel(c.no)}</b>
+                      {/* Хуучин үлдэгдэл нь тэр өдрөөс ЭХЭЛСЭН биш, тэр
+                          өдрөөр ТООЛОГДСОН. Түрээс/худалдаа гэсэн төрөл ч
+                          түүнд байхгүй. */}
+                      <span className="block text-xs text-t3">
+                        {isOpeningRow(c) ? openingUntil(c.start_date) : `${c.start_date}-с`}
+                      </span></td>
+                    <td className="td">
+                      {isOpeningRow(c) ? <span className="text-xs text-t3">—</span>
+                                       : <TypePill type={c.type} />}</td>
                     <td className="td min-w-[140px]">
                       {c.cycle ? <><div className="text-xs text-t2 mb-1">{c.cycle.days_done}/{c.cycle.days_total} хоног</div>
                         <Prog pct={(c.cycle.days_done / c.cycle.days_total) * 100} /></> : <span className="text-xs text-t3">—</span>}
@@ -303,7 +325,7 @@ export default function ClientProfile() {
                       <span className="block text-xs text-t3">
                         {invoiceLabel(inv).sub && <>{invoiceLabel(inv).sub} · </>}
                         <Link to={contractHref(inv.contract_id)} className="text-t2 hover:underline">
-                          Гэрээ №{inv.contract_no}
+                          {contractTitle(inv.contract_no)}
                         </Link>
                       </span></td>
                     <td className="td text-right tabular-nums">{money(inv.total)}</td>
@@ -353,7 +375,7 @@ export default function ClientProfile() {
                       <span className={`${voidRowClass(p)} ${p.method === "BARTER" ? "pill-violet" : p.method === "CASH" ? "pill-green"
                         : p.method === "CREDIT" ? "pill-grey" : "pill-blue"}`}>
                         {p.method === "BARTER" ? `Бартер · ${p.barter_desc}` : p.method === "CASH" ? "Бэлэн"
-                         : p.method === "CREDIT" ? "Бичилтийн кредит" : "Данс"}
+                         : p.method === "CREDIT" ? "Тооцоогоор хаасан" : "Данс"}
                       </span>
                       {isVoided(p) && (
                         <>
@@ -370,7 +392,7 @@ export default function ClientProfile() {
                     <td className="td text-t2">
                       {p.contract_id
                         ? <Link to={contractHref(p.contract_id)} className="text-ink hover:underline">
-                            №{p.contract_no}
+                            {contractNoLabel(p.contract_no)}
                           </Link>
                         : "—"}
                     </td>
@@ -398,7 +420,7 @@ export default function ClientProfile() {
           <div>
             <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
               <p className="text-[13px] text-t2 max-w-2xl">
-                Түрээсийн мөчлөгт хамаарахгүй бичилтүүд — олгосон зээл, түүний
+                Түрээсийн циклд хамаарахгүй бичилтүүд — олгосон зээл, түүний
                 өмнөөс төлсөн цалин, кран, харилцагч хоорондын тооцоо. Бичилт бүр
                 харилцагчийн авлагад ЯГ тэр дүнгээрээ буудаг.
               </p>
@@ -741,7 +763,7 @@ function ClientFinance({ d }: { d: any }) {
               {d.invoices.map((inv: any) => (
                 <tr key={inv.id}>
                   <td className="td"><b className="text-ink">{invoiceLabel(inv).title}</b>
-                    <span className="block text-xs text-t3">Гэрээ №{inv.contract_no}</span></td>
+                    <span className="block text-xs text-t3">{contractTitle(inv.contract_no)}</span></td>
                   <td className="td text-right tabular-nums">{money(inv.total)}</td>
                   <td className="td text-right tabular-nums">{money(inv.paid)}</td>
                   <td className={`td text-right tabular-nums font-bold ${
@@ -763,7 +785,7 @@ function ClientFinance({ d }: { d: any }) {
           <FinanceRow key={p.id} label={`${p.date} · ${
             p.method === "BARTER" ? `Бартер · ${p.barter_desc}`
             : p.method === "CASH" ? "Бэлэн"
-            : p.method === "CREDIT" ? "Бичилтийн кредит" : "Данс"}`}
+            : p.method === "CREDIT" ? "Тооцоогоор хаасан" : "Данс"}`}
             sub={isVoided(p) ? "ХҮЧИНГҮЙ" : p.contract_no ? `Гэрээ №${p.contract_no}` : undefined}
             value={money(p.amount)} tone={isVoided(p) ? "dim" : undefined} />
         ))}

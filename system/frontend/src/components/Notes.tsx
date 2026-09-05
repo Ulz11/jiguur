@@ -3,7 +3,7 @@ import { api } from "../api";
 import { Chevron, ConfirmModal, FormModal, SubmitButton, useToast } from "../ui";
 import { disclosureProps, panelId } from "../lib/disclosure";
 import { formDirty } from "../lib/dirty";
-import { orderNotes, noteSummary, type Note } from "../lib/note";
+import { NOTE_CAP, capRows, noteSummary, rankNotes, showAllLabel, type Note } from "../lib/note";
 import { todayIso } from "../lib/schedule";
 import { isVoided, voidRowClass, voidTitle } from "../lib/void";
 import { VoidButton } from "./VoidPayment";
@@ -33,6 +33,10 @@ export function NotesStrip({ entityType, entityId, canWrite, compact }: {
 }) {
   const [rows, setRows] = useState<Note[] | null>(null);
   const [open, setOpen] = useState(false);
+  /* «Бүгдийг харах» — задарсан зурвас нь эхлээд ТАВАН мөр. Отгоогийн гэрээ
+     бүр 30–48 тэмдэглэлтэй: бүгдийг нь нийлүүлбэл «Төлбөрүүд», «Барьцаа»,
+     гэрээ хаах товч гурав нь 1800px доош түлхэгдэнэ. */
+  const [all, setAll] = useState(false);
   const [adding, setAdding] = useState(false);
   const [voiding, setVoiding] = useState<Note | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -45,7 +49,10 @@ export function NotesStrip({ entityType, entityId, canWrite, compact }: {
       .then((r: Note[]) => {
         setRows(r);
         /* Тугтай мөр байвал НЭГ УДАА өөрөө задарна — хумигдсан ⚑ нь
-           «анхаарах» гэдгээ хэлж чадахгүй. Дараа нь түүний сонголт хэвээр. */
+           «анхаарах» гэдгээ хэлж чадахгүй. Дараа нь түүний сонголт хэвээр.
+           ⚠ Өөрөө задрах нь ХУМИГДСАН ТАВАН мөрийг л нээнэ (`all` хэвээр
+           худал): эс бөгөөс ганц туг 48 мөрийг хуудсан дээр асгана —
+           тугтай мөр нь `rankNotes`-оор тэр таванд ЗААВАЛ багтана. */
         if (!opened.current && noteSummary(r).flagged > 0) {
           opened.current = true;
           setOpen(true);
@@ -54,7 +61,8 @@ export function NotesStrip({ entityType, entityId, canWrite, compact }: {
       .catch((e) => toast(e.message, "err"));
   useEffect(() => { void load(); }, [entityType, entityId]);
 
-  const list = orderNotes(rows || []);
+  const view = capRows(rankNotes(rows || []), NOTE_CAP, all);
+  const list = view.shown;
   const sum = noteSummary(rows || []);
 
   async function toggleFlag(n: Note) {
@@ -133,6 +141,15 @@ export function NotesStrip({ entityType, entityId, canWrite, compact }: {
           );
         })}
       </ul>
+      {/* Нуугдсан мөр нь АЛГА БОЛООГҮЙ — нэг товчийн ард байгаа. Товч нь
+          хэдийг нээхээ өөрөө хэлнэ, тиймээс дарахаасаа өмнө «за, гучин мөр
+          байна» гэдгээ мэднэ. */}
+      {view.total > NOTE_CAP && (
+        <button type="button" className="btn-ghost !min-h-9 !py-1.5 !px-3 text-[12.5px] mt-2.5"
+                onClick={() => setAll(!all)}>
+          {all ? "Хураах" : showAllLabel(view.total)}
+        </button>
+      )}
       {canWrite && (
         <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[12.5px] mt-3"
                 onClick={() => setAdding(true)}>+ Тэмдэглэл</button>

@@ -48,9 +48,20 @@ export default function Collections() {
     (r: any) => (sort.key === "overdue" ? r.overdue : r.oldest_days),
     sort.dir);
   const SORT_ARROW = sort.dir === "desc" ? "↓" : "↑";
+  /* 1366×768 (Отгоогийн ЖИНХЭНЭ дэлгэц) дээр энэ хүснэгт 1,044px хэрэгсэж,
+     картын 1,018px-д багтдаггүй байв: мөр бүрийн «+ Тэмдэглэл» товч баруун
+     ирмэгээс 12px гадуур үлдэнэ. Тэр товч дээр л энэ хуудасны БҮХ АЖИЛ
+     эхэлдэг («залгасан, тэр амлав») — хажуу тийш гүйлгэх хөдөлгөөн нь
+     Excel-ийн 20 жилд түүнд огт байгаагүй тул товч нь ОРШИН БАЙДАГГҮЙТЭЙ
+     адил болдог.
+     Багана нэг ч АЛГА БОЛООГҮЙ: толгойн үг хоёр мөр болж эвхэгдэж
+     (`whitespace-normal` — `.th` анхдагчаараа `nowrap`), хэвтээ зай нь
+     арай нягт боллоо. */
+  const TH = "th !whitespace-normal !px-2.5";
+  const TD = "td !px-2.5";
   /** Эрэмбэлдэг баганын толгой — дарагдана, ямар эрэмбэтэй байгаагаа хэлнэ. */
   const sortTh = (key: SortKey, label: string, right?: boolean) => (
-    <th className={`th ${right ? "text-right" : ""}`} aria-sort={ariaSort(sort, key)}>
+    <th className={`${TH} ${right ? "text-right" : ""}`} aria-sort={ariaSort(sort, key)}>
       {/* Сум нь ЧИМЭГ биш — энэ багана эрэмбэлэгддэг гэдгийг хэлдэг тайван дохио.
           Идэвхтэй үед брэнд өнгөөр чиглэлээ, идэвхгүй үед бүдэг ↕ хэлбэрээр. */}
       <button className="th-sort" onClick={() => setSort(nextSort(sort, key))}
@@ -110,20 +121,20 @@ export default function Collections() {
       </div>
 
       <div className="card overflow-x-auto">
-        <table className="w-full min-w-[1020px]">
+        <table className="w-full min-w-[860px]">
           <thead><tr>
-            <th className="th">Харилцагч</th>
+            <th className={TH}>Харилцагч</th>
             {sortTh("overdue", "Хэтэрсэн", true)}
             {/* НЭГ АВЛАГА (H9b): дашбоард, харилцагчийн жагсаалт, профайл
                 дээрхтэй ЯГ ИЖИЛ тоо. «Хэтэрсэн» нь түүний ДОТОРХ хэсэг —
                 нэхэгдсэн, хугацаа нь өнгөрсөн. Хоёр багана зэрэгцэж зогсох нь
                 залгах эрэмбийг (хэтэрсэн) авлагын бүтэн үнэнээс салгана. */}
-            <th className="th text-right">Авлага</th>
-            <th className="th text-right">Нэхэгдсэн алданги</th>
+            <th className={`${TH} text-right`}>Авлага</th>
+            <th className={`${TH} text-right`}>Нэхэгдсэн алданги</th>
             {sortTh("oldest", "Хамгийн хуучин")}
-            <th className="th">Сүүлд холбогдсон</th>
-            <th className="th">Амлалт</th>
-            <th className="th"></th>
+            <th className={TH}>Сүүлд холбогдсон</th>
+            <th className={TH}>Амлалт</th>
+            <th className={TH}></th>
           </tr></thead>
           <tbody>
             {rows.map((r: any) => {
@@ -136,7 +147,7 @@ export default function Collections() {
               const phone = pick?.phone || r.phone;
               return (
               <tr key={r.client_id} className="hover:bg-canvas transition">
-                <td className="td">
+                <td className={TD}>
                   {/* Нэр нь ӨӨРИЙН баганадаа зогсож байгаа тул холбоос:
                       залгах хүн профайл руу нь шууд орж түүхийг нь хардаг. */}
                   <Link to={clientHref(r.client_id)} className="font-bold text-ink hover:underline">
@@ -159,13 +170,13 @@ export default function Collections() {
                 </td>
                 {/* Жагсаалт нь «хэнд эхэлж залгах вэ» гэдгийг хэлдэг тул сая нь
                     зөв — харин залгахын өмнө нэхэх дүнгээ бүтнээр нь хардаг. */}
-                <td className="td text-right tabular-nums font-bold text-danger" title={money(r.overdue)}>{sayaFmt(r.overdue)}₮</td>
+                <td className={`${TD} text-right tabular-nums font-bold text-danger`} title={money(r.overdue)}>{sayaFmt(r.overdue)}₮</td>
                 {/* Авлагын НИЙТ дүн — бусад дэлгэцтэй ЯГ ижил, задаргаатайгаа */}
                 {/* Дэд мөр нь ТОЛГОЙНХОО шатаар (`sayaFmtLike`): авлага нь
                     сая, циклийн хуримтлал нь мянгаар хэмжигддэг тул дэд мөрийг
                     өөрийнх нь хэмжээгээр шатлуулбал «1.2 сая₮» дээр «13,200₮»
                     тогтож, нэг нүдэнд хоёр өөр хэмжүүр уншигдана. */}
-                <td className="td text-right tabular-nums font-bold text-ink" title={money(r.balance)}>
+                <td className={`${TD} text-right tabular-nums font-bold text-ink`} title={money(r.balance)}>
                   {sayaFmt(r.balance)}₮
                   {uninvoicedLine(r.balance_uninvoiced, r.balance) && (
                     <span className="block text-[12px] text-t3 font-normal"
@@ -177,7 +188,7 @@ export default function Collections() {
                 {/* Нүдний ТОЛГОЙ нь нэхэгдсэн алданги; нэхэгдээгүй тооцоолол нь
                     ТҮҮНИЙ шатаар бичигдэнэ. Нэхэгдсэн нь 0 (толгой нь «—») бол
                     тооцоолол өөрөө толгой болно — өөрийнхөө шатаар. */}
-                <td className="td text-right tabular-nums text-t2"
+                <td className={`${TD} text-right tabular-nums text-t2`}
                     title={r.penalty_booked > 0 ? money(r.penalty_booked) : undefined}>
                   {r.penalty_booked > 0 ? sayaFmt(r.penalty_booked) + "₮" : "—"}
                   {r.penalty_unbooked > 0 && (
@@ -186,20 +197,20 @@ export default function Collections() {
                       ≈{sayaFmtLike(r.penalty_unbooked,
                                     r.penalty_booked > 0 ? r.penalty_booked : r.penalty_unbooked)}₮ {UNCHARGED}</span>)}
                 </td>
-                <td className="td">
+                <td className={TD}>
                   <span className={r.oldest_days >= 90 ? "pill-red" : r.oldest_days >= 30 ? "pill-amber" : "pill-grey"}>
                     {r.oldest_days} хоног
                   </span>
                 </td>
-                <td className="td">
+                <td className={TD}>
                   {r.last_contact ? (
                     <>
                       <span className="text-[13px]">{r.last_contact}</span>
-                      <span className="block text-[12px] text-t3 truncate max-w-[180px]">{r.last_note}</span>
+                      <span className="block text-[12px] text-t3 truncate max-w-[130px]">{r.last_note}</span>
                     </>
                   ) : <span className="pill-red">Огт холбогдоогүй</span>}
                 </td>
-                <td className="td">
+                <td className={TD}>
                   {r.promise_date ? (
                     <span className={r.promise_late ? "pill-red" : "pill-green"}
                           title={money(r.promise_amount)}>
@@ -207,7 +218,7 @@ export default function Collections() {
                     </span>
                   ) : <span className="text-t3 text-[12.5px]">—</span>}
                 </td>
-                <td className="td">
+                <td className={TD}>
                   <button className="btn-primary !min-h-9 !py-1.5 !px-3 text-[12.5px]"
                           onClick={() => setNote(r)}>+ Тэмдэглэл</button>
                 </td>

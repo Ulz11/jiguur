@@ -7,6 +7,7 @@ import { cycleShortLabel } from "../lib/cycle";
 import { cycleModeBadge, cycleModeHint } from "../lib/contract";
 import { rowClickProps } from "../lib/rowClick";
 import { contractFilterFrom, contractHref, type ContractFilter } from "../lib/links";
+import { contractNoLabel, contractTitle, isOpeningRow, openingUntil } from "../lib/opening";
 import { UNCHARGED } from "../lib/penalty";
 import { useScope, ScopeSwitch } from "../App";
 
@@ -43,8 +44,17 @@ export default function Contracts() {
   useEffect(() => { setFilter(contractFilterFrom(stateParam)); }, [stateParam]);
   if (!rows) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
 
-  // «Хуучин үлдэгдэл» (OB-) гэрээнүүд жагсаалтыг дүүргэхгүйн тулд тусдаа шүүлтүүрт
-  const isOB = (c: any) => c.state === "opening";
+  // «Хуучин үлдэгдэл» гэрээнүүд жагсаалтыг дүүргэхгүйн тулд тусдаа шүүлтүүрт
+  const isOB = (c: any) => isOpeningRow(c);
+  /* ХАРИЛЦАГЧИЙН НИЙТ (H9b) — «энэ гэрээний үлдэгдэл» ба «харилцагчаас нэхэх
+     дүн» хоёр нь ӨӨР тоо: хуучин үлдэгдэл, өөр гэрээ нь мөрөнд харагдахгүй.
+     Зөрүүг мөр өөрөө хэлнэ. ⚠ Зөвхөн «бүх төрөл» хүрээнд: түрээс/худалдаа
+     шүүсэн үед энэ нийлбэр ХАГАС болно, тэгвэл харилцагчийн хуудсан дээрх
+     тоотой зөрч, «нэг тоо» дүрэм эвдэрнэ. */
+  const clientTotal = new Map<number, number>();
+  for (const c of rows) {
+    clientTotal.set(c.client_id, (clientTotal.get(c.client_id) || 0) + (c.balance || 0));
+  }
   const match = (c: any, f: string) =>
     f === "opening" ? isOB(c) : f === "all" ? !isOB(c) : !isOB(c) && c.state === f;
   const cnt = (f: string) => rows.filter((c) => match(c, f)).length;
@@ -114,12 +124,16 @@ export default function Contracts() {
               return (
                 <tr key={c.id} className="cursor-pointer hover:bg-canvas transition group"
                     {...rowClickProps(() => nav(contractHref(c.id)),
-                                      `Гэрээ №${c.no} · ${c.client} — нээх`, "row")}>
+                                      `${contractTitle(c.no)} · ${c.client} — нээх`, "row")}>
                   <td className="td">
                     <span className="font-bold text-ink">{c.client}</span>
+                    {/* Хуучин үлдэгдэл нь «№OB-2 · 2026-09-01-с» гэж гардаг
+                        байв: гурван худал нэг мөрөнд — гэрээ ч биш, тэр
+                        дугаартай ч биш, тэр өдөр эхэлсэн ч биш. */}
                     <span className="block text-xs text-t3 mt-0.5"
                           title={seesMoney && c.deposit > 0 ? `Барьцаа ${money(c.deposit)}` : undefined}>
-                      №{c.no} · {c.start_date}-с
+                      {isOB(c) ? openingUntil(c.start_date)
+                               : `${contractNoLabel(c.no)} · ${c.start_date}-с`}
                       {seesMoney && c.deposit > 0 && ` · барьцаа ${sayaFmt(c.deposit)}₮`}</span>
                   </td>
                   {/* ТООЦООНЫ МӨЧЛӨГ (R5 / H3) — «аль харилцагч календарь
@@ -129,7 +143,9 @@ export default function Contracts() {
                       саарал — энэ бол сануулга биш, гэрээний НӨХЦӨЛ. */}
                   <td className="td">
                     <div className="flex flex-col items-start gap-1">
-                      <TypePill type={c.type} />
+                      {/* Хуучин үлдэгдэлд «Түрээс/Худалдаа» гэсэн төрөл байхгүй */}
+                      {isOB(c) ? <span className="text-xs text-t3">—</span>
+                               : <TypePill type={c.type} />}
                       {cycleModeBadge(c.cycle_mode) && (
                         <span className="pill-grey" title={cycleModeHint(c.start_date)}>
                           {cycleModeBadge(c.cycle_mode)}
@@ -138,7 +154,12 @@ export default function Contracts() {
                     </div>
                   </td>
                   <td className="td min-w-[150px]">
-                    {c.cycle ? (
+                    {/* Хуучин үлдэгдэлд ЦИКЛ гэж байхгүй: зохиомол гэрээ нь
+                        30 хоногийн цонхтой төрдөг ч тэр цонх дуусахад ЮУ Ч
+                        нэхэгдэхгүй. Явцын зураас нь «сар дуусахаар дахин
+                        нэхэгдэнэ» гэж уншигдана — худал амлалт. */}
+                    {isOB(c) ? <span className="text-xs text-t3">—</span>
+                     : c.cycle ? (
                       <>
                         {/* Явцын зураас нь ӨНГӨӨРӨӨ л «хэтэрсэн/дуусах дөхсөн»
                             гэдгээ хэлдэг байсан — улаан ногоог ялгадаггүй хүнд,
@@ -172,6 +193,16 @@ export default function Contracts() {
                     {c.penalty_unbooked > 0 && <span className="block text-[12px] text-t3"
                                             title={`Тооцоолол — ${money(c.penalty_unbooked)} · ${UNCHARGED}`}>
                       ≈{sayaFmtLike(c.penalty_unbooked, c.balance)}₮ {UNCHARGED}</span>}
+                    {/* Отгоо утсаар ярихдаа ХАРИЛЦАГЧААС нэхнэ — тэр дүн нь
+                        энэ мөрийнхөөс их байвал МӨРӨН ДЭЭР нь хэлнэ. Дэд мөр
+                        нь толгойныхоо шатаар (`sayaFmtLike`) — нэг нүдэнд
+                        хоёр хэмжүүр зэрэгцэхгүй. */}
+                    {scope === "all" && Math.round(clientTotal.get(c.client_id) || 0)
+                                        !== Math.round(c.balance) && (
+                      <span className="block text-[12px] text-t3"
+                            title={`Харилцагчийн нийт — ${money(clientTotal.get(c.client_id) || 0)}`}>
+                        харилцагч нийт: {sayaFmtLike(clientTotal.get(c.client_id) || 0, c.balance)}₮
+                      </span>)}
                   </td>
                   </>)}
                   <td className="td"><StatePill state={c.state} /></td>
@@ -212,7 +243,7 @@ export default function Contracts() {
                 {shown.map((c) => (
                   <tr key={c.id}>
                     <td className="td"><span className="font-bold text-ink">{c.client}</span>
-                      <span className="block text-xs text-t3">№{c.no}</span></td>
+                      <span className="block text-xs text-t3">{contractNoLabel(c.no)}</span></td>
                     <td className="td text-right tabular-nums">
                       {c.day_amount ? money(c.day_amount) : "—"}</td>
                     <td className="td text-right tabular-nums">

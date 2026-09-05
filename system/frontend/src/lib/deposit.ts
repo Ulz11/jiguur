@@ -48,7 +48,8 @@ const KIND_MN: Record<string, string> = {
 };
 
 export function depositKindLabel(kind: string): string {
-  return KIND_MN[kind] ?? kind;
+  // Танихгүй бичилт нь ТҮҮХИЙ түлхүүрээ зурахгүй (англи үг = хоосон нүд).
+  return KIND_MN[kind] ?? "Бусад";
 }
 
 /** Дэвтрийн мөр үлдэгдлийг ӨСГӨХ (+1) эсвэл БУУРУУЛАХ (−1) эсэх. */

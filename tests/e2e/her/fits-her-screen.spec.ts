@@ -107,6 +107,34 @@ test.describe('1366×768', () => {
                                        b.headers.join(' ; ')),
         `«${route.path}»: картын доторх гүйлтийн ард БҮТЭН БАГАНА нуугдлаа — ` +
         '«НДШ» багана яг ингэж алга болж байсан').toEqual([]);
+
+      /* ---- 5. МӨР БҮРИЙН ажлын товч ГАРТ БЭЛЭН ----
+         Дээрх 4-р шалгалт нь ГҮЙЛТИЙН хайрцгийн ирмэгийг хардаг; энэ нь
+         ДЭЛГЭЦИЙНХИЙГ. Бодит датан дээр /collections-ийн хүснэгт 1,044px
+         хэрэгсэж, картын 1,018px-д багтдаггүй байв — мөр бүрийн
+         «+ Тэмдэглэл» товч баруун ирмэгээс 12px гадуур үлдэнэ. Энэ хуудасны
+         БҮХ ажил тэр товч дээр эхэлдэг («залгасан, тэр амлав»): хажуу тийш
+         гүйлгэх хөдөлгөөн нь Отгоо эгчид байхгүй тул товч нь оршин
+         байдаггүйтэй адил. Seed-ийн дата нь нарийхан тул зөрчил зөвхөн
+         жинхэнэ дэвтэр дээр гардаг — хэмжүүр нь энд, БАГАНЫН өргөнөөр
+         барина (`min-w`, толгойн үгийн эвхэлт). */
+      if (route.path !== '/collections') return;
+      const firstNote = managerPage.getByRole('button', { name: '+ Тэмдэглэл' }).first();
+      await expect(firstNote, '/collections дээр «+ Тэмдэглэл» товч алга').toBeVisible();
+      const nb = (await firstNote.boundingBox())!;
+      expect(Math.round(nb.x + nb.width),
+        'эхний мөрийн «+ Тэмдэглэл» товч дэлгэцийн баруун ирмэгээс ' +
+        `${Math.round(nb.x + nb.width - innerWidth)}px давлаа — хүрэхийн тулд ` +
+        'хүснэгтийг хажуу тийш гүйлгэх хэрэгтэй болно').toBeLessThanOrEqual(innerWidth);
+      /* Товч нь КАРТЫНХАА дотор ч бүтнээрээ багтана — карт нь өөрөө
+         гүйдэг хайрцаг тул дэлгэцэнд багтсан ч ирмэгээр нь тасарч болно. */
+      const cardRight = await firstNote.evaluate((el) => {
+        const box = el.closest('.card');
+        return box ? box.getBoundingClientRect().right : Infinity;
+      });
+      expect(Math.round(nb.x + nb.width),
+        'эхний мөрийн «+ Тэмдэглэл» товч картын гүйлтийн ард үлдлээ')
+        .toBeLessThanOrEqual(Math.round(cardRight));
     });
   }
 });
