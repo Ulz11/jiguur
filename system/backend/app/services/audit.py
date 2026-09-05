@@ -1,6 +1,15 @@
 """Audit log — хэн, юуг, хэзээ өөрчилснийг бүртгэнэ."""
+import sys
+import traceback
+
 from sqlalchemy.orm import Session
 from .. import models
+
+#: «Дэлгэрэнгүй» мөрийн дээд урт. Тооллогын мөр бүрийн зөрүү (мөр бүр ~40
+#: тэмдэгт) энд БҮТНЭЭРЭЭ багтах ёстой: 1000 тэмдэгт нь ~20 мөрийн дараа
+#: тасардаг байсан — тасарсан газраас нь цааш «юу өөрчлөгдсөн» гэдэг нь
+#: бүртгэлээс БҮРМӨСӨН алга болно (H1-ийн эсрэг).
+DETAIL_LIMIT = 4000
 
 
 class _SystemActor:
@@ -21,17 +30,45 @@ class _SystemActor:
 SYSTEM = _SystemActor()
 
 
+def trim(detail: str) -> str:
+    """Хэт урт мөрийг таслахдаа ТАСАРСАН гэдгээ ХЭЛНЭ.
+
+    Чимээгүй таслалт нь хамгийн муу: уншигч бүтэн мөр гэж итгээд дутуу
+    жагсаалтаас дүгнэлт хийнэ. «…» нь «цааш бий» гэсэн ил тэмдэг.
+    """
+    if len(detail) <= DETAIL_LIMIT:
+        return detail
+    return detail[:DETAIL_LIMIT - 1] + "…"
+
+
 def log(db: Session, user, action: str, entity: str, entity_id=None, detail: str = ""):
-    """Аудит бичилт нэмнэ. Гол урсгалыг хэзээ ч тасалдуулахгүй."""
+    """Аудит бичилт нэмнэ. Гол урсгалыг хэзээ ч тасалдуулахгүй.
+
+    ⚠ Алдаа нь ЧИМЭЭГҮЙ ЗАЛГИГДАХГҮЙ. Урьд нь `print(...)` нь stdout руу
+    ганц мөр бичээд өнгөрдөг байв: аудит бичиж ЧАДААГҮЙ гэдэг нь «хэн, юуг,
+    хэзээ» гэсэн амлалт эвдэрсэн гэсэн үг тул тэр нь хамгийн чанга дуугарах
+    ёстой явдал. Одоо stderr рүү бүтэн traceback-тайгаа гарна (лог цуглуулагч,
+    systemd/journal, run.sh-ийн гаралт бүгд stderr-ийг тусад нь бариулдаг).
+
+    Бүтэлгүйтсэн session нь ГАЖ (rollback хийгдээгүй) үлдэж болзошгүй тул
+    аудитынхаа гүйлгээг өөрөө цэвэрлэнэ — дуудагчийн дараагийн `commit`
+    «PendingRollbackError»-оор унахгүй.
+    """
     try:
         db.add(models.AuditLog(
             user_id=getattr(user, "id", None),
             user_name=getattr(user, "name", "") or "",
             action=action, entity=entity, entity_id=entity_id,
-            detail=detail[:1000]))
+            detail=trim(detail)))
         db.commit()
     except Exception as e:  # noqa: BLE001
-        print("[audit] бичиж чадсангүй:", e)
+        print(f"[audit] БИЧИЖ ЧАДСАНГҮЙ ({action}/{entity}#{entity_id}): {e!r}",
+              file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +105,9 @@ VALUES_MN: dict[str, str] = {
     "transfer": "шилжүүлэг", "adjustment": "залруулга",
     # бичилтээс төрсөн кредит төлбөр
     "CREDIT": "бичилтийн кредит",
+    # агуулахын залруулгын ЭХ СУРВАЛЖ (`models.StockAdjustment.source`)
+    "stocktake": "тооллого", "adjust": "залруулга",
+    "repair": "засвар", "barter": "бартер",
 }
 
 #: Захын тэмдэглэлийн ШАР ТУГ (P1-22). ⚠ `VALUES_MN`-д ОРУУЛАХГҮЙ: Python-д
@@ -92,6 +132,16 @@ FIELDS_MN: dict[str, str] = {
     # механизм ба түүний бичилт
     "name": "нэр", "active": "идэвхтэй эсэх", "label": "ажлын нэр",
     "client": "харилцагч", "amount": "дүн", "method": "хэлбэр",
+    # каталог: материал ба зэрэглэл
+    "code": "код", "sort": "эрэмбэ", "category": "ангилал",
+    "unit": "хэмжих нэгж", "base_rate": "суурь тариф",
+    "repair_fee": "засварын хөлс",
+    # тохиргооны түлхүүрүүд (`SettingsPage.tsx`-ийн дөрвөн талбар)
+    "company_name": "компанийн нэр",
+    "penalty_default": "алдангийн суурь хувь",
+    "cycle_days_default": "циклийн суурь урт",
+    "ndsh_percent": "НДШ-ийн хувь",
+    "machine_vat_percent": "механизмын НӨАТ-ын хувь",
 }
 
 

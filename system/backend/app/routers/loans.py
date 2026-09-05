@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..db import get_db
 from .. import models, auth
+from ..services import audit
 from ..services import loans as L
 
 router = APIRouter(prefix="/api")
@@ -15,6 +16,32 @@ guard = auth.require_roles("manager", "finance")
 # мөнгө; төлөлт биш тул үлдэгдлийг бууруулахгүй, харин ӨСГӨНӨ.
 PARTS = ("interest", "principal", "topup")
 PART_ERR = "part нь interest, principal эсвэл topup байна"
+
+#: Мөрийн ТӨРӨЛ монголоор — /audit-ийн «Дэлгэрэнгүй» багана дээр.
+PART_MN = {"interest": "хүү", "principal": "үндсэн төлбөр", "topup": "нэмэлт олголт"}
+
+#: Зээлийн талбарын МОНГОЛ нэр (`services/audit.py` FIELDS_MN нь нөгөө
+#: агентын файл тул толио энд авч явлаа — түүхий «monthly_rate» гэсэн үг
+#: Отгоо эгчийн хувьд хоосон нүд).
+FIELDS_MN = {"name": "нэр", "kind": "төрөл", "principal": "үндсэн дүн",
+             "monthly_rate": "сарын хүү %", "start_date": "эхэлсэн огноо",
+             "status": "төлөв", "note": "тэмдэглэл",
+             "monthly_payment": "сарын төлөлт", "date": "огноо",
+             "amount": "дүн", "part": "төрөл"}
+
+#: Зээлийн ТӨЛӨВ ба ТӨРӨЛ — утга нь ч монголоор гарна.
+VALUES_MN = {"active": "идэвхтэй", "closed": "хаагдсан",
+             "bank": "банк", "private": "хувь хүн", "credit": "зээлийн шугам",
+             **PART_MN}
+
+
+def _mn(v) -> str:
+    return VALUES_MN.get(v, "—" if v is None or v == "" else str(v))
+
+
+def _changes(before: dict, after: dict) -> str:
+    return " · ".join(f"{FIELDS_MN.get(k, k)}: {_mn(before.get(k))} → {_mn(v)}"
+                      for k, v in after.items() if before.get(k) != v)
 
 
 class LoanIn(BaseModel):
@@ -37,6 +64,7 @@ class LoanPayIn(BaseModel):
 def ser(l: models.Loan, today: date):
     interest_paid = sum(p.amount for p in l.payments if p.part == "interest")
     principal_paid = sum(p.amount for p in l.payments if p.part == "principal")
+    late, days_late = L.overdue_state(l, today)
     return {"id": l.id, "name": l.name, "kind": l.kind, "principal": l.principal,
             "monthly_rate": l.monthly_rate, "start_date": str(l.start_date),
             "status": l.status, "note": l.note,
@@ -45,11 +73,42 @@ def ser(l: models.Loan, today: date):
             "monthly_payment": l.monthly_payment or 0,
             "topup_total": round(L.topup_total(l)),
             "next_due": str(L.next_due_date(l, today)),
+            # ТӨЛӨЛТ ХОЦОРСОН УУ — энэ сарын төлөх өдөр өнгөрсөн боловч
+            # тэр сард үндсэн/хүүгийн төлөлт огт бүртгэгдээгүй бол ТИЙМ.
+            "overdue": late, "days_late": days_late,
+            "due_day": str(L.due_day(l, today)),
             "interest_paid": round(interest_paid),
             "principal_paid": round(principal_paid),
             "payments": [{"id": p.id, "date": str(p.date), "amount": p.amount,
                           "part": p.part, "note": p.note}
                          for p in sorted(l.payments, key=lambda p: p.date, reverse=True)]}
+
+
+def _autoclose(db: Session, user, l: models.Loan) -> bool:
+    """Үлдэгдэл 0 болбол зээлийг ХААНА — ба тэр шийдвэрээ БИЧНЭ.
+
+    Урьд нь хаалт нь чимээгүй болдог байв: /audit дээр мөр байхгүй, хариунд
+    ч тэмдэг байхгүй тул Отгоо эгч жагсаалтаас зээл нь «алга болсныг» дараа
+    нь олж, «хэн хаасан юм бэ?» гэж асуудаг байв.
+    """
+    if l.status == "closed" or L.loan_balance(l) > 0.01:
+        return False
+    l.status = "closed"
+    db.commit()
+    audit.log(db, user, "close", "loan", l.id,
+              f"{l.name} · үлдэгдэл 0 боллоо — автоматаар хаав")
+    return True
+
+
+def _reopen(db: Session, user, l: models.Loan, why: str) -> bool:
+    """Хаагдсан зээл дээр үлдэгдэл ЭРГЭЖ гарвал СЭРГЭЭНЭ (ба бичнэ)."""
+    if l.status != "closed" or L.loan_balance(l) <= 0.01:
+        return False
+    l.status = "active"
+    db.commit()
+    audit.log(db, user, "reopen", "loan", l.id,
+              f"{l.name} · {why} — үлдэгдэл {L.loan_balance(l):,.0f}₮ болсон тул сэргээв")
+    return True
 
 
 @router.get("/loans")
@@ -68,6 +127,9 @@ def add_loan(body: LoanIn, db: Session = Depends(get_db), user=Depends(guard)):
     l = models.Loan(**body.model_dump())
     db.add(l)
     db.commit()
+    audit.log(db, user, "create", "loan", l.id,
+              f"{l.name} · {_mn(l.kind)} · {l.principal:,.0f}₮ · "
+              f"сарын хүү {l.monthly_rate}% · {l.start_date}")
     return ser(l, date.today())
 
 
@@ -84,13 +146,14 @@ def pay_loan(lid: int, body: LoanPayIn, db: Session = Depends(get_db), user=Depe
         raise HTTPException(400, "Хаагдсан зээлд нэмэлт олголт бүртгэхгүй — эхлээд зээлээ сэргээнэ үү")
     if body.part == "principal" and body.amount > L.loan_balance(l) + 0.01:
         raise HTTPException(400, "Үлдэгдлээс их үндсэн төлбөр")
-    db.add(models.LoanPayment(loan_id=lid, **body.model_dump()))
+    p = models.LoanPayment(loan_id=lid, **body.model_dump())
+    db.add(p)
     db.commit()
+    audit.log(db, user, "create", "loan_payment", p.id,
+              f"{l.name} · {p.date} · {PART_MN[p.part]} · {p.amount:,.0f}₮")
     db.refresh(l)
-    if L.loan_balance(l) <= 0.01:
-        l.status = "closed"
-        db.commit()
-    return ser(l, date.today())
+    closed = _autoclose(db, user, l)
+    return {**ser(l, date.today()), "closed": closed}
 
 
 class LoanPatch(BaseModel):
@@ -120,9 +183,11 @@ def patch_loan(lid: int, body: LoanPatch, db: Session = Depends(get_db), user=De
         raise HTTPException(400, "Төлөв active эсвэл closed байна")
     if "monthly_payment" in data and data["monthly_payment"] < 0:
         raise HTTPException(400, "Сарын төлөлт сөрөг байж болохгүй")
+    before = {k: getattr(l, k) for k in data}
     for k, v in data.items():
         setattr(l, k, v)
     db.commit()
+    audit.log(db, user, "update", "loan", l.id, f"{l.name} · {_changes(before, data)}")
     return ser(l, date.today())
 
 
@@ -147,6 +212,7 @@ def edit_loan_payment(lid: int, pid: int, body: LoanPayIn,
     if body.amount <= 0:
         raise HTTPException(400, "Дүн 0-ээс их байх ёстой")
     was_topup = p.part == "topup"
+    before = {"date": p.date, "amount": p.amount, "part": p.part, "note": p.note}
     p.date, p.amount, p.part, p.note = body.date, body.amount, body.part, body.note
     db.flush()
     db.refresh(l)
@@ -155,25 +221,34 @@ def edit_loan_payment(lid: int, pid: int, body: LoanPayIn,
         raise HTTPException(400, "Олголтыг багасгавал үлдэгдэл сөрөг болно"
                             if was_topup else "Үлдэгдлээс их үндсэн төлбөр")
     db.commit()
+    audit.log(db, user, "update", "loan_payment", p.id,
+              f"{l.name} · {_changes(before, {'date': p.date, 'amount': p.amount, 'part': p.part, 'note': p.note})}")
     db.refresh(l)
-    if L.loan_balance(l) <= 0.01:
-        l.status = "closed"
-        db.commit()
-    return ser(l, date.today())
+    closed = _autoclose(db, user, l)
+    _reopen(db, user, l, "төлөлт засагдав")
+    return {**ser(l, date.today()), "closed": closed}
 
 
 @router.delete("/loans/{lid}/payments/{pid}")
 def delete_loan_payment(lid: int, pid: int,
                         db: Session = Depends(get_db), user=Depends(guard)):
-    """Мөрийг устгах — үндсэн төлөлт уствал үлдэгдэл өснө, нэмэлт олголт уствал буурна."""
+    """Мөрийг устгах — үндсэн төлөлт уствал үлдэгдэл өснө, нэмэлт олголт уствал буурна.
+
+    Хаагдсан зээл дээр үндсэн төлөлт уствал үлдэгдэл ЭРГЭЖ гарна: зээл нь
+    хаагдсан хэвээр үлдвэл жагсаалтаас алга болсон ӨР болно. Тиймээс
+    автоматаар СЭРГЭЭНЭ (мөрөө /audit дээр үлдээгээд).
+    """
     l, p = _get_payment(db, lid, pid)
     if p.part == "topup" and L.loan_balance(l) - p.amount < -0.01:
         raise HTTPException(400, "Энэ олголтыг устгавал үлдэгдэл сөрөг болно — "
                                  "эхлээд үндсэн төлөлтүүдээ засна уу")
+    detail = f"{l.name} · {p.date} · {PART_MN[p.part]} · {p.amount:,.0f}₮"
     db.delete(p)
     db.commit()
+    audit.log(db, user, "delete", "loan_payment", pid, detail)
     db.refresh(l)
-    return ser(l, date.today())
+    reopened = _reopen(db, user, l, "төлөлт устгагдав")
+    return {**ser(l, date.today()), "reopened": reopened}
 
 
 @router.post("/loans/{lid}/close")
@@ -181,6 +256,10 @@ def close_loan(lid: int, db: Session = Depends(get_db), user=Depends(guard)):
     l = db.get(models.Loan, lid)
     if not l:
         raise HTTPException(404, "Зээл олдсонгүй")
+    already = l.status == "closed"
     l.status = "closed"
     db.commit()
-    return {"ok": True}
+    if not already:
+        audit.log(db, user, "close", "loan", l.id,
+                  f"{l.name} · үлдэгдэл {L.loan_balance(l):,.0f}₮ · гараар хаав")
+    return {"ok": True, "closed": True}

@@ -227,7 +227,7 @@ def test_extend_writes_the_new_end_date_and_signs_the_audit(client, as_role):
     assert r.json()["end_date"] == target
     assert _detail(client, h, cid)["end_date"] == target
 
-    rows = [x for x in client.get("/api/audit?entity=contract", headers=h).json()
+    rows = [x for x in client.get("/api/audit?entity=contract", headers=h).json()["rows"]
             if x["entity_id"] == cid and "дуусах огноо" in x["detail"]]
     assert rows, "сунгалт /audit дээр мөр үлдээсэнгүй"
 

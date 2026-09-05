@@ -114,7 +114,7 @@ def test_the_action_is_written_into_the_audit_log(client, as_role):
     inv = _first_invoice(client, h, c["id"])
     client.post(f"/api/invoices/{inv['id']}/agree", headers=h,
                 json={"date": "2026-07-20", "by": "Н.Манлай"})
-    rows = client.get("/api/audit?entity=invoice", headers=h).json()
+    rows = client.get("/api/audit?entity=invoice", headers=h).json()["rows"]
     row = next(r for r in rows if r["action"] == "agree" and r["entity_id"] == inv["id"])
     assert "Н.Манлай" in row["detail"] and "2026-07-20" in row["detail"]
 

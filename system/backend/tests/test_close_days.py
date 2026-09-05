@@ -377,7 +377,7 @@ def test_the_close_decision_lands_in_the_audit(client, as_role):
         "close_date": iso(3),
         "day_choices": [{"line_id": ln["id"], "days": 15}]})
 
-    trail = client.get("/api/audit?entity=movement&limit=300", headers=h).json()
+    trail = client.get("/api/audit?entity=movement&limit=300", headers=h).json()["rows"]
     row = next(a for a in trail if "гар хоног" in a["detail"] and "15" in a["detail"])
     assert "баталсан" in row["detail"]
 

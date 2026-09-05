@@ -443,3 +443,108 @@ def test_import_clients_xlsx(client, as_role):
     assert r.status_code == 200
     assert r.json()["created"] == 1
     assert r.json()["skipped"] == 1
+
+
+# ---------- ТООНЫ СУУРЬ нь тооны хажууд ----------
+
+def test_pnl_names_the_basis_of_its_revenue_and_of_its_salary(db):
+    """«Орлого 87 сая» гэсэн тоо ЮУ болохоо өөрөө хэлнэ.
+
+    Аккруэл (нэхэмжилсэн) дүн нь цуглуулсан мөнгөтэй ЗӨРНӨ; шошгогүй бол
+    хүн аль нь юу болохыг мэдэхгүй тул хоёуланд нь итгэхээ болино.
+    """
+    from app.services import reports as R
+    p = R.pnl(db, date(2026, 7, 1), date(2026, 7, 31))
+    assert p["basis"] == "accrual" and p["basis_mn"] == "нэхэмжилсэн түрээс"
+    assert p["salary_basis"] == "net" and p["salary_basis_mn"] == "гарт олгосон цалин"
+
+
+def test_pnl_and_cashflow_use_the_same_single_salary_figure(db):
+    """НЭГ бодолт — НЭГ тоо. Урьд нь P&L `base`, урсгал `net`-ээр явдаг байв."""
+    from app.services import reports as R
+
+    run = models.SalaryRun(period="2026-07", half=1, paid=1,
+                           paid_date=date(2026, 7, 15), ndsh_percent=11.5)
+    db.add(run)
+    db.flush()
+    e = models.Employee(name="НДШ-тэй", type="main", monthly_salary=6_000_000, ndsh=1)
+    db.add(e)
+    db.flush()
+    db.add(models.SalaryItem(run_id=run.id, employee_id=e.id, base=3_000_000,
+                             ndsh_amount=345_000, net=2_655_000))
+    db.commit()
+
+    p = R.pnl(db, date(2026, 7, 1), date(2026, 7, 31))
+    flow = R.cashflow_series(db, date(2026, 7, 31), n=1)
+    assert p["salary_expense"] == 2_655_000          # ГАРТ ОЛГОСОН, base биш
+    assert flow["cash_out"][-1] == 2_655_000
+    row = p["detail"]["salary"][0]
+    # Задаргаа нь НДШ-ээ ч хэлнэ — «яагаад 3 сая биш вэ» гэдэг мөрөн дээрээ
+    assert row["amount"] == 2_655_000 and row["gross"] == 3_000_000
+    assert row["ndsh"] == 345_000
+    assert sum(r["amount"] for r in p["detail"]["salary"]) == p["salary_expense"]
+
+
+# ---------- Мөнгөн урсгал нь ХҮСЭЛТИЙН цонхыг дагана ----------
+
+def test_cashflow_follows_the_requested_range(db):
+    """Тайланг 3-5 сараар шүүхэд график нь 3 багана — 6 биш."""
+    from app.services import reports as R
+    s = R.cashflow_series(db, date(2026, 9, 30),
+                          d_from=date(2026, 3, 5), d_to=date(2026, 5, 20))
+    assert s["range_applied"] is True
+    assert s["months"] == ["3-р", "4-р", "5-р"] and s["months_count"] == 3
+    # Цонх нь БҮТЭН сараар: 3-р сарын 1-нээс 5-р сарын 31 хүртэл
+    assert s["from"] == "2026-03-01" and s["to"] == "2026-05-31"
+    assert len(s["cash_in"]) == len(s["cash_out"]) == 3
+
+
+def test_a_range_longer_than_the_cap_says_so_instead_of_silently_trimming(db):
+    """Тайрсан бол ХЭЛНЭ — дэлгэц шошгоо засна («сүүлийн 24 сар»)."""
+    from app.services import reports as R
+    s = R.cashflow_series(db, date(2026, 9, 30),
+                          d_from=date(2020, 1, 1), d_to=date(2026, 9, 30))
+    assert s["range_applied"] is False
+    assert s["months_count"] == R.MAX_MONTHS
+    assert s["to"] == "2026-09-30" and str(R.MAX_MONTHS) in s["range_note"]
+
+
+def test_without_a_range_the_series_is_the_last_n_months(db):
+    from app.services import reports as R
+    s = R.cashflow_series(db, date(2026, 7, 31), n=1)
+    assert s["range_applied"] is True and s["months_count"] == 1
+    assert s["from"] == "2026-07-01" and s["to"] == "2026-07-31"
+
+
+def test_the_reports_api_hands_the_series_the_same_window_as_the_pnl(client, as_role):
+    """Нэг хуудсан дээр хоёр өөр хугацаа зэрэгцэхээ болив."""
+    h = as_role("otgoo")
+    d = client.get("/api/reports?d_from=2026-05-01&d_to=2026-07-31", headers=h).json()
+    assert d["pnl"]["from"] == "2026-05-01" and d["pnl"]["to"] == "2026-07-31"
+    assert d["series"]["from"] == "2026-05-01" and d["series"]["to"] == "2026-07-31"
+    assert d["series"]["months"] == ["5-р", "6-р", "7-р"]
+    # Муж өгөөгүй үед хуучин зан төлөв: сүүлийн n сар, шошготойгоо
+    d2 = client.get("/api/reports?months=6", headers=h).json()
+    assert d2["series"]["months_count"] == 6 and d2["series"]["range_applied"] is True
+
+
+# ---------- Excel татах нь ЯВДАЛ ----------
+
+def test_the_excel_export_keeps_four_sheets_and_leaves_an_audit_row(client, as_role):
+    """Дөрвөн хуудас нь гарын авлагад бичигдсэн — нэр нь тогтвортой байна."""
+    from openpyxl import load_workbook
+    import io as _io
+    from app.routers.reports import SHEETS
+
+    h = as_role("otgoo")
+    x = client.get("/api/reports/export.xlsx?d_from=2026-07-01&d_to=2026-07-31",
+                   headers=h)
+    assert x.status_code == 200
+    wb = load_workbook(_io.BytesIO(x.content))
+    assert wb.sheetnames == list(SHEETS)
+    assert SHEETS == ("Ашиг алдагдал", "Задаргаа", "Авлага", "Зээл")
+
+    rows = client.get("/api/audit?entity=report&limit=50", headers=h).json()["rows"]
+    row = next(r for r in rows if r["action"] == "export")
+    assert row["detail"] == "Тайлан татав — 2026-07-01 – 2026-07-31"
+    assert (row["user_name"] or "").strip()

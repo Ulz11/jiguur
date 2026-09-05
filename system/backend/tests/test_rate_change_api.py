@@ -134,7 +134,7 @@ def test_rate_change_is_audited_even_without_a_rebuild(client, as_role):
     cid, m, st = _setup(client, as_role)
     nxt = _detail(client, h, cid)["cycle_bounds"]["next_start"]
     _chg(client, h, cid, m, st, new_rate=450, effective_from=nxt, note="Утсаар тохиров")
-    rows = client.get("/api/audit", headers=h).json()
+    rows = client.get("/api/audit", headers=h).json()["rows"]
     assert any(a["entity"] == "rate_change" and "450" in a["detail"] for a in rows)
 
 

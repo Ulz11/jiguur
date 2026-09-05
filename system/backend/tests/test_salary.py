@@ -119,3 +119,130 @@ def test_deactivated_employee_drops_out_of_the_next_run(client, as_role):
     run = client.post("/api/salary/runs", headers=h,
                       json={"period": per(3), "half": 1, "daily_days": {}}).json()
     assert all(i["employee_id"] != e["id"] for i in run["items"])
+
+
+# ---------- Бодолтыг УСТГАХ — зөвхөн ОЛГООГҮЙ байхад ----------
+
+def _emp(client, h, **kw) -> dict:
+    body = {"name": "Устгалын ажилтан", "type": "main",
+            "monthly_salary": 2_000_000, "ndsh": False, **kw}
+    return client.post("/api/salary/employees", headers=h, json=body).json()
+
+
+def test_an_unpaid_run_can_be_deleted_but_a_paid_one_cannot(client, as_role):
+    """Буруу бодсоныг арилгах зам байх ёстой — гэхдээ МӨНГӨ ГАРСНЫ ДАРАА үгүй.
+
+    Олгосон бодолт нь тайлангийн цалингийн зардал ба мөнгөн урсгалын
+    суурь: устгавал өнгөрсөн сарын тайлан ЧИМЭЭГҮЙ өөрчлөгдөнө.
+    """
+    h = as_role("otgoo")
+    _emp(client, h)
+    run = client.post("/api/salary/runs", headers=h,
+                      json={"period": per(4), "half": 1, "daily_days": {}}).json()
+    assert client.delete(f"/api/salary/runs/{run['id']}", headers=h).status_code == 200
+    assert all(r["id"] != run["id"] for r in client.get("/api/salary/runs", headers=h).json())
+
+    run2 = client.post("/api/salary/runs", headers=h,
+                       json={"period": per(4), "half": 2, "daily_days": {}}).json()
+    client.post(f"/api/salary/runs/{run2['id']}/pay", headers=h, json={"date": "2026-06-15"})
+    bad = client.delete(f"/api/salary/runs/{run2['id']}", headers=h)
+    assert bad.status_code == 400
+    assert bad.json()["detail"] == "Олгосон бодолтыг устгах боломжгүй"
+    assert any(r["id"] == run2["id"] for r in client.get("/api/salary/runs", headers=h).json())
+
+
+def test_a_removed_employee_can_come_back_on_the_same_row(client, as_role):
+    """Хасалт нь эргэх замтай — эс бөгөөс нэг хүн хоёр мөр болно."""
+    h = as_role("otgoo")
+    e = _emp(client, h, name="Буцаж ирэх ажилтан")
+    client.delete(f"/api/salary/employees/{e['id']}", headers=h)
+    assert all(x["id"] != e["id"] for x in client.get("/api/salary/employees", headers=h).json())
+
+    r = client.post(f"/api/salary/employees/{e['id']}/reactivate", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["active"] == 1
+    assert any(x["id"] == e["id"] for x in client.get("/api/salary/employees", headers=h).json())
+    # ДАРААГИЙН бодолт түүнийг дахин хамарна — мөр нь ижил `id`-тай
+    run = client.post("/api/salary/runs", headers=h,
+                      json={"period": per(5), "half": 1, "daily_days": {}}).json()
+    assert any(i["employee_id"] == e["id"] for i in run["items"])
+    assert client.post("/api/salary/employees/9999/reactivate", headers=h).status_code == 404
+
+
+# ---------- НДШ%-ийн шошго ХУДЛА ЯРЬЖ БОЛОХГҮЙ ----------
+
+def test_the_run_carries_the_ndsh_percent_it_was_calculated_with(client, as_role):
+    """Тохиргоо хожим өөрчлөгдвөл ХУУЧИН бодолт хуучин хувиараа үлдэнэ.
+
+    Дэлгэц дээр «НДШ 11.5%» гэсэн шошго нь тухайн бодолтын ҮНЭН байх ёстой:
+    тохиргоог 15% болгосны дараа 4 сарын бодолтыг нээхэд 15% гэж бичигдвэл
+    тэр тоо нь юу ч гэсэн үг биш болно.
+    """
+    h = as_role("otgoo")
+    e = _emp(client, h, name="НДШ-тэй ажилтан", monthly_salary=4_000_000, ndsh=True)
+
+    def mine(run):
+        return next(i for i in run["items"] if i["employee_id"] == e["id"])
+
+    old = client.post("/api/salary/runs", headers=h,
+                      json={"period": per(6), "half": 1, "daily_days": {}}).json()
+    assert old["ndsh_percent"] == 11.5
+    assert mine(old)["ndsh_amount"] == 2_000_000 * 0.115
+
+    assert client.put("/api/settings", headers=h,
+                      json={"values": {"ndsh_percent": "15"}}).status_code == 200
+    new = client.post("/api/salary/runs", headers=h,
+                      json={"period": per(6), "half": 2, "daily_days": {}}).json()
+    assert new["ndsh_percent"] == 15.0
+    assert mine(new)["ndsh_amount"] == 2_000_000 * 0.15
+    # ХУУЧИН бодолт ХӨДӨЛСӨНГҮЙ
+    again = next(r for r in client.get("/api/salary/runs", headers=h).json()
+                 if r["id"] == old["id"])
+    assert again["ndsh_percent"] == 11.5
+
+
+# ---------- «Сарын цалингийн сан» — НЭГ тодорхойлолт ----------
+
+def test_payroll_summary_is_one_definition_gross_and_net(client, as_role):
+    """Цалин ба Аналитик хоёр НЭГ эх сурвалжаас уншина (өдрийнх нь 22 хоног)."""
+    h = as_role("otgoo")
+    before = client.get("/api/salary/summary", headers=h).json()
+    _emp(client, h, name="Сангийн үндсэн", monthly_salary=3_000_000, ndsh=True)
+    _emp(client, h, name="Сангийн өдрийн", type="daily", monthly_salary=0,
+         daily_rate=100_000, ndsh=False)
+    s = client.get("/api/salary/summary", headers=h).json()
+    assert s["daily_days"] == 22 and s["ndsh_percent"] == 11.5
+    assert s["payroll_monthly"] - before["payroll_monthly"] == 3_000_000 + 2_200_000
+    # Цэвэр сан = брутто − НДШ (зөвхөн НДШ-тэй ажилтнаас)
+    assert s["payroll_net"] - before["payroll_net"] == \
+        3_000_000 - 345_000 + 2_200_000
+    assert s["active_count"] == before["active_count"] + 2
+    assert s["payroll_net"] <= s["payroll_monthly"]
+    assert client.get("/api/salary/summary", headers=as_role("darga")).status_code == 403
+
+
+def test_every_salary_write_leaves_an_audit_row(client, as_role):
+    h = as_role("otgoo")
+    e = _emp(client, h, name="Бүртгэлтэй ажилтан")
+    client.put(f"/api/salary/employees/{e['id']}", headers=h, json={
+        "name": "Бүртгэлтэй ажилтан", "role_title": "Нярав", "type": "main",
+        "monthly_salary": 2_500_000, "daily_rate": 0, "ndsh": True})
+    client.delete(f"/api/salary/employees/{e['id']}", headers=h)
+    client.post(f"/api/salary/employees/{e['id']}/reactivate", headers=h)
+    run = client.post("/api/salary/runs", headers=h,
+                      json={"period": per(7), "half": 1, "daily_days": {}}).json()
+    client.post(f"/api/salary/runs/{run['id']}/pay", headers=h, json={"date": "2026-06-30"})
+
+    emp_rows = [r for r in client.get("/api/audit?entity=employee&limit=200",
+                                      headers=h).json()["rows"]
+                if r["entity_id"] == e["id"]]
+    assert {"create", "update", "deactivate", "reactivate"} == {r["action"] for r in emp_rows}
+    upd = next(r for r in emp_rows if r["action"] == "update")
+    assert "сарын цалин" in upd["detail"] and "НДШ суутгах эсэх" in upd["detail"]
+    assert "үгүй → тийм" in upd["detail"]     # 1/0 биш, ҮГ
+
+    run_rows = [r for r in client.get("/api/audit?entity=salary&limit=200",
+                                      headers=h).json()["rows"]
+                if r["entity_id"] == run["id"]]
+    assert {"create", "pay"} == {r["action"] for r in run_rows}
+    assert "олгов" in next(r for r in run_rows if r["action"] == "pay")["detail"]

@@ -212,7 +212,7 @@ def test_manager_may_void_and_it_is_audited(client, as_role):
     assert _void(client, otgoo, chid, reason="Андуурч нэхсэн",
                  confirm=True).status_code == 200
 
-    logs = client.get("/api/audit", headers=otgoo).json()
+    logs = client.get("/api/audit", headers=otgoo).json()["rows"]
     rows = logs["rows"] if isinstance(logs, dict) else logs
     hit = [a for a in rows if a["action"] == "void" and a["entity"] == "penalty_charge"]
     assert hit and hit[0]["entity_id"] == chid

@@ -4,9 +4,15 @@
 - Түрээсийн орлого = тухайн үед ДУУССАН циклийн нэхэмжлэл (rent + засвар/акт, НӨАТ-гүй)
 - Худалдааны орлого = тухайн үеийн худалдааны нэхэмжлэл
 - Механизмын орлого/зарлага = ажлын log-оор
-- Цалингийн зардал = тухайн үед ОЛГОСОН бодолтууд (base дүнгээр)
+- Цалингийн зардал = тухайн үед ОЛГОСОН бодолтууд (ЦЭВЭР — гарт олгосон дүн)
 - Зээлийн хүү = тухайн үед төлсөн хүү
 - Бартерын үр дүн = тухайн үед зарагдсан хөрөнгийн (зарсан − орж ирсэн)
+
+⚠ ЦАЛИН НЬ НЭГ ТОО. Урьд нь P&L нь `base` (НДШ хасахаас өмнөх), мөнгөн
+урсгал нь `net` (гарт олгосон) дүнгээр бодогддог байв: нэг сарын нэг
+бодолт хоёр хүснэгт дээр хоёр өөр тоогоор гарч, «аль нь зөв бэ» гэсэн
+асуулт нь тайланг бүхэлд нь эргэлзээтэй болгодог. Одоо хоёулаа ЦЭВЭР
+дүнгээр — компаниас ГАРСАН мөнгө нь тэр (НДШ нь ажилтны хасалт).
 """
 import calendar
 import json
@@ -197,11 +203,16 @@ def pnl(db: Session, d_from: date, d_to: date):
     salary_rows: list[dict] = []
     for run in db.query(models.SalaryRun).filter(models.SalaryRun.paid == 1).all():
         if run.paid_date and d_from <= run.paid_date <= d_to:
-            amt = sum(i.base for i in run.items)
-            salary_expense += amt
+            # ЦЭВЭР дүн — мөнгөн урсгалтай ИЖИЛ тоо (файлын толгойг үзнэ үү).
+            amt = sum(i.net for i in run.items)
             salary_rows.append({"date": str(run.paid_date),
                                 "label": f"{run.period} · {run.half}-р хагас",
-                                "employees": len(run.items), "amount": round(amt)})
+                                "employees": len(run.items), "amount": round(amt),
+                                # НДШ нь МЭДЭЭЛЭЛ: зардалд ОРООГҮЙ, гэхдээ
+                                # «яагаад 3 сая биш 2.65 сая вэ» гэдгийг хэлнэ.
+                                "gross": round(sum(i.base for i in run.items)),
+                                "ndsh": round(sum(i.ndsh_amount for i in run.items))})
+            salary_expense += amt
     salary_rows.sort(key=lambda r: r["date"])
 
     interest_expense = 0.0
@@ -268,6 +279,13 @@ def pnl(db: Session, d_from: date, d_to: date):
     total_income = rent_income + sale_income + machine_income + penalty_income
     total_expense = machine_expense + salary_expense + interest_expense
     return {"from": str(d_from), "to": str(d_to), "accruing": round(accruing),
+            # ⚑ ТООНЫ СУУРИЙГ ТООНЫ ХАЖУУД. Түрээсийн орлого нь НЭХЭМЖИЛСЭН
+            # (аккруэл) дүн — цуглуулсан мөнгө БИШ. Дэлгэц дээр «Орлого 87
+            # сая» гэж бичээд доор нь «дансанд 51 сая» гэсэн тоо зэрэгцэхэд
+            # хүн аль нь юу болохыг мэдэхгүй бол хоёуланд нь итгэхээ болино.
+            "basis": "accrual", "basis_mn": "нэхэмжилсэн түрээс",
+            # Цалин НЭГ тоо: P&L ба мөнгөн урсгал хоёулаа ЦЭВЭР дүнгээр.
+            "salary_basis": "net", "salary_basis_mn": "гарт олгосон цалин",
             "rent_income": round(rent_income), "sale_income": round(sale_income),
             "machine_income": round(machine_income),
             # Орлогод ОРООГҮЙ — гэхдээ кран хэдэн өдөр өөрийн барилга дээр
@@ -289,22 +307,51 @@ def month_bounds(y: int, m: int):
     return date(y, m, 1), date(y, m, calendar.monthrange(y, m)[1])
 
 
-def cashflow_series(db: Session, today: date, n: int = 6):
-    """Сүүлийн n сарын мөнгөн урсгал: орсон (харилцагчийн төлбөр + механизм)
+#: Цувралын ДЭЭД урт. 24 багана нь Отгоо эгчийн 1366px дэлгэцэнд уншигдах
+#: сүүлийн хязгаар; түүнээс урт мужийг таслаад ХЭЛНЭ (чимээгүй тайрахгүй).
+MAX_MONTHS = 24
+
+
+def _month_keys(today: date, n: int, d_from: date | None, d_to: date | None):
+    """Цувралын сарууд + тэр нь ХҮСЭЛТИЙН мужийг дагасан эсэх.
+
+    Муж өгвөл ТҮҮНИЙ саруудаар (`range_applied=True`); хэт урт бол сүүлийн
+    `MAX_MONTHS`-ыг л авна (`range_applied=False` — дэлгэц шошгоо засна).
+    Муж өгөөгүй бол өнөөдрөөр төгссөн сүүлийн n сар.
+    """
+    if d_from and d_to:
+        keys, y, m = [], d_from.year, d_from.month
+        while (y, m) <= (d_to.year, d_to.month):
+            keys.append((y, m))
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+        keys = keys or [(d_to.year, d_to.month)]
+        if len(keys) > MAX_MONTHS:
+            return keys[-MAX_MONTHS:], False
+        return keys, True
+    want = max(n, 1)
+    keys, y, m = [], today.year, today.month
+    for _ in range(min(want, MAX_MONTHS)):
+        keys.append((y, m))
+        y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+    keys.reverse()
+    return keys, want <= MAX_MONTHS
+
+
+def cashflow_series(db: Session, today: date, n: int = 6,
+                    d_from: date | None = None, d_to: date | None = None):
+    """Мөнгөн урсгалын цуврал: орсон (харилцагчийн төлбөр + механизм)
     ба гарсан (механизмын зарлага + хүү + олгосон цалин).
+
+    ⚠ ЦОНХ НЬ ХҮСЭЛТИЙГЭЭ ДАГАНА. Урьд нь тайланг 7-р сараар шүүхэд P&L нь
+    7-р сарыг харуулж байхад доорх график нь ҮРГЭЛЖ сүүлийн 6 сарыг зурдаг
+    байв — нэг хуудсан дээр хоёр өөр хугацаа, аль нь ч шошгогүй. Одоо муж
+    өгвөл түүгээр; тайрагдвал `range_applied=False` гэж ХЭЛНЭ.
 
     Орсон дүн нь төлбөрийн хэлбэрээр задарна: бэлэн / данс / бартер.
     Механизмын ажлын хэлбэргүй ("") хуучин бичлэг → данс; INTERNAL (дотоод
     ажил) нь урсгалд ОГТ ОРОХГҮЙ (өмнөх зан төлөв хэвээр).
     `cash_in` = гурван задаргааны нийлбэр (хуучин хэрэглэгчид эвдрэхгүй)."""
-    keys = []
-    y, m = today.year, today.month
-    for _ in range(n):
-        keys.append((y, m))
-        m -= 1
-        if m == 0:
-            y, m = y - 1, 12
-    keys.reverse()
+    keys, range_applied = _month_keys(today, n, d_from, d_to)
     months, cin, cout = [], [], []
     f_cash, f_bank, f_barter = [], [], []
     for (y, m) in keys:
@@ -337,5 +384,15 @@ def cashflow_series(db: Session, today: date, n: int = 6):
         f_barter.append(round(in_barter))
         cin.append(f_cash[-1] + f_bank[-1] + f_barter[-1])
         cout.append(round(mach_out + interest + sal))
+    w_from = month_bounds(*keys[0])[0]
+    w_to = month_bounds(*keys[-1])[1]
     return {"months": months, "cash_in": cin, "cash_out": cout,
-            "inflow_cash": f_cash, "inflow_bank": f_bank, "inflow_barter": f_barter}
+            "inflow_cash": f_cash, "inflow_bank": f_bank, "inflow_barter": f_barter,
+            # ЦОНХ нь ХАРАГДАЖ байна: дэлгэц графикаа зөв шошголж чадна.
+            "range_applied": range_applied,
+            "from": str(w_from), "to": str(w_to), "months_count": len(keys),
+            "range_note": (f"{w_from} – {w_to}" if range_applied else
+                           f"Хүсэлтийн муж {MAX_MONTHS} сараас урт тул сүүлийн "
+                           f"{MAX_MONTHS} сар: {w_from} – {w_to}"),
+            # Цалин НЭГ тоо — P&L-тэй ижил (`pnl.salary_basis`).
+            "salary_basis": "net", "salary_basis_mn": "гарт олгосон цалин"}

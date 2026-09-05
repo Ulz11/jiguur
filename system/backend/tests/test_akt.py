@@ -409,7 +409,7 @@ def test_akt_actions_are_audited(client, as_role):
     client.post(f"/api/akt/{aid}/void", headers=h,
                 json={"reason": "буруу", "confirm": True})
 
-    rows = client.get("/api/audit", headers=h).json()
+    rows = client.get("/api/audit", headers=h).json()["rows"]
     acts = {(r["action"], r["entity"]) for r in rows}
     assert ("create", "akt") in acts
     assert ("update", "akt") in acts

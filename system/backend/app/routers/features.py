@@ -1,7 +1,7 @@
 """Шинэ боломжууд: барьцаа, авлага цуглуулах, тооллого, аналитик, audit."""
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from datetime import date as _date_t   # `date` нэртэй ТАЛБАР төрлөө далдална
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..db import get_db
@@ -10,6 +10,7 @@ from ..services import billing, analytics, cron
 from ..services import audit as audit_svc
 from ..services import deposit as deposit_svc
 from ..services import entries as entries_svc
+from ..services import stock as stock_svc
 from . import notes as notes_router
 
 router = APIRouter(prefix="/api")
@@ -273,8 +274,15 @@ def generate_invoices(db: Session = Depends(get_db), user=Depends(fin)):
     Давхрага (`services/cron.py`) өдөр бүр 06:00-д ЯГ ЭНЭ функцийг дууддаг —
     хоёр өөр «хувилбар» нэхэмжлэл байхгүй. Сервер унтарсан өдөр байсан бол
     энэ товчлуур нөхөж гүйцээнэ. Append-only тул хэдэн ч удаа дуудаж болно.
+
+    ⚠ Гараар дарсан гүйлт ч МӨР ҮЛДЭЭНЭ. Урьд нь энэ товч нь бүртгэлд огт
+    харагддаггүй байв: «энэ нэхэмжлэл хаанаас гарав?» гэсэн асуултад cron
+    гэсэн хариулт байдаг ч, хүн дарсан гүйлт нь эзэнгүй үлддэг. Мөрийн
+    ӨГҮҮЛБЭР нь cron-ынхтой ЯГ ижил (`cron.run_line`) — зөвхөн ХЭН нь өөр.
     """
-    return cron.generate_all(db)
+    res = cron.generate_all(db)
+    audit_svc.log(db, user, "generate", "invoice", None, cron.run_line(res))
+    return res
 
 
 @router.post("/clients/{cid}/notes")
@@ -305,16 +313,50 @@ def patch_note(nid: int, body: NotePatch, db: Session = Depends(get_db),
                                               db, user)
     if getattr(user, "role", "") not in ("manager", "finance"):
         raise HTTPException(403, "Энэ үйлдлийг хийх эрх байхгүй")
+    return set_promise_status(db, nid, body.status, user)
+
+
+PROMISE_STATUS = ("open", "kept", "broken")
+
+
+def set_promise_status(db: Session, nid: int, status: str, user) -> dict:
+    """АМЛАЛТЫГ ХААХ — «биелүүлсэн» эсвэл «зөрчсөн» (нээлттэй нь эргэж болно).
+
+    Амлалт хаагдахгүй бол «Амлалт зөрчсөн» тоолуур ХЭЗЭЭ Ч буурахгүй: төлбөр
+    нь орсон ч мөр нь нээлттэй хэвээр тоологдоод, дашбоардын улаан мэдэгдэл
+    үүрд үлдэнэ. Хаагдсан амлалт нь мэдэгдэл, тоолуур хоёроос ХОЁУЛАНГААС нь
+    гардаг (`dashboard.py`, `analytics.collections`).
+    """
     n = db.get(models.CollectionNote, nid)
     if not n:
         raise HTTPException(404, "Олдсонгүй")
-    if body.status not in ("open", "kept", "broken"):
+    if status not in PROMISE_STATUS:
         raise HTTPException(400, "Буруу төлөв")
-    n.status = body.status
+    before = n.status
+    n.status = status
     db.commit()
     audit_svc.log(db, user, "update", "collection_note", n.id,
-                  f"төлөв → {audit_svc.value_mn(body.status)}")
+                  f"{n.client.name if n.client else ''} · амлалтын төлөв: "
+                  f"{audit_svc.value_mn(before)} → {audit_svc.value_mn(status)}"
+                  + (f" · {n.promise_date} өдрөөр {n.promise_amount:,.0f}₮"
+                     if n.promise_date else ""))
     return note_ser(n)
+
+
+class NoteStatusIn(BaseModel):
+    status: str
+
+
+@router.patch("/collections/notes/{nid}")
+def patch_collection_note(nid: int, body: NoteStatusIn, db: Session = Depends(get_db),
+                          user=Depends(fin)):
+    """Амлалтын төлөвийн ТОДОРХОЙ хаяг — «Авлага цуглуулах» хуудасны товч.
+
+    `PATCH /api/notes/{id}` нь хоёр давхаргын хуваалцсан хаалга (захын
+    тэмдэглэл ба амлалт биеэрээ салаалдаг); энэ хаяг нь эргэлзээгүй ганц
+    утгатай тул шинэ дэлгэц үүнийг дуудна. Хуучин хаалга ХЭВЭЭР ажиллана.
+    """
+    return set_promise_status(db, nid, body.status, user)
 
 
 # ---------------- Утсаар тооллого ----------------
@@ -322,6 +364,10 @@ class StocktakeLine(BaseModel):
     material_id: int
     grade_id: int
     counted: float
+    #: ХУУДАС ХАРУУЛСАН үлдэгдэл. Тооллого нь утсан дээр цагаар үргэлжилдэг —
+    #: тэр хооронд ачилт/буцаалт бүртгэгдвэл серверийн тоо өөр болно. Энэ
+    #: талбаргүйгээр тооллого нь ХООРОНДОХ бүх хөдөлгөөнийг чимээгүй арчина.
+    system: float
 
 
 class StocktakeIn(BaseModel):
@@ -333,36 +379,68 @@ class StocktakeIn(BaseModel):
 @router.post("/stock/stocktake")
 def stocktake(body: StocktakeIn, db: Session = Depends(get_db),
               user=Depends(auth.require_roles("manager", "factory"))):
-    """Олон мөрийг нэг дор тоолж залруулна (утсанд зориулсан)."""
+    """Олон мөрийг нэг дор тоолж залруулна (утсанд зориулсан).
+
+    ГУРВАН дүрэм:
+      1. **Зөрчилдвөл ЮУ Ч бичихгүй.** Мөр бүрийн `system` (хуудас харуулсан
+         тоо) нь агуулахын ОДООГИЙН тоотой тулгагдана; нэг ч мөр зөрвөл бүх
+         тооллого 409-өөр буцна — хагас хийгдсэн тооллого гэж байхгүй.
+      2. **Мөр бүр БИЧИЛТ болно** (`stock_adjustments`, нэг багц дугаараар)
+         — «144ш хаачив» гэсэн асуулт мөрөндөө хариултаа авч явна.
+      3. **Бүртгэлд ҮРГЭЛЖ нэг мөр.** Зөрүүгүй тооллого нь ХИЙГДСЭН АЖИЛ:
+         «зөрүүгүй» гэдэг нь хамгийн үнэтэй хариулт, тэр мөр алга болох
+         ёсгүй. Мөрүүдийн зөрүү нь БҮТНЭЭРЭЭ (`audit.DETAIL_LIMIT`) бичигдэнэ.
+    """
     if not body.lines:
         raise HTTPException(400, "Мөр оруулна уу")
-    adjusted = 0
-    diff_total = 0.0
-    details = []
+    mats = {m.id: m for m in db.query(models.Material).all()}
+    grades = {g.id: g for g in db.query(models.Grade).all()}
+
+    # --- 1) БҮГДИЙГ шалгана (юу ч хөдөлгөхгүй) ---
+    seen: set[tuple[int, int]] = set()
     for ln in body.lines:
+        m, g = mats.get(ln.material_id), grades.get(ln.grade_id)
+        if not m or not g:
+            raise HTTPException(404, "Материал эсвэл зэрэглэл олдсонгүй")
+        if (ln.material_id, ln.grade_id) in seen:
+            # Хоёр мөр нэг нүд рүү заавал сүүлчийнх нь чимээгүй ялна —
+            # тооллого «аль тоог нь авсан юм бэ?» гэсэн асуулт үлдээх ёсгүй.
+            raise HTTPException(400, f"{m.name} ({g.code}): нэг мөр хоёр удаа орж ирлээ")
+        seen.add((ln.material_id, ln.grade_id))
         if ln.counted < 0:
             raise HTTPException(400, "Тоо сөрөг байж болохгүй")
-        st = db.query(models.Stock).filter_by(material_id=ln.material_id,
-                                              grade_id=ln.grade_id).first()
-        if not st:
-            st = models.Stock(material_id=ln.material_id, grade_id=ln.grade_id, on_hand=0)
-            db.add(st)
-            db.flush()
-        diff = ln.counted - (st.on_hand or 0)
-        if abs(diff) < 0.001:
+        now = stock_svc.row(db, ln.material_id, ln.grade_id).on_hand or 0.0
+        if abs(now - ln.system) > stock_svc.EPS:
+            raise HTTPException(409, stock_svc.conflict_message(m, ln.system, now))
+
+    # --- 2) Бичилтүүд, нэг багцаар ---
+    batch = f"{body.date}-{datetime.now():%H%M%S}"
+    adjusted = 0
+    diff_total = 0.0
+    details: list[str] = []
+    for ln in body.lines:
+        adj = stock_svc.adjust(db, mats[ln.material_id], grades[ln.grade_id],
+                               ln.counted, user=user, note=body.note,
+                               source="stocktake", batch=batch, day=body.date,
+                               # Багц нь бүртгэлд НЭГ мөр үлдээнэ (доор) —
+                               # мөр бүрд нэг нь бичигдвэл жагсаалт живнэ.
+                               log_audit=False)
+        if adj is None:
             continue
-        m = db.get(models.Material, ln.material_id)
-        g = db.get(models.Grade, ln.grade_id)
-        details.append(f"{m.name if m else '?'} ({g.code if g else '?'}): "
-                       f"{st.on_hand:g} → {ln.counted:g} ({diff:+g})")
-        st.on_hand = ln.counted
-        diff_total += diff
+        details.append(stock_svc.line_text(adj, mats[ln.material_id],
+                                           grades[ln.grade_id]))
+        diff_total += adj.diff
         adjusted += 1
-    db.commit()
-    if adjusted:
-        audit_svc.log(db, user, "stocktake", "stock", None,
-                      f"{body.date} · {body.note} · " + " | ".join(details))
-    return {"ok": True, "adjusted": adjusted, "diff_total": round(diff_total), "details": details}
+
+    # --- 3) Бүртгэлийн мөр — ҮРГЭЛЖ ---
+    head = f"{body.date} · {len(body.lines)} мөр тоологдов"
+    if body.note:
+        head += f" · {body.note}"
+    audit_svc.log(db, user, "stocktake", "stock", None,
+                  f"{head} · " + (f"зөрүүтэй {adjusted} мөр: " + " | ".join(details)
+                                  if adjusted else "зөрүүгүй"))
+    return {"ok": True, "adjusted": adjusted, "diff_total": round(diff_total),
+            "details": details, "batch": batch}
 
 
 # ---------------- Аналитик ----------------
@@ -376,14 +454,116 @@ def forecast(db: Session = Depends(get_db), user=Depends(fin)):
     return analytics.cash_forecast(db)
 
 
+# ---------------- Мэдэгдлийг түр нуух ----------------
+class SnoozeIn(BaseModel):
+    kind: str
+    entity_id: int | None = None
+    days: int = 1
+
+
+@router.post("/notifications/snooze")
+def snooze_notification(body: SnoozeIn, db: Session = Depends(get_db),
+                        user=Depends(auth.current_user)):
+    """«Мэдлээ — {N} хоногийн дараа сануул».
+
+    Нуулт нь ХҮНИЙХ: нярав нэг мөрийг хойшлуулсан нь захирлын дэлгэцийг
+    хөндөхгүй. `entity_id` байхгүй бол ТУХАЙН ТӨРЛИЙГ бүхэлд нь.
+    """
+    if body.kind not in billing.NOTIFY_KINDS:
+        raise HTTPException(400, "Мэдэгдлийн төрөл буруу")
+    if not 1 <= body.days <= 365:
+        raise HTTPException(400, "Хоног 1-365 хооронд байна")
+    until = date.today() + timedelta(days=body.days)
+    st = billing.snooze_row(db, user.id, body.kind, body.entity_id)
+    if st is None:
+        st = models.NotificationState(kind=body.kind, entity_id=body.entity_id,
+                                      user_id=user.id)
+        db.add(st)
+    st.snooze_until = until
+    st.seen_at = datetime.utcnow()
+    db.commit()
+    audit_svc.log(db, user, "snooze", "notification", body.entity_id,
+                  f"{billing.NOTIFY_MN.get(body.kind, body.kind)} — "
+                  f"{until} хүртэл нуув ({body.days} хоног)")
+    return {"ok": True, "kind": st.kind, "entity_id": st.entity_id,
+            "snooze_until": str(st.snooze_until)}
+
+
+class UnsnoozeIn(BaseModel):
+    kind: str
+    entity_id: int | None = None
+
+
+@router.delete("/notifications/snooze")
+def unsnooze_notification(body: UnsnoozeIn, db: Session = Depends(get_db),
+                          user=Depends(auth.current_user)):
+    """Нуултыг НЭН ДАРУЙ буцаана — мөр дахин дашбоард дээр гарна."""
+    st = billing.snooze_row(db, user.id, body.kind, body.entity_id)
+    if st is None:
+        return {"ok": True, "removed": 0}
+    db.delete(st)
+    db.commit()
+    audit_svc.log(db, user, "unsnooze", "notification", body.entity_id,
+                  f"{billing.NOTIFY_MN.get(body.kind, body.kind)} — нуултыг цуцлав")
+    return {"ok": True, "removed": 1}
+
+
 # ---------------- Audit ----------------
+#: Улаанбаатар нь UTC+8, зуны цаг БАЙХГҮЙ (`services/cron.py`-ийн тайлбар) —
+#: тогтмол шилжилт хангалттай, гадны tz сан шаардлагагүй.
+LOCAL_TZ = timezone(timedelta(hours=8))
+AUDIT_LIMIT = 500
+
+
+def audit_row(r: models.AuditLog) -> dict:
+    """Нэг мөр. `at` нь ХУУЧНААРАА (UTC, хуучин уншигчид эвдрэхгүй),
+    `local_at` нь ОРОН НУТГИЙН цаг — дэлгэц дээр 06:00-д гүйсэн cron нь
+    06:00 гэж харагдана, 22:00 гэж БИШ."""
+    at = r.created_at
+    return {"id": r.id, "user_name": r.user_name, "action": r.action,
+            "entity": r.entity, "entity_id": r.entity_id, "detail": r.detail,
+            "at": str(at)[:19],
+            "local_at": (at.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ).isoformat()
+                         if at else None)}
+
+
 @router.get("/audit")
-def audit_list(limit: int = 200, entity: str = "", db: Session = Depends(get_db),
-               user=Depends(auth.require_roles("manager"))):
-    q = db.query(models.AuditLog)
+def audit_list(from_: _date_t | None = Query(None, alias="from"),
+               to: _date_t | None = None, action: str = "", entity: str = "",
+               who: str = Query("", alias="user"), q: str = "",
+               limit: int = 200, offset: int = 0,
+               db: Session = Depends(get_db),
+               me=Depends(auth.require_roles("manager"))):
+    """«Хэн, юуг, хэзээ» — ШҮҮГДЭХ бүртгэл.
+
+    Урьд нь энэ хаалга сүүлийн 200 мөрийг л буцаадаг байв: гурав хоногийн
+    өмнөх нэг өөрчлөлт хайхын тулд Отгоо эгч мөрүүдийг нүдээрээ гүйлгэх
+    ёстой болдог — 500 мөрийн дараа бүртгэл нь оршин байгаа боловч
+    ХҮРЭХГҮЙ болно.
+
+    Огноо нь ОРОН НУТГИЙН өдрөөр ойлгогдоно (`from`/`to` хоёул ОРНО): DB-д
+    UTC-гээр суудаг тул цонх нь 8 цагаар шилжиж тулгагдана — эс бөгөөс
+    орой 20:00-д хийсэн үйлдэл «маргаашийнх» болж шүүлтээс унана.
+    """
+    qs = db.query(models.AuditLog)
+    if from_:
+        qs = qs.filter(models.AuditLog.created_at
+                       >= datetime.combine(from_, datetime.min.time()) - timedelta(hours=8))
+    if to:
+        qs = qs.filter(models.AuditLog.created_at
+                       < datetime.combine(to + timedelta(days=1), datetime.min.time())
+                       - timedelta(hours=8))
+    if action:
+        qs = qs.filter(models.AuditLog.action == action)
     if entity:
-        q = q.filter(models.AuditLog.entity == entity)
-    rows = q.order_by(models.AuditLog.id.desc()).limit(min(limit, 500)).all()
-    return [{"id": r.id, "user_name": r.user_name, "action": r.action, "entity": r.entity,
-             "entity_id": r.entity_id, "detail": r.detail,
-             "at": str(r.created_at)[:19]} for r in rows]
+        qs = qs.filter(models.AuditLog.entity == entity)
+    if who.strip():
+        qs = qs.filter(models.AuditLog.user_name.ilike(f"%{who.strip()}%"))
+    if q.strip():
+        needle = f"%{q.strip()}%"
+        qs = qs.filter(models.AuditLog.detail.ilike(needle)
+                       | models.AuditLog.user_name.ilike(needle))
+    total = qs.count()
+    rows = (qs.order_by(models.AuditLog.id.desc())
+            .offset(max(offset, 0)).limit(min(max(limit, 1), AUDIT_LIMIT)).all())
+    return {"rows": [audit_row(r) for r in rows], "total": total}

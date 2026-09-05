@@ -583,7 +583,7 @@ def test_creating_a_movement_leaves_an_audit_line(client, as_role):
         "type": "RETURN", "date": _iso(25),
         "lines": [{"material_id": mid, "grade_id": gid, "qty": 40}]})
 
-    trail = client.get("/api/audit?entity=movement", headers=h).json()
+    trail = client.get("/api/audit?entity=movement", headers=h).json()["rows"]
     row = next(a for a in trail
                if a["action"] == "create" and a["entity_id"] == r.json()["id"])
     # ⚠ Урьд нь мөр «RETURN 40ш» гэж бичигддэг байв — /audit-ийн «Дэлгэрэнгүй»
@@ -607,7 +607,7 @@ def test_the_audit_line_carries_her_day_count_and_the_pin(client, as_role):
         "lines": [{"material_id": mid, "grade_id": gid, "qty": 30,
                    "issue_line_id": late["id"], "billed_days_override": 10}]})
 
-    trail = client.get("/api/audit?entity=movement", headers=h).json()
+    trail = client.get("/api/audit?entity=movement", headers=h).json()["rows"]
     row = next(a for a in trail
                if a["action"] == "create" and a["entity_id"] == r.json()["id"])
     assert "гар хоног 10" in row["detail"]
@@ -623,7 +623,7 @@ def test_factory_issue_is_audited_too(client, as_role):
         "type": "ISSUE", "date": _iso(5), "note": "Нэмэлт олголт",
         "lines": [{"material_id": mid, "grade_id": gid, "qty": 10}]})
 
-    trail = client.get("/api/audit?entity=movement", headers=h).json()
+    trail = client.get("/api/audit?entity=movement", headers=h).json()["rows"]
     row = next(a for a in trail
                if a["action"] == "create" and a["entity_id"] == r.json()["id"])
     assert "ачилт 10ш" in row["detail"]

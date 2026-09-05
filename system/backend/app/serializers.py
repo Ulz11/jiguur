@@ -27,10 +27,38 @@ def material(m: models.Material, stocks: list[models.Stock] | None = None):
 
 MOVEMENT_LIMIT = 20
 
+#: Түүхийн мөрийн ТӨРӨЛ — нэг багана, нэг үг (`lib/movement.ts`-тэй нэг хэл).
+MOVEMENT_KIND_MN = {"ISSUE": "Ачилт", "RETURN": "Буцаалт",
+                    "WRITEOFF": "Акт", "SALE": "Худалдаа"}
+
+
+def adjustment_row(a: models.StockAdjustment, gname: dict) -> dict:
+    """Агуулахын залруулгыг ХӨДӨЛГӨӨНИЙ түүхэнд ижил хэлбэрээр оруулна.
+
+    Отгоо эгчийн асуулт нь «энэ хэвний тоо ЯАГААД өөрчлөгдөв?» — хариулт нь
+    ачилт ч байж болно, тооллого ч. Хоёр өөр жагсаалтад хуваавал тэр
+    хариултыг олохын тулд хоёр дэлгэц харьцуулах ёстой болно.
+    """
+    return {"row": "adjustment", "id": a.id, "movement_id": None, "type": "ADJUST",
+            "kind": "Тооллого" if a.source == "stocktake" else "Залруулга",
+            "source": a.source, "date": str(a.date), "status": "done",
+            # Хүчингүй болсон залруулга нь тоонд ОРООГҮЙ (буцаагдсан)
+            "counted": a.voided_at is None,
+            "note": a.note or "", "voided": a.voided_at is not None,
+            "void_reason": a.void_reason or "", "voided_by": a.voided_by or "",
+            "contract_id": None, "contract_no": "", "contract_type": "",
+            "client_id": None, "client": "",
+            "grade_id": a.grade_id, "grade": gname.get(a.grade_id, "?"),
+            "qty": abs(a.diff), "delta": a.diff,
+            "before": a.before, "after": a.after,
+            "batch": a.stocktake_batch, "user_name": a.user_name or "",
+            "return_grade": None, "repair_qty": 0, "writeoff_qty": 0}
+
 
 def material_detail(m: models.Material, contracts: list[models.Contract],
                     stocks: list[models.Stock], grades: list[models.Grade],
-                    today: date, limit: int = MOVEMENT_LIMIT):
+                    today: date, limit: int = MOVEMENT_LIMIT,
+                    adjustments: list[models.StockAdjustment] | None = None):
     """Нэг материалын ХУВААРИЛАЛТ — «энэ хэв ХААНА байна вэ?» гэсэн ганц хариу.
 
     Отгоо агуулахын жагсаалтаас нэг мөр дарахад: агуулахад хэд үлдсэн, гадаа
@@ -151,7 +179,10 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
                           # `reports/materials`-ийн `owned` яг ийм бодогддог.
                           "total": round(on_hand + out + in_repair, 3)})
 
-    # ---- Сүүлийн хөдөлгөөн (бүх гэрээг дамнасан) ----
+    # ---- Сүүлийн хөдөлгөөн (бүх гэрээг дамнасан) + АГУУЛАХЫН ЗАЛРУУЛГА ----
+    # ХҮЧИНГҮЙ болсон мөр нь ЖАГСААЛТААС ГАРАХГҮЙ (H1): тооцоонд ороогүй
+    # (`counted: false`) боловч шалтгаантайгаа ХАРАГДСААР үлдэнэ — «энэ падан
+    # хаачив?» гэсэн асуулт хариултгүй үлдэх нь устгалын хамгийн муу үр дагавар.
     moves = []
     for c in contracts:
         for mv in c.movements:
@@ -160,11 +191,14 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
                     continue
                 sign = 1 if mv.type == "ISSUE" else -1
                 moves.append({
+                    "row": "movement",
                     "id": ln.id, "movement_id": mv.id, "type": mv.type,
+                    "kind": MOVEMENT_KIND_MN.get(mv.type, mv.type),
                     "date": str(mv.date), "status": mv.status,
                     "counted": billing.movement_active(mv), "note": mv.note,
                     "voided": mv.voided_at is not None,
                     "void_reason": mv.void_reason or "",
+                    "voided_by": mv.voided_by or "",
                     "contract_id": c.id, "contract_no": c.no, "contract_type": c.type,
                     "client_id": c.client_id, "client": c.client.name,
                     "grade_id": ln.grade_id, "grade": gname.get(ln.grade_id, "?"),
@@ -172,6 +206,10 @@ def material_detail(m: models.Material, contracts: list[models.Contract],
                     "return_grade": gname.get(ln.return_grade_id) if ln.return_grade_id else None,
                     "repair_qty": ln.repair_qty, "writeoff_qty": ln.writeoff_qty,
                     "_key": (mv.date, mv.id, ln.id or 0)})
+    for a in (adjustments or []):
+        if a.material_id != m.id:
+            continue
+        moves.append({**adjustment_row(a, gname), "_key": (a.date, a.id, 0)})
     moves.sort(key=lambda r: r["_key"], reverse=True)
     total_moves = len(moves)
     moves = moves[:limit]

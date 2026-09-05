@@ -1,4 +1,4 @@
-"""МЕХАНИЗМЫН НЭХЭМЖЛЭХ — краны ажлын өдрүүдийг харилцагч руу гаргах баримт.
+"""МЕХАНИЗМЫН НЭХЭМЖЛЭЛ — краны ажлын өдрүүдийг харилцагч руу гаргах баримт.
 
 `pdfgen.py` дотор ЗОРИУДААР ороогүй: тэр файл mm нэгжтэй, `cell`/`ln`-ээр урсдаг
 бол энэ нь `pdfappendix.py`-тай ижил — pt нэгжтэй, `pdflayout`-ийн абсолют
@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -39,7 +40,7 @@ TOTALS_COLS = [COL_METHOD, COL_AMOUNT, RIGHT]
 CELL_PAD_TOP = 11
 CELL_PAD_BOT = ROW_STEP - CELL_PAD_TOP
 
-TITLE = "МЕХАНИЗМЫН НЭХЭМЖЛЭХ"
+TITLE = "МЕХАНИЗМЫН НЭХЭМЖЛЭЛ"
 
 METHODS = {"CASH": "Бэлэн", "BANK": "Данс", "BARTER": "Бартер", "INTERNAL": "Дотоод"}
 
@@ -57,7 +58,7 @@ class MachineRow:
 
 @dataclass
 class MachineBill:
-    """Зурахад бэлэн нэхэмжлэх — DB-гүй, зөвхөн тоо ба текст."""
+    """Зурахад бэлэн нэхэмжлэл — DB-гүй, зөвхөн тоо ба текст."""
 
     no: str
     machine_name: str
@@ -98,7 +99,7 @@ def _total_row(doc: Doc, label: str, value: float, strong: bool = False) -> None
 
 
 def _render(bill: MachineBill, company: dict, logo_path: str | None = None):
-    """Нэхэмжлэхийг зурж `FPDF`-ээ БУЦААНА (байт биш) — хуудасны тоог тестлэх
+    """Нэхэмжлэлийг зурж `FPDF`-ээ БУЦААНА (байт биш) — хуудасны тоог тестлэх
     цорын ганц арга (`pdfappendix._render`-тэй ижил гэрээ)."""
     doc = start_doc()
     draw_header(doc, company, TITLE, f"{bill.period_start} - {bill.period_end}", logo_path)
@@ -156,16 +157,49 @@ def _render(bill: MachineBill, company: dict, logo_path: str | None = None):
     return doc.pdf
 
 
-def build_bill(inv, logs) -> MachineBill:
-    """DB мөрүүдээс зурахад бэлэн нэхэмжлэх — `db` хэрэггүй тул шууд тестлэгдэнэ."""
-    rows = [MachineRow(date=l.date, label=l.label, method=l.method, amount=l.amount,
-                       note=l.note)
-            for l in sorted(logs, key=lambda l: (l.date, l.id))]
+def stored_rows(inv) -> list[MachineRow]:
+    """Баримт дээр ХӨЛДӨӨСӨН мөрүүд (`detail_json`). Хуучин баримт → хоосон.
+
+    ⚠ Энэ бол баримтын ҮНЭН эх сурвалж. Урьд нь PDF нь log-уудыг ДАХИН
+    уншдаг байсан тул баримт гаргасны дараа мөр засагдвал (эсвэл уствал)
+    ХЭВЛЭСЭН цаас ба хадгалсан `grand_total` хоёр зөрдөг байв: харилцагч
+    дээр нэг тоо, системд өөр тоо. Дахин хэвлэхэд ЯГ ижил цаас гарна.
+    """
+    try:
+        data = json.loads(getattr(inv, "detail_json", "") or "{}")
+    except (ValueError, TypeError):
+        return []
+    rows = data.get("rows") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    out = []
+    for r in rows:
+        try:
+            d = date.fromisoformat(str(r.get("date")))
+        except ValueError:
+            continue
+        out.append(MachineRow(date=d, label=str(r.get("label") or ""),
+                              method=str(r.get("method") or ""),
+                              amount=float(r.get("amount") or 0),
+                              note=str(r.get("note") or "")))
+    return out
+
+
+def build_bill(inv, logs=None) -> MachineBill:
+    """DB мөрүүдээс зурахад бэлэн нэхэмжлэл — `db` хэрэггүй тул шууд тестлэгдэнэ.
+
+    Мөрүүд нь ХӨЛДӨӨСӨН жагсаалтаас; тэр байхгүй ХУУЧИН баримт дээр л
+    дамжуулсан log-уудаас (хоцрогдсон зам, шинэ баримтад хэрэглэгдэхгүй)."""
+    rows = stored_rows(inv)
+    if not rows and logs:
+        rows = [MachineRow(date=l.date, label=l.label, method=l.method, amount=l.amount,
+                           note=l.note)
+                for l in sorted(logs, key=lambda l: (l.date, l.id))]
     return MachineBill(no=inv.no, machine_name=inv.machine.name, client_name=inv.client,
                        period_start=inv.d_from, period_end=inv.d_to, rows=rows,
                        subtotal=inv.total, vat=inv.vat, total=inv.grand_total)
 
 
-def machine_invoice_pdf(db, inv, logs, logo_path: str | None = None) -> bytes:
-    """Нэхэмжлэхийг PDF байт болгоно. `db` нь ЗӨВХӨН компанийн нэрэнд хэрэгтэй."""
+def machine_invoice_pdf(db, inv, logs=None, logo_path: str | None = None) -> bytes:
+    """Нэхэмжлэлийг PDF байт болгоно. `db` нь ЗӨВХӨН компанийн нэрэнд хэрэгтэй."""
     return bytes(_render(build_bill(inv, logs), {"name": _company(db)}, logo_path).output())

@@ -1,5 +1,6 @@
 """POST/PUT body-ийн схемүүд."""
 from datetime import date
+from datetime import date as _date_t   # `date` нэртэй ТАЛБАР төрлөө далдална
 from pydantic import BaseModel
 
 
@@ -39,6 +40,11 @@ class StockAdjustIn(BaseModel):
     material_id: int
     grade_id: int
     on_hand: float
+    # «Яагаад» — залруулга нь мөр болж үлддэг тул шалтгаанаа авч явна (H1).
+    # Хоосон байж БОЛНО: хуучин хаалга (Warehouse.tsx) тайлбаргүй илгээдэг.
+    note: str = ""
+    # Тооллого хийсэн ӨДӨР — өчигдрийн тооллогыг өнөөдөр шивж болно
+    date: _date_t | None = None
 
 
 class RepairDoneIn(BaseModel):

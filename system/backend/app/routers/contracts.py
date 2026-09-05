@@ -1329,6 +1329,15 @@ def confirm_movement(mid: int, db: Session = Depends(get_db),
     mv.status = "done"
     db.commit()
     billing.apply_movement_stock(db, mv)
+    # «Ачсан ✓» — ЭНЭ агшнаас эхлэн нөөц хөдөлж, ТООЦОО ажиллана. Урьд нь
+    # бүртгэлд зөвхөн «ачилт үүсэв (хүлээгдэж буй)» гэсэн мөр үлдэж, түүнийг
+    # ХЭН, ХЭЗЭЭ баталсан нь хаана ч бичигдэхгүй байв — мөнгө эхэлдэг цэг
+    # эзэнгүй үлдэнэ гэсэн үг.
+    qty = sum(ln.qty for ln in mv.lines)
+    audit.log(db, user, "confirm", "movement", mv.id,
+              f"№{mv.contract.no} · {mv.date} · Ачсан ✓ {qty:g}ш"
+              + (f" · талбай: {mv.site}" if mv.site else "")
+              + f" · {mv.contract.client.name}")
     return {"ok": True}
 
 

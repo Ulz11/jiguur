@@ -241,7 +241,7 @@ def test_every_note_action_signs_its_name(client, as_role):
     n = _add(client, h, "contract", c["id"], "7.06нд тооцов", flag=True).json()
     client.patch(f"/api/notes/{n['id']}", headers=h, json={"flag": False})
     client.post(f"/api/notes/{n['id']}/void", headers=h, json={"reason": "болив"})
-    rows = client.get("/api/audit?entity=note", headers=h).json()
+    rows = client.get("/api/audit?entity=note", headers=h).json()["rows"]
     assert {r["action"] for r in rows} == {"create", "update", "void"}
     assert any("7.06нд тооцов" in r["detail"] for r in rows)
     assert all(r["user_name"] == "Ч.Отгонцэцэг" for r in rows)

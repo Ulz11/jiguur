@@ -164,7 +164,7 @@ def test_no_english_reaches_the_detail_column_across_the_real_flows(client, as_r
         "client_id": 1, "contract_id": cid, "date": "2026-07-03",
         "amount": 100000, "method": "CASH", "note": ""}).status_code == 200
 
-    rows = client.get("/api/audit?limit=300", headers=h).json()
+    rows = client.get("/api/audit?limit=300", headers=h).json()["rows"]
     assert len(rows) >= 6, "урсгалууд мөрөө үлдээсэнгүй"
     dirty = [(r["action"], r["entity"], r["detail"], latin_in(r["detail"]))
              for r in rows if latin_in(r["detail"])]

@@ -45,19 +45,82 @@ def next_due_date(loan: models.Loan, today: date) -> date:
     return clamp(y, m)
 
 
+def due_day(loan: models.Loan, today: date) -> date:
+    """ЭНЭ САРЫН төлөх өдөр — зээл эхэлсэн өдрийн дугаараар (богино сард сүүлийн)."""
+    return date(today.year, today.month,
+                min(loan.start_date.day, calendar.monthrange(today.year, today.month)[1]))
+
+
+def paid_this_month(loan: models.Loan, today: date) -> bool:
+    """Энэ сард ҮНДСЭН эсвэл ХҮҮГИЙН төлөлт бүртгэгдсэн үү.
+
+    Нэмэлт олголт (`topup`) нь ТӨЛӨЛТ БИШ — мөнгө ГАРСАН биш ОРСОН тул
+    хоцролтыг арилгахгүй (эс бөгөөс дахин зээл авах нь «төлсөн» болно).
+    """
+    return any(p.part in ("interest", "principal")
+               and p.date.year == today.year and p.date.month == today.month
+               for p in loan.payments)
+
+
+def overdue_state(loan: models.Loan, today: date) -> tuple[bool, int]:
+    """«Төлөлт хоцорсон» уу, хэдэн хоног хоцорсон бэ.
+
+    ДҮРЭМ: энэ сарын төлөх өдөр ӨНГӨРСӨН БОЛОВЧ тэр сард үндсэн/хүүгийн
+    төлөлт бүртгэгдээгүй бол хоцорсон. Хаагдсан зээл, төлөх өдөр нь хараахан
+    болоогүй зээл, ба тухайн сард ДӨНГӨЖ авсан зээл (эхлэх огноо нь төлөх
+    өдрөөс хойш) хоцрохгүй — мөнгө сая гарт орсон байхад «хоцорсон» гэж
+    улаан пилл өлгөх нь худал.
+    """
+    if loan.status != "active":
+        return False, 0
+    d = due_day(loan, today)
+    if d >= today or loan.start_date >= d:
+        return False, 0
+    if paid_this_month(loan, today):
+        return False, 0
+    return True, (today - d).days
+
+
+def overdue_loans(db: Session, today: date | None = None) -> list[dict]:
+    """Хоцорсон зээлүүд — мэдэгдлийн давхрага (`billing.build_notifications`)
+    ба дэлгэц хоёулаа ЭНЭ функцээс уншина: нэг дүрэм, нэг жагсаалт."""
+    today = today or date.today()
+    rows = []
+    for l in db.query(models.Loan).filter_by(status="active").all():
+        late, days = overdue_state(l, today)
+        if late:
+            rows.append({"loan_id": l.id, "name": l.name,
+                         "due": str(due_day(l, today)), "days_late": days,
+                         "amount": round(planned_due(l))})
+    return sorted(rows, key=lambda r: -r["days_late"])
+
+
 def summary(db: Session, today: date | None = None):
     today = today or date.today()
     loans = db.query(models.Loan).filter_by(status="active").all()
     total_debt = sum(loan_balance(l) for l in loans)
     burden = sum(monthly_due(l) for l in loans)
+    # «Сарын зээлийн төлбөр» — гэрээгээр тохирсон төлөлт (байхгүй бол хүү).
+    # Аналитик хуудас үүнийг ӨӨРӨӨ давхар бодож `monthly_loan_due` гэж
+    # нэрлэдэг байсан ба Зээл хуудсын «Сарын хүү»-тэй ЗЭРЭГЦЭЖ хоёр өөр тоо
+    # гардаг байв. Хоёр дэлгэц НЭГ эх сурвалжтай боллоо.
+    planned = sum(planned_due(l) for l in loans)
+    late = overdue_loans(db, today)
     upcoming = sorted(
         [{"loan_id": l.id, "name": l.name, "rate": l.monthly_rate,
           "amount": round(planned_due(l)), "planned": (l.monthly_payment or 0) > 0,
           "due": str(next_due_date(l, today))}
          for l in loans if planned_due(l) > 0],
         key=lambda x: x["due"])
-    return {"total_debt": round(total_debt), "monthly_burden": round(burden),
-            "active_count": len(loans), "upcoming": upcoming}
+    return {"total_debt": round(total_debt),
+            # `monthly_burden` нь ХУУЧИН нэр — «Сарын хүү» (дэлгэц түүгээр
+            # уншдаг тул үлдээв). `monthly_interest` нь ижил тоо, ИЛЭРХИЙ нэр.
+            "monthly_burden": round(burden),
+            "monthly_interest": round(burden),
+            "monthly_planned": round(planned),
+            "active_count": len(loans),
+            "overdue_count": len(late), "overdue": late,
+            "upcoming": upcoming}
 
 
 def interest_paid_between(db: Session, d_from: date, d_to: date) -> float:

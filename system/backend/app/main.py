@@ -15,6 +15,7 @@ from .db import Base, engine, SessionLocal, get_db, DATABASE_URL, IS_SQLITE
 from .schema import migrate_schema
 from .seed import seed
 from . import models
+from . import auth as session_routes
 from .services import cron
 from .routers import (core, contracts, clients, payments, dashboard, files,
                       barter, loans, machines, salary, reports, features, notes)
@@ -103,6 +104,13 @@ async def catch_errors(request: Request, call_next):
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     return response
 
+
+# ⚠ СЕССИ нь core-оос ӨМНӨ. `app/auth.py` дахь `/api/auth/login` ба
+# `/api/auth/me` нь `routers/core.py`-ийн ижил нэртэй хоёр цэгийг ДАРНА
+# (FastAPI эхний таарсан замаа сонгоно): нэвтрэлт/гаралт нь /audit дээр
+# мөрөө үлдээх ба `me` нь токены дуусах хугацаа, «нууц үгээ сольдоо юу»
+# гэдгийг авч явна. Core дахь хуучин хоёрыг устгах нь тэр файлын эзний ажил.
+app.include_router(session_routes.router)
 
 for r in (core, contracts, clients, payments, dashboard, files,
           barter, loans, machines, salary, reports, features, notes):

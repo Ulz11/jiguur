@@ -7,6 +7,7 @@ from ..db import get_db
 from .. import models, schemas, serializers, auth
 from ..services import billing
 from ..services import audit
+from . import barter
 
 router = APIRouter(prefix="/api")
 
@@ -140,10 +141,10 @@ def void_payment(pid: int, body: VoidIn, db: Session = Depends(get_db),
 
     released = billing.void_payment(db, p, reason, getattr(user, "name", "") or "")
 
-    if asset is not None and asset.status == "held":
-        asset.status = "voided"
-        asset.note = (asset.note + " · " if asset.note else "") + f"Хүчингүй: {reason}"
-        db.commit()
+    if asset is not None:
+        # Бартерын мөрийг ӨӨРИЙНХ нь модуль хүчингүй болгож, аудитаа бичнэ —
+        # /audit дээр «Бартер» шүүлтүүр хөрөнгийн БҮХ явдлыг харуулна.
+        barter.void_asset(db, user, asset, reason)
 
     freed = ", ".join(f"{r['no']} {r['amount']:,.0f}₮"
                       + (" (алданги)" if r["part"] == "penalty" else "")

@@ -142,7 +142,7 @@ def test_a_contact_comes_back_to_the_calling_list(client, as_role):
     after = _contacts(client, h, cl["id"])
     assert len(after) == 3, "сэргээлт нь ШИНЭ мөр үүсгэхгүй"
     assert next(x for x in after if x["id"] == sole["id"])["active"] is True
-    row = next(x for x in client.get("/api/audit?entity=client_contact", headers=h).json()
+    row = next(x for x in client.get("/api/audit?entity=client_contact", headers=h).json()["rows"]
                if x["action"] == "reactivate")
     assert "Н.Соль" in row["detail"] and "идэвхтэй болгов" in row["detail"]
 
@@ -216,7 +216,7 @@ def test_every_contact_action_signs_its_name(client, as_role):
     client.put(f"/api/contacts/{n['id']}", headers=h,
                json={"name": "Н.Соль", "role": "Нярав", "phone": "99966286"})
     client.post(f"/api/contacts/{n['id']}/deactivate", headers=h)
-    rows = client.get("/api/audit?entity=client_contact", headers=h).json()
+    rows = client.get("/api/audit?entity=client_contact", headers=h).json()["rows"]
     assert {r["action"] for r in rows} == {"create", "update", "deactivate"}
     assert any("Н.Соль" in r["detail"] for r in rows)
     assert all(r["user_name"] == "Ч.Отгонцэцэг" for r in rows)

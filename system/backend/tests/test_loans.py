@@ -304,3 +304,180 @@ def test_forecast_uses_monthly_payment_when_set(client, as_role):
     client.patch(f"/api/loans/{lid}", headers=h, json={"monthly_payment": 500_000})
     f1 = client.get("/api/reports/forecast", headers=h).json()["monthly_loan_due"]
     assert round(f1 - f0) == 500_000                      # 10,000₮ хүү биш, 500,000₮ төлөлт
+
+
+# ---------- «Төлөлт хоцорсон» — дүрэм нь ЦЭВЭР функц ----------
+
+def _loan(**kw):
+    from app import models
+    base = dict(name="Хоцролтын банк", principal=100_000_000, monthly_rate=1.5,
+                start_date=date(2026, 1, 10), status="active")
+    return models.Loan(**{**base, **kw})
+
+
+def _pay(loan, d: date, part="interest", amount=1_000_000):
+    from app import models
+    loan.payments.append(models.LoanPayment(loan_id=loan.id, date=d,
+                                            amount=amount, part=part))
+
+
+def test_overdue_only_after_the_due_day_has_passed_unpaid():
+    """Энэ сарын төлөх өдөр ӨНГӨРСӨН боловч тэр сард төлөлт БАЙХГҮЙ = хоцорсон."""
+    from app.services import loans as L
+    l = _loan(start_date=date(2026, 1, 10))
+
+    # 10-ны өдөр хараахан ирээгүй — хоцроогүй
+    assert L.overdue_state(l, date(2026, 5, 9)) == (False, 0)
+    # 10-нд нь өөрөө — «өнөөдөр төлнө» гэдэг нь хоцролт биш
+    assert L.overdue_state(l, date(2026, 5, 10)) == (False, 0)
+    # 15-нд төлөлтгүй — 5 хоног хоцорсон
+    assert L.overdue_state(l, date(2026, 5, 15)) == (True, 5)
+
+
+def test_a_payment_inside_the_month_clears_the_overdue_flag():
+    from app.services import loans as L
+    l = _loan(start_date=date(2026, 1, 10))
+    _pay(l, date(2026, 5, 12))
+    assert L.overdue_state(l, date(2026, 5, 20)) == (False, 0)
+    # Өнгөрсөн сарын төлөлт нь ЭНЭ сарыг хаахгүй
+    l2 = _loan(start_date=date(2026, 1, 10))
+    _pay(l2, date(2026, 4, 12))
+    assert L.overdue_state(l2, date(2026, 5, 20))[0] is True
+
+
+def test_a_topup_is_not_a_payment_so_it_does_not_clear_overdue():
+    """Нэмэлт олголт нь мөнгө ОРСОН явдал — «төлсөн» болохгүй."""
+    from app.services import loans as L
+    l = _loan(start_date=date(2026, 1, 10))
+    _pay(l, date(2026, 5, 12), part="topup", amount=5_000_000)
+    assert L.overdue_state(l, date(2026, 5, 20))[0] is True
+
+
+def test_a_loan_taken_this_month_and_a_closed_loan_are_never_overdue():
+    """Мөнгө сая гарт орсон зээл дээр улаан пилл өлгөх нь ХУДАЛ."""
+    from app.services import loans as L
+    fresh = _loan(start_date=date(2026, 5, 20))
+    assert L.overdue_state(fresh, date(2026, 5, 25)) == (False, 0)
+    closed = _loan(start_date=date(2026, 1, 10), status="closed")
+    assert L.overdue_state(closed, date(2026, 5, 25)) == (False, 0)
+
+
+def test_due_day_clamps_to_the_last_day_of_a_short_month():
+    from app.services import loans as L
+    l = _loan(start_date=date(2026, 1, 31))
+    assert L.due_day(l, date(2026, 2, 15)) == date(2026, 2, 28)
+
+
+def test_overdue_loans_lists_the_late_ones_worst_first(client, as_role):
+    """`overdue_loans` нь МЭДЭГДЛИЙН давхрага ба дэлгэцийн НЭГ эх сурвалж."""
+    from app.db import get_db
+    from app.services import loans as L
+    from app.main import app as fastapi_app
+
+    h = as_role("otgoo")
+    client.post("/api/loans", headers=h, json={
+        "name": "Хоцорсон А", "principal": 50_000_000, "monthly_rate": 1.5,
+        "start_date": "2026-01-05"})
+    client.post("/api/loans", headers=h, json={
+        "name": "Хоцорсон Б", "principal": 30_000_000, "monthly_rate": 1.5,
+        "start_date": "2026-01-20"})
+    db = next(fastapi_app.dependency_overrides[get_db]())
+    try:
+        rows = [r for r in L.overdue_loans(db, date(2026, 6, 25))
+                if r["name"].startswith("Хоцорсон")]
+        # ХАМГИЙН ИХ хоцорсон нь ДЭЭРЭЭ — Отгоо эгч эхний мөрөөс залгана
+        assert [r["name"] for r in rows] == ["Хоцорсон А", "Хоцорсон Б"]
+        assert rows[0]["days_late"] == 20 and rows[1]["days_late"] == 5
+        assert rows[0]["due"] == "2026-06-05"
+        # Төлөх өдөр нь ирээгүй сард ГАНЦ Ч мөр байхгүй (1-нээс өмнө)
+        assert [r for r in L.overdue_loans(db, date(2026, 1, 3))
+                if r["name"].startswith("Хоцорсон")] == []
+    finally:
+        db.close()
+
+
+def test_loan_payload_and_summary_carry_the_overdue_shape(client, as_role):
+    """Дэлгэц нь `overdue`, `days_late`-ыг мөр бүр дээрээ авна."""
+    h = as_role("otgoo")
+    lid = client.post("/api/loans", headers=h, json={
+        "name": "Өнөөдөр авсан", "principal": 10_000_000, "monthly_rate": 1.2,
+        "start_date": str(date.today())}).json()["id"]
+    d = client.get("/api/loans", headers=h).json()
+    row = next(x for x in d["loans"] if x["id"] == lid)
+    # Өнөөдөр авсан зээл ХЭЗЭЭ Ч хоцроогүй
+    assert row["overdue"] is False and row["days_late"] == 0
+    assert row["due_day"]
+    s = d["summary"]
+    assert {"monthly_burden", "monthly_interest", "monthly_planned",
+            "overdue_count", "overdue"} <= set(s)
+    # «Сарын хүү» ба «Сарын зээлийн төлбөр» нь ХОЁР ӨӨР тоо, тус тусын нэртэй
+    assert s["monthly_interest"] == s["monthly_burden"]
+    assert s["overdue_count"] == len(s["overdue"])
+
+
+# ---------- Автомат хаалт ба сэргээлт нь МӨРӨӨ үлдээнэ ----------
+
+def _loan_id(client, h, **kw) -> int:
+    body = {"name": "Хаагдах зээл", "principal": 1_000_000, "monthly_rate": 1.0,
+            "start_date": iso(60), **kw}
+    return client.post("/api/loans", headers=h, json=body).json()["id"]
+
+
+def _trail(client, h, entity: str, eid: int):
+    rows = client.get(f"/api/audit?entity={entity}&limit=200", headers=h).json()["rows"]
+    return [r for r in rows if r["entity_id"] == eid]
+
+
+def test_auto_close_says_so_in_the_response_and_in_the_audit(client, as_role):
+    """Үлдэгдэл 0 болоход зээл ЧИМЭЭГҮЙ алга болдог байв — одоо хэлнэ."""
+    h = as_role("otgoo")
+    lid = _loan_id(client, h)
+    r = client.post(f"/api/loans/{lid}/payments", headers=h, json={
+        "date": iso(1), "amount": 1_000_000, "part": "principal"})
+    assert r.status_code == 200, r.text
+    assert r.json()["closed"] is True and r.json()["status"] == "closed"
+    row = next(x for x in _trail(client, h, "loan", lid) if x["action"] == "close")
+    assert "автоматаар хаав" in row["detail"]
+
+
+def test_deleting_a_payment_that_leaves_a_balance_reopens_the_loan(client, as_role):
+    """Хаагдсан зээлээс төлөлт уствал ӨР эргэж гарна — зээл нь СЭРГЭНЭ.
+
+    Эс бөгөөс тэр өр жагсаалтаас алга болж, нийт өглөгөөс унана.
+    """
+    h = as_role("otgoo")
+    lid = _loan_id(client, h)
+    pay = client.post(f"/api/loans/{lid}/payments", headers=h, json={
+        "date": iso(1), "amount": 1_000_000, "part": "principal"}).json()
+    pid = pay["payments"][0]["id"]
+
+    r = client.delete(f"/api/loans/{lid}/payments/{pid}", headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["reopened"] is True
+    assert r.json()["status"] == "active" and r.json()["balance"] == 1_000_000
+    row = next(x for x in _trail(client, h, "loan", lid) if x["action"] == "reopen")
+    assert "сэргээв" in row["detail"]
+    # Хүүгийн төлөлт уствал (үлдэгдэл хөдлөхгүй) сэргээх зүйл алга
+    assert lid in {x["id"] for x in client.get("/api/loans", headers=h).json()["loans"]}
+
+
+def test_every_loan_write_leaves_an_audit_row(client, as_role):
+    h = as_role("otgoo")
+    lid = _loan_id(client, h, name="Бүртгэлтэй зээл", principal=5_000_000)
+    client.patch(f"/api/loans/{lid}", headers=h, json={"monthly_rate": 1.8})
+    p = client.post(f"/api/loans/{lid}/payments", headers=h, json={
+        "date": iso(2), "amount": 90_000, "part": "interest"}).json()
+    pid = p["payments"][0]["id"]
+    client.patch(f"/api/loans/{lid}/payments/{pid}", headers=h, json={
+        "date": iso(2), "amount": 95_000, "part": "interest"})
+    client.delete(f"/api/loans/{lid}/payments/{pid}", headers=h)
+    client.post(f"/api/loans/{lid}/close", headers=h)
+
+    loan_rows = _trail(client, h, "loan", lid)
+    assert {"create", "update", "close"} <= {r["action"] for r in loan_rows}
+    upd = next(r for r in loan_rows if r["action"] == "update")
+    assert "сарын хүү %" in upd["detail"]          # талбар нь МОНГОЛООР
+    pay_rows = [r for r in client.get("/api/audit?entity=loan_payment&limit=200",
+                                      headers=h).json()["rows"]]
+    assert {"create", "update", "delete"} <= {r["action"] for r in pay_rows}
+    assert any("хүү" in r["detail"] for r in pay_rows)

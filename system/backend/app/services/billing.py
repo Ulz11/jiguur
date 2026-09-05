@@ -1075,6 +1075,21 @@ def _existing_invoice_keys(db: Session, contract: models.Contract) -> set:
     return {spec_key(contract, cs, ce, no) for cs, ce, no in rows}
 
 
+def pending_invoice_specs(db: Session, contract: models.Contract,
+                          today: date | None = None) -> list[dict]:
+    """`ensure_invoices` ҮҮСГЭХ БАЙСАН нэхэмжлэлүүд — DB-д ЮУ Ч БИЧИХГҮЙГЭЭР.
+
+    Уншдаг зам (мөнгөний прогноз) нь нэхэмжлэл ТӨРҮҮЛЖ болохгүй: GET хүсэлт
+    бүр авлагын түүхийг өөрчилдөг бол «би зүгээр л хартал тоо өөрчлөгдлөө»
+    гэсэн итгэл эвдрэх мөч болно. Нэхэмжлэл нь ЗӨВХӨН cron (эсвэл түүний гар
+    товчлуур) -оор төрнө; бусад нь тооцоолж ХАРНА.
+    """
+    existing = _existing_invoice_keys(db, contract)
+    return [sp for sp in derivable_invoice_specs(contract, today)
+            if spec_key(contract, sp["cycle_start"], sp["cycle_end"],
+                        sp["no"]) not in existing]
+
+
 def ensure_invoices(db: Session, contract: models.Contract, today: date | None = None):
     """Дууссан цикл бүрд нэхэмжлэл автоматаар үүсгэнэ (байхгүй бол).
 
@@ -1331,10 +1346,17 @@ def penalty_days(inv: models.Invoice, as_of: date) -> int:
     return max((as_of - _penalty_since(inv)).days, 0)
 
 
+#: «Төлөгдсөн» гэж үзэх хязгаар — хөвөгч таслалын үлдэц (0.004₮) нь ӨР БИШ.
+#: ХУГАЦАА ХЭТЭРСЭН гэдгийн ганц босго ч мөн энэ: дашбоард, авлага цуглуулах,
+#: мэдэгдэл гурвуулаа `invoice_status`/`overdue_summary`-аар л шийддэг тул
+#: «12 нэхэмжлэл хэтэрсэн» гэсэн тоо хоёр дэлгэц дээр зөрөх боломжгүй.
+PAID_EPS = 0.005
+
+
 def invoice_status(inv: models.Invoice, today: date | None = None) -> str:
     today = today or date.today()
     out = invoice_outstanding(inv)
-    if out <= 0.005:
+    if out <= PAID_EPS:
         # үндсэн дүн хаагдсан ч бүртгэгдсэн алданги үлдсэн бол ТӨЛӨГДӨӨГҮЙ хэвээр
         if invoice_penalty_due(inv) > 0.005:
             return "penalty"
@@ -2001,3 +2023,148 @@ def build_notifications(db: Session, today: date | None = None, scope: str = "al
                       "sub": mv.note or f"Огноо {mv.date}",
                       "contract_id": mv.contract_id, "movement_id": mv.id})
     return notes
+
+
+# ---------- ХУГАЦАА ХЭТЭРСЭН: НЭГ ТОДОРХОЙЛОЛТ (H9 «нэг факт, нэг тоо») ----------
+#
+# «Хугацаа хэтэрсэн» гэдэг тоо ГУРВАН газар ГУРВАН журмаар бодогдож байв:
+#   · дашбоардын KPI — `invoice_status(...) == "overdue"` (босго 0.005);
+#   · «Авлага цуглуулах» — `out <= 0 or inv.due_date >= today` (босго 0);
+#   · мэдэгдэл — дахин `invoice_status`, гэхдээ ЗӨВХӨН идэвхтэй гэрээгээр.
+# Отгоо эгч самбар дээр «12 нэхэмжлэл», авлагын хуудсан дээр 11 мөрийг хараад
+# аль нь ч үнэн гэж итгэхээ болино. Одоо гурвуулаа ЭНД ирнэ.
+
+
+def overdue_invoices(db: Session, today: date | None = None,
+                     scope: str = "all") -> list[models.Invoice]:
+    """Хугацаа хэтэрсэн АМЬД нэхэмжлэлүүд — `scope` төрлийн гэрээнийх.
+
+    Гэрээний ТӨЛӨВ (идэвхтэй/хаагдсан) нөлөөлөхгүй: хаагдсан гэрээний
+    төлөгдөөгүй нэхэмжлэл нь мөнгө ХЭВЭЭР — түүнийг жагсаалтаас хасах нь
+    авлагыг чимээгүй арчина.
+    """
+    today = today or date.today()
+    rows = [i for i in db.query(models.Invoice).filter(LIVE_INVOICE).all()
+            if invoice_status(i, today) == "overdue"]
+    if scope != "all":
+        rows = [i for i in rows if i.contract and i.contract.type == scope]
+    return rows
+
+
+def overdue_totals(rows: list[models.Invoice]) -> dict:
+    """Аль хэдийн шүүгдсэн мөрүүдийн нийлбэр — ХОЁР ДАХЬ уншилтгүйгээр.
+
+    Дашбоард нь жагсаалтаа ЯГ ЭНЭ мөрүүдээс угсардаг тул дүнгээ ч эндээс
+    авна: хоёр удаа уншвал хурд төдийгүй ҮНЭН нь ч эрсдэнэ (хоёр уншилтын
+    хооронд төлбөр бүртгэгдвэл «12 нэхэмжлэл» доор 11 мөр гарна).
+    """
+    return {"invoices": len(rows),
+            "clients": len({i.contract.client_id for i in rows if i.contract}),
+            "amount": sum(invoice_outstanding(i) for i in rows)}
+
+
+def overdue_summary(db: Session, scope: str = "all",
+                    today: date | None = None) -> dict:
+    """{invoices, clients, amount} — самбар ба авлагын хуудасны ГАНЦ эх."""
+    return overdue_totals(overdue_invoices(db, today, scope))
+
+
+def overdue_by_client(db: Session, today: date | None = None,
+                      scope: str = "all") -> dict[int, dict]:
+    """Харилцагч бүрийн хэтэрсэн дүн ба ХАМГИЙН ХУУЧИН хоног (залгах дараалал).
+
+    ТОЛЬ болж буцна — харилцагч тутам дуудагдвал бүх нэхэмжлэл дахин дахин
+    уншигдана (200 харилцагч × бүх нэхэмжлэл). Авлагын хуудас нэг л удаа авна.
+    """
+    today = today or date.today()
+    out: dict[int, dict] = {}
+    for i in overdue_invoices(db, today, scope):
+        if not i.contract:
+            continue
+        row = out.setdefault(i.contract.client_id,
+                             {"amount": 0.0, "oldest_days": 0, "invoices": 0})
+        row["amount"] += invoice_outstanding(i)
+        row["oldest_days"] = max(row["oldest_days"], (today - i.due_date).days)
+        row["invoices"] += 1
+    return out
+
+
+# ---------- МЭДЭГДЛИЙГ ТҮР НУУХ (`models.NotificationState`) ----------
+
+#: Дашбоард дээр гарч болох БҮХ мэдэгдлийн төрөл. Шинэ төрөл нэмэхэд ЭНД
+#: бүртгэнэ — эс бөгөөс түүнийг хэн ч түр нууж чадахгүй.
+NOTIFY_KINDS = ("overdue", "ending", "expired", "shipment",
+                "loan", "loan_overdue", "barter_stale", "promise_late")
+
+#: Бүртгэлийн мөрөнд гарах үг (`/audit` нь монголоор ярина).
+NOTIFY_MN: dict[str, str] = {
+    "overdue": "хугацаа хэтэрсэн нэхэмжлэл",
+    "ending": "гэрээ дуусах гэж буй",
+    "expired": "гэрээний хугацаа хэтэрсэн",
+    "shipment": "баталгаажаагүй ачилт",
+    "loan": "зээлийн төлөлт",
+    "loan_overdue": "хоцорсон зээлийн төлөлт",
+    "barter_stale": "зогсонги бартер",
+    "promise_late": "биелээгүй амлалт",
+}
+
+
+def notification_key(n: dict) -> tuple[str, int | None]:
+    """Мэдэгдлийн ӨВӨРМӨЦ хаяг — нуулт ЯГ энэ мөрийг олох ёстой.
+
+    Хамгийн НАРИЙН заагчийг сонгоно: нэхэмжлэл → хөдөлгөөн → гэрээ. Нэг
+    гэрээний хоёр нэхэмжлэл хэтэрсэн бол тэдгээр нь ХОЁР тусдаа мөр тул
+    нэгийг нь нуухад нөгөө нь ХЭВЭЭР үлдэнэ.
+    """
+    for k in ("invoice_id", "movement_id", "contract_id", "loan_id"):
+        v = n.get(k)
+        if v is not None:
+            return n.get("kind", ""), int(v)
+    return n.get("kind", ""), None
+
+
+def snooze_row(db: Session, user_id: int, kind: str,
+               entity_id: int | None) -> models.NotificationState | None:
+    """Тухайн хүний тэр мөрийн нуултын бичилт (байвал).
+
+    ⚠ `entity_id IS NULL`-ыг `== None`-оор хайж БОЛОХГҮЙ: SQL дээр
+    `NULL = NULL` нь ҮНЭН биш тул мөр хэзээ ч олдохгүй, нуулт бүр давхар
+    мөр үүсгэнэ.
+    """
+    q = db.query(models.NotificationState).filter(
+        models.NotificationState.user_id == user_id,
+        models.NotificationState.kind == kind)
+    q = q.filter(models.NotificationState.entity_id.is_(None) if entity_id is None
+                 else models.NotificationState.entity_id == entity_id)
+    return q.first()
+
+
+def snoozed_keys(db: Session, user_id: int,
+                 today: date | None = None) -> set[tuple[str, int | None]]:
+    """Тухайн хүнд ӨНӨӨДӨР нуугдаж байгаа мэдэгдлүүдийн хаягууд."""
+    today = today or date.today()
+    return {(r.kind, r.entity_id)
+            for r in db.query(models.NotificationState)
+            .filter(models.NotificationState.user_id == user_id).all()
+            if r.snooze_until and r.snooze_until > today}
+
+
+def apply_snooze(db: Session, notes: list[dict], user,
+                 today: date | None = None) -> tuple[list[dict], int]:
+    """Нуусан мөрүүдийг хасна. Буцна: (харагдах мөрүүд, нуугдсаны тоо).
+
+    ⚠ Энэ нь `build_notifications`-ийн ДОТОР биш, дуудагч дээр ажиллана:
+    зээл, бартер, амлалтын мэдэгдэл нь дашбоард дээр ХОЖИМ нэмэгддэг тул
+    шүүлтүүр нь бүх мөр цугласны ДАРАА нэг л удаа явах ёстой (эс бөгөөс
+    нуугдсаны тоо дутуу гарна).
+    """
+    uid = getattr(user, "id", None)
+    if uid is None or not notes:
+        return list(notes), 0
+    hidden = snoozed_keys(db, uid, today)
+    if not hidden:
+        return list(notes), 0
+    kept = [n for n in notes
+            if notification_key(n) not in hidden
+            and (n.get("kind", ""), None) not in hidden]
+    return kept, len(notes) - len(kept)

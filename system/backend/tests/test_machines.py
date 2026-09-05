@@ -171,7 +171,7 @@ def test_patch_machine_log_persists_and_audits(client, as_role):
     assert row["note"] == "Тохиролцсоноор"
     assert got["income"] == 1_200_000
 
-    trail = client.get("/api/audit?entity=machine_log", headers=h).json()
+    trail = client.get("/api/audit?entity=machine_log", headers=h).json()["rows"]
     assert any(a["action"] == "update" and a["entity_id"] == l["id"] for a in trail)
 
 
@@ -184,7 +184,7 @@ def test_delete_machine_log_removes_it_and_audits(client, as_role):
     assert got["logs"] == [] and got["income"] == 0
     assert client.delete(f"/api/machine-logs/{l['id']}", headers=h).status_code == 404
 
-    trail = client.get("/api/audit?entity=machine_log", headers=h).json()
+    trail = client.get("/api/audit?entity=machine_log", headers=h).json()["rows"]
     assert any(a["action"] == "delete" and a["entity_id"] == l["id"] for a in trail)
 
 
@@ -342,7 +342,7 @@ def test_machine_invoice_pdf_and_delete(client, as_role):
     assert client.get(f"/api/machine-invoices/{inv['id']}/pdf", headers=h).status_code == 404
     assert client.get(f"/api/machines/{m['id']}/logs", headers=h).json()["invoices"] == []
 
-    trail = client.get("/api/audit?entity=machine_invoice", headers=h).json()
+    trail = client.get("/api/audit?entity=machine_invoice", headers=h).json()["rows"]
     assert any(a["action"] == "delete" and a["entity_id"] == inv["id"] for a in trail)
 
 
@@ -354,3 +354,178 @@ def test_machine_invoice_does_not_enter_the_receivable_engine(client, as_role):
     client.post(f"/api/machines/{m['id']}/invoices", headers=h, json={
         "client": "Түмэн Хийц", "d_from": "2026-05-01", "d_to": "2026-05-31"})
     assert client.get("/api/dashboard", headers=h).json()["kpi"]["receivable"] == before
+
+
+# ---------- Бүртгэл нэмэх нь ЭЗЭНТЭЙ ----------
+
+def test_adding_a_log_leaves_an_audit_row_like_editing_one(client, as_role):
+    """«Хэн энэ 1.2 саяыг оруулав?» гэдэг нь /audit-аас уншигдана.
+
+    Урьд нь ЗАСАХ, УСТГАХ хоёр л мөр үлдээдэг байсан: анхны бичилт нь
+    эзэнгүй тул буруу тоо орсон үед хэнээс асуухаа мэдэхгүй байв.
+    """
+    h = as_role("otgoo")
+    m = client.post("/api/machines", headers=h, json={"name": "Эзэнтэй кран"}).json()
+    r = client.post(f"/api/machines/{m['id']}/logs", headers=h, json={
+        "date": "2026-05-04", "entry": "job", "label": "Бүтэн өдөр",
+        "client": "Түмэн Хийц", "amount": 1_200_000, "method": "BANK"})
+    assert r.status_code == 200, r.text
+    trail = client.get("/api/audit?entity=machine_log", headers=h).json()["rows"]
+    row = next(x for x in trail if x["entity_id"] == r.json()["id"]
+               and x["action"] == "create")
+    assert "Эзэнтэй кран" in row["detail"] and "Түмэн Хийц" in row["detail"]
+    assert "данс" in row["detail"]          # хэлбэр нь МОНГОЛООР
+    assert (row["user_name"] or "").strip()
+
+    # Даргын бичилт ч эзэнтэй — тэр бичих эрхтэй тул мөр нь түүний нэрээр
+    d = client.post(f"/api/machines/{m['id']}/logs", headers=as_role("darga"), json={
+        "date": "2026-05-05", "entry": "expense", "label": "", "amount": 90_000})
+    assert d.status_code == 200
+    trail = client.get("/api/audit?entity=machine_log", headers=h).json()["rows"]
+    row = next(x for x in trail if x["entity_id"] == d.json()["id"])
+    assert "зарлага" in row["detail"]       # `entry` нь ч монголоор
+    assert row["user_name"] == "Үйлдвэрийн дарга"
+
+
+# ---------- Дугаар нь НЭХЭМЖИЛСЭН ХУГАЦААНААС ----------
+
+def test_invoice_number_comes_from_the_billed_period_not_from_today(client, as_role):
+    """5-р сарын ажлыг 9-р сард гаргасан ч дугаар нь «M-26/05-…».
+
+    Отгоо эгч баримтаа ХУГАЦААГААР нь хайдаг. `date.today()`-оос гаргавал
+    5-р сарын нэхэмжлэл «M-26/09-1» болж, хайлт нь хоосон буцна.
+    """
+    h = as_role("otgoo")
+    m = _invoice_machine(client, h)
+    inv = client.post(f"/api/machines/{m['id']}/invoices", headers=h, json={
+        "client": "Түмэн Хийц", "d_from": "2026-05-01", "d_to": "2026-05-31"}).json()
+    assert inv["no"].startswith("M-26/05-")
+
+
+# ---------- Баримт бол ГЭРЭЛ ЗУРАГ ----------
+
+def test_reprint_shows_the_stored_lines_even_after_the_log_changed(client, as_role):
+    """Баримт гарсны дараа log засагдсан ч ДАХИН ХЭВЛЭХЭД ижил цаас гарна.
+
+    Урьд нь PDF нь log-уудыг ДАХИН уншиж зурдаг байсан: 1.8 саяар
+    нэхэмжлээд мөрөө 500 мянга болгож зассны дараа хэвлэвэл цаасан дээр
+    500 мянга гарах ба системд 1.8 сая үлдэнэ — харилцагч дээр нэг тоо,
+    бидний дээр өөр тоо.
+    """
+    h = as_role("otgoo")
+    m = _invoice_machine(client, h)
+    inv = client.post(f"/api/machines/{m['id']}/invoices", headers=h, json={
+        "client": "Түмэн Хийц", "d_from": "2026-05-01", "d_to": "2026-05-31"}).json()
+    assert inv["grand_total"] == 1_800_000
+
+    before = client.get(f"/api/machine-invoices/{inv['id']}", headers=h).json()
+    assert [l["amount"] for l in before["lines"]] == [1_200_000, 600_000]
+
+    # Нэхэмжилсэн мөрийг ЗАСАХ — баримт хөдлөх ЁСГҮЙ
+    logs = client.get(f"/api/machines/{m['id']}/logs", headers=h).json()["logs"]
+    lid = next(l["id"] for l in logs if l["amount"] == 1_200_000)
+    assert client.patch(f"/api/machine-logs/{lid}", headers=h,
+                        json={"amount": 500_000}).status_code == 200
+
+    after = client.get(f"/api/machine-invoices/{inv['id']}", headers=h).json()
+    assert [l["amount"] for l in after["lines"]] == [1_200_000, 600_000]
+    assert after["grand_total"] == 1_800_000
+    p = client.get(f"/api/machine-invoices/{inv['id']}/pdf", headers=h)
+    assert p.status_code == 200 and p.content[:4] == b"%PDF"
+
+    # Мөрийг УСТГАСАН ч баримт бүтэн — «нэхэмжилсэн зүйл» алга болохгүй
+    assert client.delete(f"/api/machine-logs/{lid}", headers=h).status_code == 200
+    still = client.get(f"/api/machine-invoices/{inv['id']}", headers=h).json()
+    assert still["grand_total"] == 1_800_000 and len(still["lines"]) == 2
+    assert client.get(f"/api/machine-invoices/{inv['id']}/pdf",
+                      headers=h).status_code == 200
+
+
+def test_stored_lines_win_over_the_logs_in_the_pdf_builder(client, as_role):
+    """`build_bill` нь ХӨЛДӨӨСӨН мөрөөр — дамжуулсан log-ууд нь НӨӨЦ зам."""
+    from app.services import pdfmachine
+
+    class _M:
+        name = "Автокран 25т"
+
+    class _Inv:
+        no, client, machine = "M-26/05-9", "Түмэн Хийц", _M()
+        d_from, d_to = date(2026, 5, 1), date(2026, 5, 31)
+        total, vat, grand_total = 1_800_000, 0, 1_800_000
+        detail_json = ('{"rows": [{"date": "2026-05-01", "label": "Бүтэн өдөр", '
+                       '"method": "BANK", "amount": 1200000, "note": ""}, '
+                       '{"date": "2026-05-31", "label": "Хагас өдөр", '
+                       '"method": "CASH", "amount": 600000, "note": ""}]}')
+
+    bill = pdfmachine.build_bill(_Inv(), logs=[])
+    assert [r.amount for r in bill.rows] == [1_200_000, 600_000]
+    assert sum(r.amount for r in bill.rows) == bill.subtotal == _Inv.total
+
+
+# ---------- УРЬДЧИЛСАН ХАРАХ (dry_run) ----------
+
+def test_dry_run_previews_without_writing_and_names_the_overlap(client, as_role):
+    """«Үүсгэх» дарахаас ӨМНӨ: ямар мөр, ямар дүн, давхардал байвал АЛЬ баримт.
+
+    409 нь хүнд «алдаа» шиг харагддаг; урьдчилсан сануулга нь ЗӨВЛӨГӨӨ.
+    """
+    h = as_role("otgoo")
+    m = _invoice_machine(client, h)
+    body = {"client": "Түмэн Хийц", "d_from": "2026-05-01", "d_to": "2026-05-31"}
+
+    pre = client.post(f"/api/machines/{m['id']}/invoices", headers=h,
+                      json={**body, "dry_run": True})
+    assert pre.status_code == 200, pre.text
+    d = pre.json()
+    assert d["dry_run"] is True and d["rows"] == 2 and d["grand_total"] == 1_800_000
+    assert d["no"].startswith("M-26/05-") and d["warning"] == ""
+    assert d["overlap_no"] is None
+    # ЮУ Ч бичигдээгүй
+    assert client.get(f"/api/machines/{m['id']}/logs", headers=h).json()["invoices"] == []
+
+    real = client.post(f"/api/machines/{m['id']}/invoices", headers=h, json=body).json()
+    warn = client.post(f"/api/machines/{m['id']}/invoices", headers=h,
+                       json={**body, "d_from": "2026-05-15", "dry_run": True}).json()
+    assert warn["overlap_no"] == real["no"]
+    assert real["no"] in warn["warning"] and "давхардсан" in warn["warning"]
+    # Сануулга нь 409-ийн мөртэй ИЖИЛ өгүүлбэр — нэг үг, нэг утга
+    hard = client.post(f"/api/machines/{m['id']}/invoices", headers=h,
+                       json={**body, "d_from": "2026-05-15"})
+    assert hard.status_code == 409 and hard.json()["detail"] == warn["warning"]
+
+
+def test_dry_run_warns_when_the_period_has_nothing_to_bill(client, as_role):
+    h = as_role("otgoo")
+    m = _invoice_machine(client, h)
+    d = client.post(f"/api/machines/{m['id']}/invoices", headers=h, json={
+        "client": "Түмэн Хийц", "d_from": "2026-05-02", "d_to": "2026-05-30",
+        "dry_run": True}).json()
+    assert d["rows"] == 0 and "олдсонгүй" in d["warning"]
+
+
+# ---------- НӨАТ нь ӨӨРИЙН нүдтэй ----------
+
+def test_machine_vat_percent_is_a_setting_of_its_own(client, as_role):
+    """`machine_vat_percent` нь /api/settings дээр 0-ээр суусан байна."""
+    h = as_role("otgoo")
+    s = client.get("/api/settings", headers=h).json()
+    assert s["machine_vat_percent"] == "0"
+    assert client.get("/api/machines", headers=h).json()["vat_percent"] == 0.0
+
+    assert client.put("/api/settings", headers=h,
+                      json={"values": {"machine_vat_percent": "10"}}).status_code == 200
+    assert client.get("/api/machines", headers=h).json()["vat_percent"] == 10.0
+    m = _invoice_machine(client, h)
+    inv = client.post(f"/api/machines/{m['id']}/invoices", headers=h, json={
+        "client": "Түмэн Хийц", "d_from": "2026-05-01", "d_to": "2026-05-31"}).json()
+    assert inv["total"] == 1_800_000 and inv["vat"] == 180_000
+    assert inv["grand_total"] == 1_980_000
+
+
+def test_missing_invoice_says_nehemjlel_not_nehemjleh(client, as_role):
+    """«Нэхэмжлэх» нь ҮЙЛ ҮГ; баримт нь «нэхэмжлэл» — §3 толь бичиг."""
+    h = as_role("otgoo")
+    r = client.get("/api/machine-invoices/9999/pdf", headers=h)
+    assert r.status_code == 404 and r.json()["detail"] == "Нэхэмжлэл олдсонгүй"
+    assert client.get("/api/machine-invoices/9999", headers=h).json()["detail"] \
+        == "Нэхэмжлэл олдсонгүй"

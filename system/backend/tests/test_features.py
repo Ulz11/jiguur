@@ -204,7 +204,8 @@ def test_stocktake_bulk(client, as_role):
     s = m["stock"][0]
     r = client.post("/api/stock/stocktake", headers=h, json={
         "date": iso(0), "note": "Сарын тооллого",
-        "lines": [{"material_id": m["id"], "grade_id": s["grade_id"], "counted": s["on_hand"] - 12}]})
+        "lines": [{"material_id": m["id"], "grade_id": s["grade_id"],
+                   "system": s["on_hand"], "counted": s["on_hand"] - 12}]})
     assert r.status_code == 200
     assert r.json()["adjusted"] == 1
     assert r.json()["diff_total"] == -12
@@ -264,7 +265,7 @@ def test_audit_records_changes(client, as_role):
     client.patch("/api/contracts/1", headers=h, json={"penalty_percent": 0.7})
     rows = client.get("/api/audit?limit=50", headers=h)
     assert rows.status_code == 200
-    logs = rows.json()
+    logs = rows.json()["rows"]
     top = logs[0]
     assert top["entity"] == "contract" and top["action"] == "update"
     assert "0.7" in top["detail"]

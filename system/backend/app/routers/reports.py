@@ -8,7 +8,7 @@ from openpyxl import Workbook, load_workbook
 from ..db import get_db
 from .. import models, auth, serializers
 from ..services import reports as R
-from ..services import billing, loans as L
+from ..services import audit, billing, loans as L
 
 router = APIRouter(prefix="/api")
 guard = auth.require_roles("manager", "finance")
@@ -33,14 +33,23 @@ def report_range(months: int, d_from: str, d_to: str, today: date) -> tuple[date
     return f, today
 
 
+#: Excel-ийн ДӨРВӨН ХУУДАС — гарын авлагад яг эдгээр нэрээр бичигдэнэ.
+SHEETS = ("Ашиг алдагдал", "Задаргаа", "Авлага", "Зээл")
+
+
 @router.get("/reports")
 def reports(months: int = 6, d_from: str = "", d_to: str = "",
             db: Session = Depends(get_db), user=Depends(guard)):
     today = date.today()
     f, t = report_range(months, d_from, d_to, today)
+    ranged = bool(d_from and d_to)
     return {"pnl": R.pnl(db, f, t),
             "months": months,
-            "series": R.cashflow_series(db, today, 6),
+            # График нь P&L-ийн ЦОНХЫГ дагана (муж өгсөн үед) — нэг хуудсан
+            # дээр хоёр өөр хугацаа зэрэгцэхээ болив.
+            "series": R.cashflow_series(db, today, months,
+                                        f if ranged else None,
+                                        t if ranged else None),
             "loans_total": L.summary(db, today)["total_debt"]}
 
 
@@ -59,9 +68,13 @@ def export_report(months: int = 6, d_from: str = "", d_to: str = "",
     dt = p["detail"]
     wb = Workbook()
     ws = wb.active
-    ws.title = "Ашиг алдагдал"
+    ws.title = SHEETS[0]
     ws.append(["Жигүүр Зам ХХК — Ашиг, алдагдлын тайлан"])
     ws.append([f"Хугацаа: {p['from']} — {p['to']}"])
+    # ТООНЫ СУУРЬ нь толгойн хажууд: цаас дээр бууснаа ч «нэхэмжилсэн»
+    # гэдгээ хэлж байх ёстой — цуглуулсан мөнгөтэй андуурагдахгүй.
+    ws.append([f"Түрээсийн орлогын суурь: {p['basis_mn']}"])
+    ws.append([f"Цалингийн суурь: {p['salary_basis_mn']}"])
     ws.append([])
     ch = dt["charge"]
     rows = [
@@ -78,7 +91,8 @@ def export_report(months: int = 6, d_from: str = "", d_to: str = "",
         ("Алдангийн орлого (төлөгдсөн)", p["penalty_income"]),
         ("Нийт орлого", p["total_income"]), ("", ""),
         ("ЗАРДАЛ", ""), ("Механизмын зарлага", p["machine_expense"]),
-        ("Цалин", p["salary_expense"]), ("Зээлийн хүү", p["interest_expense"]),
+        ("Цалин (гарт олгосон)", p["salary_expense"]),
+        ("Зээлийн хүү", p["interest_expense"]),
         ("Нийт зардал", p["total_expense"]), ("", ""),
         ("Бартерын хэрэгжсэн үр дүн", p["barter_result"]),
         ("ЦЭВЭР ҮР ДҮН", p["net"]),
@@ -89,7 +103,7 @@ def export_report(months: int = 6, d_from: str = "", d_to: str = "",
     ws.column_dimensions["B"].width = 18
 
     # ---- Задаргаа: тоо бүр яаж гарсан нь мөр мөрөөрөө ----
-    wz = wb.create_sheet("Задаргаа")
+    wz = wb.create_sheet(SHEETS[1])
     wz.column_dimensions["A"].width = 13
     wz.column_dimensions["B"].width = 32
     for col in "CDEFG":
@@ -137,14 +151,14 @@ def export_report(months: int = 6, d_from: str = "", d_to: str = "",
             [[r["machine"], r["income"], r["expense"], r["net"]]
              for r in dt["machines"]])
     section("ЦАЛИН — олгосон бодолтууд",
-            ["Огноо", "Бодолт", "Ажилтан", "Дүн (base)"],
-            [[r["date"], r["label"], r["employees"], r["amount"]]
+            ["Огноо", "Бодолт", "Ажилтан", "Цалингийн сан", "НДШ", "Гарт олгосон"],
+            [[r["date"], r["label"], r["employees"], r["gross"], r["ndsh"], r["amount"]]
              for r in dt["salary"]])
     section("ЗЭЭЛИЙН ХҮҮ — төлөлт бүрээр",
             ["Огноо", "Зээлдүүлэгч", "Дүн"],
             [[r["date"], r["loan"], r["amount"]] for r in dt["interest"]])
 
-    ws2 = wb.create_sheet("Авлага")
+    ws2 = wb.create_sheet(SHEETS[2])
     # Алдангийн ХОЁР багана — нэхэгдсэн нь өр, нэхэгдээгүй нь зөвхөн тооцоолол.
     # Нэг багана болгож нийлүүлбэл Excel рүү буусан тоо нь «нэхсэн» гэж
     # уншигдаж, хэзээ ч гаргаагүй шийдвэр баримт болно (R25 / H2).
@@ -157,7 +171,7 @@ def export_report(months: int = 6, d_from: str = "", d_to: str = "",
                     row["penalty_booked"], row["penalty_unbooked"], row["deposit"]])
     ws2.column_dimensions["A"].width = 32
 
-    ws3 = wb.create_sheet("Зээл")
+    ws3 = wb.create_sheet(SHEETS[3])
     ws3.append(["Зээлдүүлэгч", "Үндсэн дүн", "Нэмэлт олголт", "Үлдэгдэл",
                 "Хүү %/сар", "Сарын хүү", "Сарын төлөлт"])
     from ..services.loans import loan_balance, monthly_due, topup_total
@@ -166,6 +180,10 @@ def export_report(months: int = 6, d_from: str = "", d_to: str = "",
                     l.monthly_rate, monthly_due(l), l.monthly_payment or 0])
     ws3.column_dimensions["A"].width = 32
 
+    # ТАТАЛТ нь ЯВДАЛ: тайлан гараас гардаг тул хэн, хэзээ, ЯМАР ХУГАЦААНЫ
+    # тоог авч явсныг /audit мэднэ («тэр Excel хаанаас гарсан юм бэ?»).
+    audit.log(db, user, "export", "report", None,
+              f"Тайлан татав — {p['from']} – {p['to']}")
     return Response(_xlsx(wb), media_type=XLSX_MIME,
                     headers={"Content-Disposition": 'attachment; filename="tailan.xlsx"'})
 

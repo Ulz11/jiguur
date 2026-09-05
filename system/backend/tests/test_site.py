@@ -102,7 +102,7 @@ def test_the_site_change_is_audited_in_mongolian(client, as_role):
     _cl, c, m, st = mk_contract(client, as_role, qty=100, days_ago=40)
     mid = _issue(client, h, c["id"], m, st, 20, 20, site="Архангай")
     client.patch(f"/api/movements/{mid}", headers=h, json={"site": "Дарь эх"})
-    rows = client.get("/api/audit?entity=movement", headers=h).json()
+    rows = client.get("/api/audit?entity=movement", headers=h).json()["rows"]
     line = next(r["detail"] for r in rows if r["action"] == "update")
     assert "талбай: Архангай → Дарь эх" in line
 
@@ -111,7 +111,7 @@ def test_the_site_is_written_into_the_creation_audit_line(client, as_role):
     h = as_role("otgoo")
     _cl, c, m, st = mk_contract(client, as_role, qty=100, days_ago=40)
     _issue(client, h, c["id"], m, st, 20, 20, site="Дарь эх")
-    rows = client.get("/api/audit?entity=movement", headers=h).json()
+    rows = client.get("/api/audit?entity=movement", headers=h).json()["rows"]
     assert any(r["action"] == "create" and "Дарь эх" in r["detail"] for r in rows)
 
 

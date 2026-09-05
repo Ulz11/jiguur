@@ -238,7 +238,8 @@ def test_run_once_writes_one_audit_line_when_it_created_something(db, monkeypatc
     res = cron.run_once(TODAY)
     logs = db.query(models.AuditLog).filter_by(action="cron").all()
     assert len(logs) == 1
-    assert f"Өдөр тутмын гүйлт: {res['created']} нэхэмжлэл үүсэв" in logs[0].detail
+    assert f"Өдөр тутмын гүйлт: {res['created']} шинэ нэхэмжлэл" in logs[0].detail
+    assert f"{len(res['contracts'])} гэрээ" in logs[0].detail
 
 
 def test_cron_audit_row_is_signed_and_speaks_mongolian(db, monkeypatch):
@@ -269,14 +270,25 @@ def test_cron_audit_row_is_signed_and_speaks_mongolian(db, monkeypatch):
     assert not latin, f"/audit-ийн «Дэлгэрэнгүй» дээр англи үг: {latin}"
 
 
-def test_a_run_that_created_nothing_stays_silent(db, monkeypatch):
+def test_a_run_that_created_nothing_still_leaves_its_row(db, monkeypatch):
+    """0 нэхэмжлэлтэй өдөр ч МӨР ҮЛДЭНЭ — «гүйлт явсан» гэдэг нь БАРИМТ.
+
+    Урьд нь чимээгүй өнгөрдөг байв: тэгвэл «өчигдөр 0 нэхэмжлэл гарсан» ба
+    «өчигдөр сервер унтарсан, гүйлт ОГТ яваагүй» хоёр нь бүртгэл дээр ЯГ
+    ижил харагдана — хоёр дахь нь мөнгө алдагдах тохиолдол.
+    """
     monkeypatch.setattr(cron, "SessionLocal", lambda: db)
     monkeypatch.setattr(db, "close", lambda: None)
     build_world(db)
     cron.run_once(TODAY)
 
-    cron.run_once(TODAY)      # хоёр дахь гүйлт — юу ч үүсэхгүй
-    assert db.query(models.AuditLog).filter_by(action="cron").count() == 1
+    cron.run_once(TODAY)      # хоёр дахь гүйлт — юу ч ҮҮСЭХГҮЙ, гэвч мөр гарна
+    rows = (db.query(models.AuditLog).filter_by(action="cron")
+            .order_by(models.AuditLog.id).all())
+    assert len(rows) == 2
+    assert "Өдөр тутмын гүйлт: 0 шинэ нэхэмжлэл" in rows[1].detail
+    assert "гэрээ (" not in rows[1].detail, "гэрээгүй гүйлт хоосон хаалт үлдээхгүй"
+    assert rows[1].user_name == "Систем"
 
 
 # ---------- 4. JIGUUR_NO_CRON ----------

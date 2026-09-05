@@ -7,6 +7,7 @@ from .. import models, auth, serializers
 from ..services import billing
 from ..services import loans as loans_svc
 from ..services import notes as notes_svc
+from ..services import stock as stock_svc
 
 router = APIRouter(prefix="/api")
 
@@ -43,12 +44,8 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
     # шүүлтүүр гэрээний төрлөөр ажилладаг) — томьёо нь `billing`-ийн ганц эх
     # сурвалж, харилцагчийн мөр, авлагын жагсаалттай ижил.
     receivable = receivable_invoiced = 0.0
-    penalty = penalty_booked = overdue_amt = 0.0
-    overdue_cnt = 0
+    penalty = penalty_booked = 0.0
     active_cnt = ending_cnt = 0
-    # «N нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг хэлж
-    # чадахгүй байв — Отгоо тоог хараад хэнд залгахаа мэдэхгүй үлддэг.
-    overdue_list: list[dict] = []
     schedule: list[dict] = []
     for c in contracts:
         if not in_scope(c):
@@ -62,25 +59,29 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
             active_cnt += 1
             if c.end_date and 0 <= (c.end_date - today).days <= 7:
                 ending_cnt += 1
-        for inv in billing.live_invoices(c):
-            if billing.invoice_status(inv, today) == "overdue":
-                # KPI-ийн мөнгө ЯГ энэ тоонуудаас нийлнэ — самбар дээрх нийлбэр
-                # задаргаатайгаа зөрвөл аль нь ч итгэл хүлээхээ болино.
-                remaining = billing.invoice_outstanding(inv)
-                overdue_amt += remaining
-                overdue_cnt += 1
-                overdue_list.append({
-                    "id": inv.id, "no": inv.no,
-                    "client": c.client.name, "client_id": c.client_id,
-                    "contract_id": c.id, "contract_no": c.no,
-                    # цикл нь нэхэмжлэлийн НЭР болдог (lib/invoice.ts `invoiceLabel`) —
-                    # нэг нэхэмжлэл дэлгэц бүр дээр ижил нэртэй байна
-                    "cycle_start": str(inv.cycle_start), "cycle_end": str(inv.cycle_end),
-                    "remaining": round(remaining), "due_date": str(inv.due_date),
-                    "days_overdue": (today - inv.due_date).days})
         up = serializers.upcoming_row(c, today)
         if up:
             schedule.append(up)
+
+    # «N нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг хэлж
+    # чадахгүй байв — Отгоо тоог хараад хэнд залгахаа мэдэхгүй үлддэг.
+    #
+    # ⚠ Тодорхойлолт нь ЭНД БИШ, `billing.overdue_*`-д (H9). Урьд нь энэ
+    # давталт өөрийн шүүлтээ барьдаг байсан тул «Авлага цуглуулах» хуудастай
+    # босгоороо зөрөх боломжтой байв.
+    overdue_rows = billing.overdue_invoices(db, today, scope)
+    overdue = billing.overdue_totals(overdue_rows)
+    overdue_list = [{
+        "id": inv.id, "no": inv.no,
+        "client": inv.contract.client.name, "client_id": inv.contract.client_id,
+        "contract_id": inv.contract_id, "contract_no": inv.contract.no,
+        # цикл нь нэхэмжлэлийн НЭР болдог (lib/invoice.ts `invoiceLabel`) —
+        # нэг нэхэмжлэл дэлгэц бүр дээр ижил нэртэй байна
+        "cycle_start": str(inv.cycle_start), "cycle_end": str(inv.cycle_end),
+        "remaining": round(billing.invoice_outstanding(inv)),
+        "due_date": str(inv.due_date),
+        "days_overdue": (today - inv.due_date).days}
+        for inv in overdue_rows]
 
     # Хамгийн удаан хэтэрсэн нь тэргүүнд; тэнцвэл том дүнтэй нь (мөнгө хөөх дараалал)
     overdue_list.sort(key=lambda r: (-r["days_overdue"], -r["remaining"]))
@@ -101,10 +102,10 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
         row["receivable_uninvoiced"] = receivable_of[cid]["receivable_uninvoiced"]
     schedule.sort(key=lambda r: (r["expected_date"], r["client"]))
 
-    stocks = db.query(models.Stock).all()
-    tot_hand = sum(s.on_hand for s in stocks)
-    tot_rent = sum(s.on_rent for s in stocks)
-    utilization = round(tot_rent / (tot_hand + tot_rent) * 100, 1) if (tot_hand + tot_rent) else 0
+    # Ашиглалт — `services/stock.py`-ийн ГАНЦ томьёо. Агуулахын хуудас,
+    # аналитик, самбар гурвуулаа ИЖИЛ олонлогоос (идэвхтэй материал) бодно:
+    # нэг өдөр гурван өөр хувь харуулсан систем нь өөрийгөө үгүйсгэнэ.
+    utilization = stock_svc.utilization(db, active_only=True)
 
     # ---- Орлого сараар: Түрээс / Худалдаа / Бартер ----
     # Энэ график ТӨЛБӨРӨӨС бодогддог, төлбөр нь гэрээгүй байж БОЛНО
@@ -132,18 +133,28 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
                "all_types": True}
 
     # ---- Насжилт ----
-    buckets = [["0–30 хоног", 0.0], ["31–60", 0.0], ["61–90", 0.0], ["90+", 0.0]]
+    #
+    # ⚠ ХУГАЦАА БОЛООГҮЙ нэхэмжлэл нь «0–30 хоног» хувинд суудаг байв: өнөөдөр
+    # гарсан, маргааш төлөгдөх нэхэмжлэл нь «хоцорсон» хувингийн улаан судал
+    # руу нийлж, Отгоо эгч хараахан хугацаа нь болоогүй мөнгийг хойшилсон гэж
+    # уншина. Хоёр ойлголт хоёр хувин: эхнийх нь ХҮЛЭЭЛТ, бусад нь ХОЦРОЛТ.
+    #
+    # Хувин бүр `key`-тэй: дэлгэц «90+» хувинг ДУГААРААР нь (aging[3]) олохоо
+    # больж, нэрээр нь олно — хувин нэмэгдэхэд өнгө, шошго нь гулсахгүй.
+    buckets = [["not_due", "Хугацаа болоогүй", 0.0], ["0_30", "0–30 хоног", 0.0],
+               ["31_60", "31–60", 0.0], ["61_90", "61–90", 0.0], ["90_plus", "90+", 0.0]]
     for c in contracts:
         if not in_scope(c):
             continue
         for inv in billing.live_invoices(c):
             out = billing.invoice_outstanding(inv)
-            if out <= 0:
+            if out <= billing.PAID_EPS:
                 continue
             days = (today - inv.due_date).days
-            i = 0 if days <= 30 else 1 if days <= 60 else 2 if days <= 90 else 3
-            buckets[i][1] += out
-    aging = [{"label": l, "amount": round(v)} for l, v in buckets]
+            i = (0 if days <= 0 else 1 if days <= 30 else 2 if days <= 60
+                 else 3 if days <= 90 else 4)
+            buckets[i][2] += out
+    aging = [{"key": k, "label": l, "amount": round(v)} for k, l, v in buckets]
 
     # Мэдэгдэл нь ГЭРЭЭТЭЙ тул шүүлтүүрийг дагана. Доор нэмэгдэх зээл, бартер,
     # амлалтын мэдэгдэл нь гэрээний ТӨРӨЛГҮЙ (зээл банкнаас, амлалт
@@ -165,6 +176,16 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
                 "sub": (f"{u_['amount']:,.0f}₮ · тохирсон сарын төлөлт"
                         if u_.get("planned")
                         else f"{u_['amount']:,.0f}₮ · сарын хүү {u_['rate']}%")})
+    # ХОЦОРСОН зээлийн төлөлт — УЛААН. Урьд нь төлөх өдөр өнгөрсөн зээл
+    # `next_due`-гээ дараагийн сар руу чимээгүй гулсуулж, хэзээ ч улаан
+    # болдоггүй байв. Дүрэм нь `loans.overdue_loans`-д; зээл бүр ӨӨРИЙН
+    # `loan_id`-тай мөр (нэгийг нь түр нуухад нөгөө нь хэвээр).
+    for o in loans_svc.overdue_loans(db, today):
+        notifications.insert(0, {
+            "kind": "loan_overdue", "level": "danger",
+            "title": f"{o['name']} — зээлийн төлөлт {o['days_late']} хоног хоцорлоо",
+            "sub": f"{o['amount']:,.0f}₮ · төлөх өдөр {o['due']}",
+            "loan_id": o["loan_id"]})
 
     # Зогсонги бартер хөрөнгө — их мөнгө хөдөлгөөнгүй хэвтэж байвал сануулна
     from .barter import STALE_DAYS
@@ -187,6 +208,11 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
             "kind": "promise_late", "level": "danger",
             "title": f"{len(late)} харилцагч төлбөрийн амлалтаа биелүүлээгүй",
             "sub": "Авлага цуглуулах хуудаснаас дэлгэрэнгүйг харна уу"})
+
+    # ТҮР НУУСАН мөрүүд эндээс гарна — БҮХ эх сурвалж цугласны ДАРАА нэг удаа
+    # (зээл, бартер, амлалтын мэдэгдэл дээр нэмэгдсэн тул). Нуулт нь ХҮНИЙХ:
+    # нярав нэг мөрийг хойшлуулсан нь захирлын дэлгэцийг хөндөхгүй.
+    notifications, snoozed_count = billing.apply_snooze(db, notifications, user, today)
 
     pending = [{"id": mv.id, "contract_id": mv.contract_id,
                 "contract_no": mv.contract.no, "client": mv.contract.client.name,
@@ -213,12 +239,23 @@ def dashboard(scope: str = "all", db: Session = Depends(get_db),
                     # тооцоолол нь тусдаа, «≈ … нэхэгдээгүй» гэж (H2 / R25).
                     "penalty_booked": round(penalty_booked),
                     "penalty_unbooked": round(max(penalty - penalty_booked, 0.0)),
-                    "overdue": round(overdue_amt), "overdue_count": overdue_cnt,
+                    "overdue": round(overdue["amount"]),
+                    "overdue_count": overdue["invoices"],
+                    # «12 нэхэмжлэл» гэдэг нь ХЭДЭН ХҮН гэдгийг хэлдэггүй —
+                    # залгах ажил нь хүнээр хэмжигддэг (Авлага цуглуулах
+                    # хуудасны мөрийн тоотой ЯГ тэнцэнэ).
+                    "overdue_clients": overdue["clients"],
                     "active_contracts": active_cnt, "ending_soon": ending_cnt,
                     "utilization": utilization, "month_sale": round(month_sale)},
             "revenue": revenue, "aging": aging,
+            # Насжилт нь ЗӨВХӨН нэхэмжилсэн мөнгийг хуваадаг — хуримтлал нь
+            # хараахан нэхэмжлэл болоогүй тул ямар ч хувинд суух ёсгүй. Дэлгэц
+            # «хувингуудын нийлбэр = нэхэмжилсэн авлага» гэдгээ хэлэхийн тулд
+            # энэ тоог мэдэх ёстой (H9b-ийн дэд мөр).
+            "receivable_uninvoiced": rv["uninvoiced"],
             "overdue_list": overdue_list, "payment_schedule": schedule,
             "notifications": notifications[:20], "pending_shipments": pending,
+            "snoozed_count": snoozed_count,
             # ШАР НҮДНҮҮД НЭГ ДЭЛГЭЦЭН ДЭЭР (P1-22 / №111). Отгоо эгч Excel
             # дээрээ «энэ рүү эргэж хар»-аа хуудас хуудсаар нь хайдаг —
             # энд тэдгээр нь огноогоороо, хаанаас гарснаа хэлж зогсоно.

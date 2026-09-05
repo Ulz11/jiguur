@@ -74,6 +74,49 @@ class Stock(Base):
     grade: Mapped["Grade"] = relationship()
 
 
+class StockAdjustment(Base):
+    """АГУУЛАХЫН ЗАЛРУУЛГА — үлдэгдлийг ДАРЖ БИЧИХИЙН ОРОНД БИЧИЛТ (H1).
+
+    `POST /api/stock/adjust` нь `Stock.on_hand`-ыг ШУУД дарж бичдэг байв:
+    2,044 гэсэн тоо 1,900 болоод, өмнөх тоо нь хаана ч үлдэхгүй. Отгоо эгчийн
+    хувьд агуулахын үлдэгдэл гэдэг нь МАРГААНЫ сэдэв («144 ширхэг хаачив?»)
+    тул хариулт нь мөр байх ёстой: хэн, хэзээ, юунаас юу болгосон, ЯАГААД.
+
+    ДҮРЭМ:
+      · `diff = after − before` — тэмдэг нь утгатай (+ олдсон, − дутсан);
+      · `source` нь ЗАМАА хэлнэ: тооллого (олон мөр нэг багц), ганц залруулга,
+        засварын буцаалт, бартераар орж ирсэн бараа;
+      · `stocktake_batch` нь нэг тооллогын мөрүүдийг зангидна — «7-р сарын
+        тооллого» гэдэг нь НЭГ явдал, 20 тусдаа явдал биш;
+      · цуцлалт нь УСТГАЛ БИШ (H1): мөр үлдэж, ЭСРЭГ зөрүү нь үлдэгдэлд
+        буцаж буудаг (`services/stock.py::void_adjustment`).
+    """
+    __tablename__ = "stock_adjustments"
+    # «Энэ материалын залруулгууд» гэсэн асуултаар л уншигдана (материалын хуудас)
+    __table_args__ = (Index("ix_stock_adjustments_material", "material_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id"))
+    grade_id: Mapped[int] = mapped_column(ForeignKey("grades.id"))
+    date: Mapped[date] = mapped_column(Date)
+    before: Mapped[float] = mapped_column(Float, default=0)
+    after: Mapped[float] = mapped_column(Float, default=0)
+    diff: Mapped[float] = mapped_column(Float, default=0)
+    # «Яагаад» — тоо дангаараа ямар ч асуултад хариулдаггүй
+    note: Mapped[str] = mapped_column(Text, default="")
+    #: stocktake | adjust | repair | barter
+    source: Mapped[str] = mapped_column(String(12), default="adjust")
+    #: Нэг тооллогын мөрүүдийн ЕРӨНХИЙ түлхүүр (NULL = ганц залруулга)
+    stocktake_batch: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    user_name: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_by: Mapped[str] = mapped_column(String(100), default="")
+
+    material: Mapped["Material"] = relationship()
+    grade: Mapped["Grade"] = relationship()
+
+
 # ---------- Харилцагч ----------
 class Client(Base):
     __tablename__ = "clients"
@@ -676,6 +719,12 @@ class MachineInvoice(Base):
     total: Mapped[float] = mapped_column(Float, default=0)        # дэд дүн (НӨАТ-гүй)
     vat: Mapped[float] = mapped_column(Float, default=0)
     grand_total: Mapped[float] = mapped_column(Float, default=0)
+    # ХӨЛДӨӨСӨН МӨРҮҮД — баримт үүсэх агшны ажлын жагсаалт (JSON).
+    # Урьд нь PDF нь log-уудыг ДАХИН уншиж зурдаг байсан: баримт гаргасны
+    # дараа мөрөө засвал (эсвэл устгавал) хэвлэсэн цаас ба хадгалсан `total`
+    # хоёр ЗӨРНӨ — харилцагч дээр нэг тоо, системд өөр тоо. Баримт бол
+    # ГЭРЭЛ ЗУРАГ: дахин хэвлэхэд ЯГ ижил мөр, ижил нийт дүн гарна.
+    detail_json: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     machine: Mapped["Machine"] = relationship()
@@ -703,6 +752,11 @@ class SalaryRun(Base):
     half: Mapped[int] = mapped_column(Integer)                 # 1 | 2
     paid: Mapped[int] = mapped_column(Integer, default=0)
     paid_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # БОДОЛТЫН ҮЕИЙН НДШ% — тохиргоо хожим өөрчлөгдвөл ХУУЧИН бодолт
+    # шинэ хувиар «тайлбарлагдах» ёсгүй. Дэлгэц дээрх «НДШ 11.5%» гэсэн
+    # шошго тухайн бодолтын үнэн байхын тулд тоог нь мөрөндөө тамгална.
+    # 0 = хуучин мөр (хувь нь мэдэгдэхгүй — мөрүүдээсээ буцааж бодогдоно).
+    ndsh_percent: Mapped[float] = mapped_column(Float, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     items: Mapped[list["SalaryItem"]] = relationship(back_populates="run")
@@ -738,6 +792,34 @@ class CollectionNote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     client: Mapped["Client"] = relationship()
+
+
+class NotificationState(Base):
+    """МЭДЭГДЛИЙГ ТҮР НУУХ — «мэдлээ, дараа сарын 5-нд сануул».
+
+    Дашбоардын мэдэгдэл нь амьд тооцоолол: нөхцөл нь арилах хүртэл мөр нь
+    өдөр бүр дахин гарна. Отгоо эгч харилцагчтайгаа ярьж «10-нд төлнө» гэж
+    тохирсон бол тэр мэдэгдэл нь долоо хоног ХОГ болно — хог болсон жагсаалт
+    уншигдахаа больдог тул чухал мөр нь ч алдагдана.
+
+    Нуулт нь ХҮНИЙХ (`user_id`): нярав нэг мөрийг түр хойшлуулсан нь
+    захирлын дэлгэцийг хөндөхгүй. `entity_id` NULL бол ТУХАЙН ТӨРЛИЙГ
+    бүхэлд нь (ж: «зогсонги бартер» — нэг ч хөрөнгөд заагдаагүй мэдэгдэл).
+
+    ⚠ Мэдэгдэл нь УСТАХГҮЙ — `snooze_until` өдөр хүрмэгц өөрөө буцаж гарна.
+    """
+    __tablename__ = "notification_states"
+    __table_args__ = (UniqueConstraint("user_id", "kind", "entity_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    #: overdue | ending | expired | shipment | loan | barter_stale | promise_late
+    kind: Mapped[str] = mapped_column(String(20))
+    #: Нэхэмжлэл/хөдөлгөөн/гэрээний id — NULL бол БҮХ мөр тэр төрлөөс
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    #: ЭНЭ ӨДӨР ХҮРТЭЛ нуугдана (өдөр нь өөрөө ОРНО — тэр өдөр гарч ирнэ)
+    snooze_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 # ---------- Audit log ----------

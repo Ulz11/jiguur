@@ -83,7 +83,7 @@ def test_void_writes_audit_entry(client, as_role):
     p = _pay(client, h, cl_id, cid, 500_000)
     client.post(f"/api/payments/{p['id']}/void", headers=h, json={"reason": "Давхар бичив"})
 
-    trail = client.get("/api/audit?entity=payment", headers=as_role("otgoo")).json()
+    trail = client.get("/api/audit?entity=payment", headers=as_role("otgoo")).json()["rows"]
     assert any(a["action"] == "void" and a["entity_id"] == p["id"]
                and "Давхар бичив" in a["detail"] for a in trail)
 
@@ -552,7 +552,7 @@ def test_void_movement_writes_audit(client, as_role):
     cl_id, cid, m, st = make_contract(client, as_role, days_ago=10, qty=100)
     [mid] = _pending_ids(client, as_role, cid)
     client.post(f"/api/movements/{mid}/void", headers=h, json={"reason": "давхар бичив"})
-    trail = client.get("/api/audit?entity=movement", headers=h).json()
+    trail = client.get("/api/audit?entity=movement", headers=h).json()["rows"]
     assert any(a["action"] == "void" and a["entity_id"] == mid
                and "давхар бичив" in a["detail"] for a in trail)
 
@@ -793,7 +793,7 @@ def test_return_detail_patch_audits(client, as_role):
     cl_id, cid, m, st = _make_return(client, as_role)
     mv, ln = _return_line(client, h, cid)
     client.patch(f"/api/movement-lines/{ln['id']}", headers=h, json={"repair_qty": 4})
-    trail = client.get("/api/audit?entity=movement", headers=h).json()
+    trail = client.get("/api/audit?entity=movement", headers=h).json()["rows"]
     # `changes_text` нь талбарын нэрийг ч орчуулна: «repair_qty» → «засварын тоо».
     assert any(a["action"] == "update" and a["entity_id"] == mv["id"]
                and "засварын тоо" in a["detail"] for a in trail)

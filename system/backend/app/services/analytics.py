@@ -5,6 +5,7 @@ from .. import models
 from . import billing
 from . import contacts as contacts_svc
 from . import loans as loans_svc
+from . import stock as stock_svc
 
 STALE_DAYS = 180          # бартер хөрөнгө хэдэн хоног хэвтвэл «зогсонги» гэх вэ
 FORECAST_BUCKETS = [(0, 30, "0–30 хоног"), (31, 60, "31–60 хоног"), (61, 90, "61–90 хоног")]
@@ -89,9 +90,11 @@ def material_yield(db: Session, months: int = 6, today: date | None = None):
                 "asset_value": sum(r["asset_value"] for r in rows),
                 "revenue": sum(r["revenue"] for r in rows),
                 "idle_value": sum(r["idle_value"] for r in rows),
-                "utilization": round(
-                    sum(r["on_rent"] for r in rows) /
-                    max(sum(r["on_hand"] + r["on_rent"] for r in rows), 1) * 100, 1)}}
+                # Ашиглалт нь ГАНЦ томьёогоор (`services/stock.py`) — энэ хуудас
+                # идэвхтэй материалын мөрүүдийг жагсаадаг тул `active_only`.
+                # Урьд нь энд өөрийн гэсэн хуваалт байсан: агуулахын хуудас
+                # 62%, аналитик 58% гэж хэлээд, аль нь ч тайлбарлагдахгүй.
+                "utilization": stock_svc.utilization(db, active_only=True)}}
 
 
 # ---------------- Мөнгөний урсгалын прогноз ----------------
@@ -102,6 +105,13 @@ def cash_forecast(db: Session, today: date | None = None):
     Орох: нээлттэй нэхэмжлэлийн үлдэгдэл (төлөх хугацаагаар) + дуусах циклийн хуримтлал
     Гарах: зээлийн сарын төлбөр + цалингийн сан + механизмын дундаж зарлага
     Хугацаа хэтэрсэн авлагыг огноогүй тул тусад нь харуулна.
+
+    ⚠ ЭНЭ ФУНКЦ БИЧДЭГГҮЙ. Урьд нь эхний мөр нь гэрээ БҮРД `ensure_invoices`
+    дуудаж, тайлан нээх агшинд нэхэмжлэл ТӨРҮҮЛДЭГ байв: «Аналитик» хуудсыг
+    нээхэд авлага өсөж, /audit дээр эзэнгүй нэхэмжлэлүүд гарч ирнэ. Нэхэмжлэл
+    төрөх ганц зам нь өдөр тутмын гүйлт (`services/cron.py`) ба түүний гар
+    товчлуур — прогноз нь болоогүй нэхэмжлэлээ ТООЦООЛЖ (`pending_invoice_specs`)
+    харуулна, дүн нь ижил, харин DB нь хөндөгдөхгүй.
     """
     today = today or date.today()
     buckets = [{"label": lbl, "start": a, "end": b, "inflow": 0.0, "outflow": 0.0,
@@ -116,25 +126,33 @@ def cash_forecast(db: Session, today: date | None = None):
 
     overdue_inflow = 0.0
     legacy_inflow = 0.0
+    # (гэрээ, дугаар, төлөх огноо, үлдэгдэл) — байгаа нэхэмжлэл ба хараахан
+    # ҮҮСГЭГДЭЭГҮЙ (гэвч гүйлт болмогц үүсэх) нэхэмжлэлүүд НЭГ жагсаалтад.
+    coming: list[tuple[models.Contract, str, date, float]] = []
     for c in db.query(models.Contract).all():
-        billing.ensure_invoices(db, c, today)
-    for inv in db.query(models.Invoice).filter(billing.LIVE_INVOICE).all():
-        out = billing.invoice_outstanding(inv)
-        if out <= 0:
-            continue
+        for inv in billing.live_invoices(c):
+            out = billing.invoice_outstanding(inv)
+            if out > billing.PAID_EPS:
+                coming.append((c, inv.no or "", inv.due_date, out))
+        # Хаагдсан гэрээний ЭЦСИЙН тасархай цикл ч энд орно — хуучин код бүх
+        # гэрээн дээр `ensure_invoices` дууддаг байсан тул дүн нь ЯГ хэвээр.
+        for sp in billing.pending_invoice_specs(db, c, today):
+            if sp["total"] > billing.PAID_EPS:
+                coming.append((c, sp["no"], sp["due_date"], sp["total"]))
+    for c, no, due, out in coming:
         # Хуучин системээс шилжсэн үлдэгдэл — бодит төлөх хугацаа тодорхойгүй тул
         # прогнозод оруулахгүй (эс бөгөөс эхний сар хэт өөдрөг харагдана)
-        if (inv.no or "").startswith("OB-") or (inv.contract.no or "").startswith("OB-"):
+        if no.startswith("OB-") or (c.no or "").startswith("OB-"):
             legacy_inflow += out
             continue
-        if inv.due_date < today:
+        if due < today:
             overdue_inflow += out
             continue
-        b = bucket_for(inv.due_date)
+        b = bucket_for(due)
         if b:
             b["inflow"] += out
-            b["items_in"].append({"label": f"{inv.contract.client.name} · {inv.no}",
-                                  "date": str(inv.due_date), "amount": round(out)})
+            b["items_in"].append({"label": f"{c.client.name} · {no}",
+                                  "date": str(due), "amount": round(out)})
 
     # Идэвхтэй гэрээний ирээдүйн циклүүд — цикл бүрд дахин нэхэмжлэгдэнэ.
     # (Одоогийн бараа гадаа байна гэж үзсэн төсөөлөл; буцаалт хийвэл багасна.)
@@ -227,13 +245,21 @@ def cash_forecast(db: Session, today: date | None = None):
         b["items_in"] = sorted(b["items_in"], key=lambda x: -x["amount"])[:8]
         b["items_out"] = sorted(b["items_out"], key=lambda x: -x["amount"])[:8]
 
+    # ЭРСДЭЛТ ЦОНХ: сервер нь ХАМГИЙН ГҮН хасагдалтай хувинг сонгоно (хамгийн
+    # ЭХНИЙХ нь БИШ). Хоёр нь ялгаатай байж болно — 31–60 нь −2 сая, 61–90 нь
+    # −40 сая бол «эхнийх» нь аюулыг дутуу хэлнэ. Дэлгэц өөрийн дүрмээр
+    # сонгодог байсан тул хариулт нь тэнд ХЭЛЭГДЭНЭ: `risk_month`.
+    risk = min((b for b in buckets if b["cumulative"] < 0),
+               key=lambda b: b["cumulative"], default=None)
     return {"today": str(today), "buckets": buckets,
             "overdue_inflow": round(overdue_inflow),
             "legacy_inflow": round(legacy_inflow),
             "monthly_loan_due": round(monthly_loan),
             "monthly_salary": round(half_fund * 2),
-            "risk": min((b for b in buckets if b["cumulative"] < 0),
-                        key=lambda b: b["cumulative"], default=None)}
+            "risk": risk,
+            #: Хамгийн гүн хасагдалтай цонхны нэр (эсвэл None) — «эрсдэл нь
+            #: ЭНЭ цонхонд» гэдгийг сервер шийдэж, дэлгэц давтан бодохгүй.
+            "risk_month": risk["label"] if risk else None}
 
 
 # ---------------- Авлага цуглуулах ажлын урсгал ----------------
@@ -243,21 +269,21 @@ def collections(db: Session, today: date | None = None):
     for c in db.query(models.Contract).filter(models.Contract.status == "active").all():
         billing.ensure_invoices(db, c, today)
 
+    # «Хэтэрсэн» нь ХЭВЭЭР: нэхэгдсэн, хугацаа нь өнгөрсөн хэсэг. Энэ бол
+    # залгах дараалал — авлагын НИЙТ дүн биш.
+    #
+    # ⚠ Тодорхойлолт нь ЭНД БИШ, `billing.overdue_by_client`-д: самбарын
+    # «N нэхэмжлэл хэтэрсэн» ба энэ жагсаалтын мөрийн тоо НЭГ босгоор
+    # (`PAID_EPS`) шийдэгдэнэ. Урьд нь энд 0.5₮, тэнд 0.005₮ байсан тул
+    # хоёр дэлгэц өөр өөр урттай жагсаалт харуулж болох байв (H9).
+    per_client = billing.overdue_by_client(db, today)
     rows = []
     for cl in db.query(models.Client).all():
-        overdue = 0.0
-        oldest_days = 0
-        for ct in cl.contracts:
-            for inv in billing.live_invoices(ct):
-                out = billing.invoice_outstanding(inv)
-                if out <= 0 or inv.due_date >= today:
-                    continue
-                # «Хэтэрсэн» нь ХЭВЭЭР: нэхэгдсэн, хугацаа нь өнгөрсөн хэсэг.
-                # Энэ бол залгах дараалал — авлагын НИЙТ дүн биш.
-                overdue += out
-                oldest_days = max(oldest_days, (today - inv.due_date).days)
-        if overdue <= 0.5:
+        od = per_client.get(cl.id)
+        if not od:
             continue
+        overdue = od["amount"]
+        oldest_days = od["oldest_days"]
         # Үлдэгдэл нь АВЛАГЫН ГАНЦ ТОДОРХОЙЛОЛТООС (H9b): нэхэмжилсэн +
         # одоогийн циклийн хуримтлал. Урьд нь энэ дэлгэц зөвхөн нэхэмжилсэнийг
         # харуулж, дашбоард/харилцагчийн мөртэй зөрдөг байв — нэг харилцагч
@@ -288,9 +314,17 @@ def collections(db: Session, today: date | None = None):
             "penalty_booked": round(booked),
             "penalty_unbooked": round(max(penalty - booked, 0.0)),
             "oldest_days": oldest_days,
+            "overdue_invoices": od["invoices"],
             "last_contact": str(last.date) if last else None,
             "last_note": last.note if last else "",
             "days_since_contact": (today - last.date).days if last else None,
+            # АМЛАЛТ нь ХААГДАЖ чаддаг болов (`PATCH /api/collections/notes/{id}`):
+            # мөр нь id, төлөвөө авч явна — дэлгэц «Биелүүлсэн / Зөрчсөн»
+            # товчийг ЯГ энэ тэмдэглэл дээр тавина. Хаагдсан амлалт нь
+            # «Амлалт зөрчсөн» тоолуурт ч, мэдэгдэлд ч ОРОХГҮЙ (нээлттэй
+            # амлалт л энд сонгогддог).
+            "promise_id": promise.id if promise else None,
+            "promise_status": promise.status if promise else None,
             "promise_date": str(promise.promise_date) if promise else None,
             "promise_amount": round(promise.promise_amount) if promise else 0,
             "promise_late": bool(promise and promise.promise_date < today),

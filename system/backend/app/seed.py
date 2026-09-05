@@ -36,6 +36,9 @@ def seed_base(db: Session):
         models.Setting(key="penalty_default", value="0"),
         models.Setting(key="cycle_days_default", value="30"),
         models.Setting(key="ndsh_percent", value="11.5"),
+        # Механизмын НӨАТ% — түрээсийнхээс ТУСДАА нүд (routers/machines.py).
+        # Жигүүр Зам НӨАТ төлөгч биш тул 0; тохиргооны дэлгэцээс өөрчилнө.
+        models.Setting(key="machine_vat_percent", value="0"),
     ])
     db.commit()
 
@@ -354,5 +357,8 @@ def _seed_demo(db: Session, mats, g_new, g_a, g_b):
         models.Setting(key="penalty_default", value="0"),
         models.Setting(key="cycle_days_default", value="30"),
         models.Setting(key="ndsh_percent", value="11.5"),
+        # Механизмын НӨАТ% — түрээсийнхээс ТУСДАА нүд (routers/machines.py).
+        # Жигүүр Зам НӨАТ төлөгч биш тул 0; тохиргооны дэлгэцээс өөрчилнө.
+        models.Setting(key="machine_vat_percent", value="0"),
     ])
     db.commit()

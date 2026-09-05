@@ -450,8 +450,8 @@ def test_audit_entities_movement_invoice(client, as_role):
     assert client.patch(f"/api/movement-lines/{issue['lines'][0]['id']}", headers=h,
                         json={"qty": 90, "confirm": True}).status_code == 200
 
-    mvs = client.get("/api/audit?entity=movement", headers=h).json()
-    invs = client.get("/api/audit?entity=invoice", headers=h).json()
+    mvs = client.get("/api/audit?entity=movement", headers=h).json()["rows"]
+    invs = client.get("/api/audit?entity=invoice", headers=h).json()["rows"]
     assert any(r["action"] == "update" for r in mvs)
     assert any(r["action"] == "rebuild" for r in invs)
 

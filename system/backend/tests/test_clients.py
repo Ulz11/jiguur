@@ -72,7 +72,7 @@ def test_creating_a_client_signs_its_name(client, as_role):
     """Урьд нь харилцагч үүсгэх нь бүртгэлгүй өнгөрдөг байв."""
     h = as_role("otgoo")
     r = _add(client, h, "Аудит Тест ХХК", reg="7788990")
-    rows = client.get("/api/audit?entity=client", headers=h).json()
+    rows = client.get("/api/audit?entity=client", headers=h).json()["rows"]
     row = next(x for x in rows if x["entity_id"] == r.json()["id"])
     assert row["action"] == "create"
     assert "Аудит Тест ХХК" in row["detail"] and "7788990" in row["detail"]
@@ -127,7 +127,7 @@ def test_an_empty_client_is_deleted_with_its_contacts(client, as_role):
     assert client.get(f"/api/clients/{cl['id']}", headers=h).status_code == 404
     assert client.get(f"/api/clients/{cl['id']}/contacts", headers=h).status_code == 404
     assert all(c["id"] != cl["id"] for c in client.get("/api/clients", headers=h).json())
-    row = next(x for x in client.get("/api/audit?entity=client", headers=h).json()
+    row = next(x for x in client.get("/api/audit?entity=client", headers=h).json()["rows"]
                if x["entity_id"] == cl["id"] and x["action"] == "delete")
     assert "Устгах Тест ХХК" in row["detail"]
     assert k["id"] > 0
