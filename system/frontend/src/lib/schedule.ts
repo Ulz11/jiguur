@@ -22,6 +22,17 @@ export function daysBetween(fromIso: string, toIso: string): number {
   return Math.round(ms / DAY_MS);
 }
 
+/** ISO огноо + n хоног, ЛОКАЛ хуанлигаар.
+ *
+ *  `new Date("2026-09-05")` нь UTC-гээр уншдаг тул UTC+8 дээр буцаах утга нь
+ *  нэг хоногоор хазайдаг — `daysBetween`-тэй ЯГ ижил замаар (`parseIso` →
+ *  локал `Date`) явна, эс бөгөөс нэмээд буцааж хассан тоо таарахгүй. */
+export function addDays(fromIso: string, days: number): string {
+  const a = parseIso(fromIso);
+  const d = new Date(a.year, a.month - 1, a.day + days);
+  return isoOf(d.getFullYear(), d.getMonth() + 1, d.getDate());
+}
+
 /** Хүлээгдэж буй огноо хэзээ болохыг хүний үгээр: «өнөөдөр», «маргааш»,
  *  «16 хоногийн дараа». Огноо өнгөрсөн бол «2 хоног хэтэрсэн». */
 export function dueLabel(expectedIso: string, todayIsoStr: string): string {

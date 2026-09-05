@@ -58,7 +58,7 @@ export function VoidPaymentModal({ payment, onClose, onDone }: {
       }}>
       {/* Шалтгаан нь ЗААВАЛ: цуцлалт бүр яагаад болсныг хожим уншиж чадах
           ёстой — audit-д ч, мөрийн tooltip дээр ч энэ текст очно. */}
-      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+      <label className="block text-[13px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
         Цуцлах шалтгаан <span className="text-danger">*</span>
       </label>
       <input id={rid} className="inp w-full" value={reason} autoFocus

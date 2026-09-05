@@ -300,10 +300,13 @@ body::before {
 /* Тооцооны хайрцаг navy дээр — доор нь улбар шар бүдгэрүүлэг (::after) байгаа
    тул дэвсгэр нь ГЭРЭЛТЭЖ, цагаан бичгийн контраст ЛОКАЛААР унадаг. Тиймээс
    нэрлэсэн харьцаанаас нөөцтэй авав: 0.65→0.80 (navy дээр 7.38:1). */
-.receipt-row > span { color: rgba(255, 255, 255, 0.8); font-size: 12.5px; }
+/* 12.5px байв — цонхны дотор Отгоогийн нүдэнд ХАМГИЙН ЖИЖИГ бичиг нь ЯГ энэ
+   баримт байсан (тэр 60 настай, ойрын хараа нь суларсан). Бүх цонхны мөр
+   13px-ээс доош биш болов; navy дэвсгэр дээр тод байдал нь хэвээр. */
+.receipt-row > span { color: rgba(255, 255, 255, 0.8); font-size: 13px; }
 /* Хоёрдогч мөр (нэхэмжлэлийн № г.м.) — 11px/0.58 (4.68:1) байсныг 12px/0.72
    (6.30:1) болгов. Ялгаа нь хэмжээ+бүдэгрэлтээр хэвээр уншигдана. */
-.receipt-row .rc-sub { display: block; font-size: 12px; color: rgba(255, 255, 255, 0.72); margin-top: 1px; }
+.receipt-row .rc-sub { display: block; font-size: 13px; color: rgba(255, 255, 255, 0.72); margin-top: 1px; }
 .receipt-row > b { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .receipt-total { border-top: 1px dashed rgba(255, 255, 255, 0.28); padding-top: 10px; margin-top: 3px; }
 .receipt-total > span { font-size: 13px; color: rgba(255, 255, 255, 0.88); }
@@ -346,6 +349,19 @@ body::before {
 @media (prefers-reduced-motion: reduce) {
   .row-flash > td { animation: none; background: var(--color-brand-50); }
 }
+
+/* ---- ШИНЭЭР ТӨРСӨН МӨР (`row-fresh`) ----
+   `row-flash` нь 1.5 секундын АНИВЧАА: хаягаар заасан мөрийг олоход
+   хангалттай ч, Отгоо цонх хаагаад «одоо тэр мөр хаана байна» гэж хайж
+   эхлэхэд аль хэдийн унтарсан байдаг. Мутацийн дараа төрсөн мөр 10 секунд
+   ТАЙВАН дэвсгэртэй, зүүн ирмэгтээ брэндийн зураастай зогсоно (`FRESH_MS`).
+   Хөдөлгөөн, гэрэлтэлт байхгүй — тиймээс `prefers-reduced-motion`-д онцгой
+   эмчилгээ шаардахгүй. ӨНГӨ ДАНГААРАА УТГА ЗӨӨХГҮЙ: юу болсныг хуудасны
+   дээд талын зурвас ҮГЭЭР хэлж байгаа, энэ нь зөвхөн харцны зогсоол. */
+.row-fresh { background: var(--color-brand-50); box-shadow: inset 3px 0 0 var(--color-brand); border-radius: 8px; }
+tr.row-fresh > td { background: var(--color-brand-50); }
+tr.row-fresh > td:first-child { box-shadow: inset 3px 0 0 var(--color-brand); }
+tr.row-fresh { box-shadow: none; }
 
 /* Техникийн задаргаа (алдааны мессеж) — хаалттай байхдаа чимээгүй, нээгдэхэд
    зүүн тийш эгнэсэн код. Сумны эргэлт нь нээгдсэнийг хэлнэ. */

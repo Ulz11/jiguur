@@ -5,8 +5,12 @@ import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, use
          InlineEdit, Receipt, ConfirmModal, Chevron, DisclosureCell, DisclosureHead,
          FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
 import { panelId, disclosureProps } from "../lib/disclosure";
-import { allocationPreview } from "../lib/alloc";
-import { CYCLE_MODES, cycleModeHint, cycleModeLabel, endDateLabel } from "../lib/contract";
+import { allocationPreview, payCandidates } from "../lib/alloc";
+import { CYCLE_MODES, cycleModeHint, cycleModeLabel, endDateLabel,
+         extendDefault, extendStop } from "../lib/contract";
+import { Outcome, freshMark, issueOutcome, payOutcome, returnOutcome, saleOutcome,
+         shipmentOutcome } from "../lib/outcome";
+import { useLive } from "../lib/live";
 import { cycleLabel } from "../lib/cycle";
 import { agreedMark, agreedTitle, invoiceLabel, isAgreed } from "../lib/invoice";
 import { parseMoney } from "../lib/num";
@@ -46,6 +50,10 @@ const MV_DOT: Record<string, string> = {
   brand: "border-brand", warn: "border-warn",
   danger: "border-danger", violet: "border-violet",
 };
+/* Шинээр төрсөн мөр ХЭД ХУГАЦААНД тодрох вэ. Отгоо цонх хаагаад нүдээрээ
+   мөрөө хайдаг — 8 секунд бол «хараад олох» хугацаа, 1.5 секундын анивчаа
+   (`row-flash`) нь түүний хувьд огт болоогүйтэй адил. */
+const FRESH_MS = 10_000;
 
 export default function ContractDetail() {
   const { id } = useParams();
@@ -72,6 +80,9 @@ export default function ContractDetail() {
   /* Цуцлах гэж буй төлбөр — баталгаажуулах цонх нь мөрөө өөртөө авч явна. */
   const [voidPay, setVoidPay] = useState<any>(null);
   const [voidMv, setVoidMv] = useState<any>(null);
+  /* Баталгаажуулах гэж буй АЧИЛТ — дашбоардаас гадна ГЭРЭЭНИЙ хуудсан дээр
+     ч дардаг болов: дарга ачилтаа энэ хуудсан дээрээс хардаг (`pendingRows`). */
+  const [confirmMv, setConfirmMv] = useState<any>(null);
   /* Актын цонх: "new" = шинэ бичилт, мөр = тэр мөрийг засах, null = хаалттай.
      Нэг цонх хоёр горимд — шинээр бичих, засах хоёр ижил маягттай тул хоёр
      өөр цонх байвал хоёр өөр газарт өөр асуулт болно. */
@@ -87,6 +98,16 @@ export default function ContractDetail() {
   /* «Тооцоо нийлсэн» (№69) — тэмдэглэх ба цуцлах гэж буй нэхэмжлэл. */
   const [agree, setAgree] = useState<any>(null);
   const [unagree, setUnagree] = useState<any>(null);
+  /* ҮР ДҮНГИЙН ЗУРВАС (`lib/outcome.ts`) — мутаци бүрийн дараа ЮУ БОЛСНЫГ
+     тоонуудтай нь хуудсан дээр үлдээнэ. Toast нь 3.2 секундын дараа арилдаг;
+     Отгоо тэр агшинд цаас руугаа харж байна. Зурвас нь «Хаах» дартал, эсвэл
+     өөр хуудас руу явтал зогсоно. */
+  const [outcome, setOutcome] = useState<string | null>(null);
+  /* Шинээр төрсөн мөрийн түлхүүр («mv-42», «pay-7», «akt-9») — тэр мөр
+     цөөн хормын турш тодорч, нүдэнд өөрөө оочихно. */
+  const [fresh, setFresh] = useState<string | null>(null);
+  const freshTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (freshTimer.current) window.clearTimeout(freshTimer.current); }, []);
   const toast = useToast();
   const pdf = usePdf();
   const u = user();
@@ -95,7 +116,25 @@ export default function ContractDetail() {
      мэдээллийг агуулахын шалан дээр асуух хүн бий, тэр нь Отгоо. */
   const seesMoney = u?.role !== "factory";
 
-  const load = () => api(`/api/contracts/${id}`).then((r) => {
+  /* ---------- ЗУРВАС ба ТОДРОЛ ----------
+     Мутаци бүр НЭГ замаар зарлагдана: юу болсныг тоонуудтай нь бичээд,
+     шинэ мөрөө нэрлэнэ. Ингэснээр «дараад юу ч болсонгүй» гэсэн мэдрэмж
+     хаана ч үлдэхгүй. */
+  function announce(o?: Outcome | null) {
+    if (!o) return;
+    setOutcome(o.text);
+    setFresh(o.mark ?? null);
+    if (freshTimer.current) window.clearTimeout(freshTimer.current);
+    if (o.mark) freshTimer.current = window.setTimeout(() => setFresh(null), FRESH_MS);
+  }
+  /** Цонх хаагдана → зурвас үлдэнэ → хуудас дахин уншина. */
+  const finish = (fallback: string) => (o?: Outcome) => {
+    setModal("");
+    announce(o ?? { text: fallback });
+    load();
+  };
+
+  const load = (background = false) => api(`/api/contracts/${id}`).then((r) => {
     setD(r);
     /* ХАРИЛЦАГЧИЙН НИЙТ ҮЛДЭГДЭЛ (H9b). Энэ хуудсан дээрх «үлдэгдэл» нь
        ГАНЦ гэрээнийх — атал Отгоо утсаар ярихдаа ХАРИЛЦАГЧААС нэхнэ.
@@ -108,8 +147,18 @@ export default function ContractDetail() {
     if (u?.role !== "factory" && r?.client_id) {
       api(`/api/clients/${r.client_id}`).then(setCl).catch(() => setCl(null));
     }
-  }).catch((e) => toast(e.message, "err"));
-  useEffect(() => { load(); api("/api/grades").then(setGrades); }, [id]);
+  }).catch((e) => { if (!background) toast(e.message, "err"); });
+
+  /* ХУУДАС АМЬД (X3). Ачилтыг ДАРГА баталгаажуулдаг — тэр даралт өөр
+     компьютер дээр болно. Урьд нь гэрээний хуудас нэг л удаа уншдаг байсан
+     тул Отгоо «ачсан уу» гэдгийг мэдэхийн тулд F5 дардаг (эсвэл дардаггүй
+     учир хуучин тоо ширтэнэ). Одоо 60 секунд тутам, мөн цонх руу буцаж
+     ирэхэд өөрөө шинэчлэгдэнэ.
+     ⚠ ЦОНХ НЭЭЛТТЭЙ бол чимээгүй шинэчлэлт ХИЙХГҮЙ: тэр буцаалтын 15 мөрөө
+     бөглөж байхад доорх дата солигдвол бөглөж байсан зүйл нь эргэлзээ болно. */
+  const busyForm = modal !== "" || !!akt || !!rateRow || !!pending || !!daysWarn;
+  useLive((bg) => { if (bg && busyForm) return; load(bg); }, [id]);
+  useEffect(() => { api("/api/grades").then(setGrades); }, []);
 
   /* ---------- Хаягаар заасан мөр рүү ----------
      Дашбоардын «хугацаа хэтэрсэн» жагсаалт, мэдэгдэл хоёр ЯГ нэг нэхэмжлэлийг
@@ -139,7 +188,7 @@ export default function ContractDetail() {
   async function savePatch(path: string, body: any, okMsg: string) {
     try {
       await api(path, { method: "PATCH", body: JSON.stringify(body) });
-      toast(okMsg); load();
+      toast(okMsg); announce({ text: okMsg }); load();
     } catch (e: any) { toast(e.message, "err"); throw e; }
   }
 
@@ -160,6 +209,7 @@ export default function ContractDetail() {
         return;
       }
       toast(okMsg);
+      announce({ text: okMsg });
       load();
     } catch (e: any) { toast(e.message, "err"); throw e; }
   }
@@ -181,8 +231,16 @@ export default function ContractDetail() {
      дүрмийн суурь тоо. Хүчингүй мөр орохгүй. */
   const aktSum = aktTotal(d.akt_entries);
   const sections = materialSections(d.items || [], d.material_lines || []);
-  const pendingMv = d.movements.filter((m: any) => m.status === "pending").length;
+  /* ХҮЛЭЭГДЭЖ БУЙ АЧИЛТ — хүчингүй болсон нь тоологдохгүй. */
+  const pendingRows = d.movements.filter(
+    (m: any) => m.status === "pending" && !isVoided(m));
+  const pendingMv = pendingRows.length;
   const showHist = histOpen ?? pendingMv > 0;
+  /** Ачилтын мөрүүдийг НЭГ өгүүлбэрээр: «450ш Хэв хашмал 6012 · 300ш …» */
+  const mvSummary = (mv: any) => (mv.lines || [])
+    .map((l: any) => `${fmt(l.qty)}ш ${l.material}${l.grade ? ` (${l.grade})` : ""}`)
+    .join(" · ");
+  const mvQty = (mv: any) => (mv.lines || []).reduce((s: number, l: any) => s + l.qty, 0);
   /* ХУУЧИН ҮЛДЭГДЭЛ (`OB-…`) — Excel-ээс шилжсэн дүн, гэрээ ДҮР ЭСГЭСЭН
      байдлаар сууна. Отгоо энэ хуудсыг нээхэд «гэрээ» гэсэн бүх зүйл нь
      ХООСОН: материал алга, акт алга, хөдөлгөөн алга, барьцаа алга, «Гэрээ
@@ -337,6 +395,23 @@ export default function ContractDetail() {
         </div>
       </div>
 
+      {/* ═══ ҮР ДҮНГИЙН ЗУРВАС — ХИЙГДСЭН ЗҮЙЛ ДЭЛГЭЦЭН ДЭЭР ҮЛДЭНЭ ═══
+          Амжилтын мэдэгдэл 3.2 секундын дараа өөрөө арилдаг (`ui.tsx`) — Отгоо
+          тэр агшинд цаас руугаа харж, утсаа авч байна. Буцаж ирэхэд дэлгэц
+          «юу ч болоогүй» мэт зогсох ЁСГҮЙ: тоонуудтай нэг мөр толгойн дор
+          үлдэж, ТЭР Ө өөрөө «Хаах» дартал явахгүй. */}
+      {outcome && (
+        <div role="status"
+             className="mb-4 rounded-2xl border border-money bg-money-50 px-4 py-3
+                        flex items-start gap-3 flex-wrap">
+          <span aria-hidden="true" className="text-money font-bold leading-6">✓</span>
+          <span className="flex-1 min-w-[200px] text-[13.5px] font-semibold text-ink
+                           leading-6 tabular-nums break-words">{outcome}</span>
+          <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]"
+                  onClick={() => { setOutcome(null); setFresh(null); }}>Хаах</button>
+        </div>
+      )}
+
       {/* Тоон хураангуй */}
       <div className="card p-5 mb-4 flex gap-8 flex-wrap items-center">
         {/* «Өдрийн дүн», «Энэ циклд хуримтлагдсан» нь ХУРИМТЛАЛ — авлагын хоёр
@@ -445,6 +520,47 @@ export default function ContractDetail() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* ═══ АЧИЛТ ХҮЛЭЭГДЭЖ БАЙНА — МАТЕРИАЛЫН ХҮСНЭГТИЙН ДЭЭР ═══
+          «+450ш хүлээгдэж буй» гэсэн жижиг пил хүснэгтийн мөрөнд нуугдаж
+          байсныг СОЛИВ. Хүлээгдэж буй ачилт нь МӨНГӨНИЙ хүлээлт: тэр 450ш
+          нь нөөцөөс гараагүй, өдрийн дүнд ороогүй, гэрээ нь «дутуу» мэт
+          харагдана. Отгоо ЯАГААД гэдгээ мэдэхгүй бол даргаа утсаар олно.
+          Одоо: юу хүлээгдэж байгаа, ХЭН дарах ёстой, тэгвэл юу болохыг нэг
+          мөрөөр хэлээд, ТЭР ДАРАЛТЫГ ЭНДЭЭС хийх боломж нээнэ (дарга, менежер
+          хоёулаа — сервер ч тэр хоёрыг зөвшөөрдөг). */}
+      {pendingMv > 0 && (
+        <div className="card p-4 mb-4 border-warn" role="status"
+             style={{ background: "var(--color-warn-50)" }}>
+          <h2 className="text-[14.5px] font-bold text-ink mb-1.5">
+            <span aria-hidden="true">◷ </span>Ачилт хүлээгдэж байна
+          </h2>
+          {pendingRows.map((mv: any) => (
+            <div key={mv.id}
+                 className="flex items-center gap-3 flex-wrap py-2 border-b border-warn/30 last:border-0">
+              <div className="min-w-0 flex-1">
+                <b className="block text-[13.5px] text-ink tabular-nums">{mvSummary(mv)}</b>
+                <span className="block text-[13px] text-t2">
+                  {mv.date} — дарга «Ачсан ✓» дарсны дараа тооцоонд орно
+                </span>
+              </div>
+              {canManage && (
+                <SubmitButton className="btn-primary !min-h-9 !py-1.5 !px-3.5 text-[13px]"
+                              onSubmit={() => setConfirmMv(mv)}>
+                  Ачсан <span aria-hidden="true">✓</span>
+                  <span className="sr-only"> — {mvSummary(mv)}</span>
+                </SubmitButton>
+              )}
+              {u?.role === "manager" && (
+                <button className="btn-ghost !min-h-9 !py-1.5 !px-3 text-[13px] text-danger"
+                        onClick={() => setVoidMv(mv)}>
+                  Хүчингүй<span className="sr-only"> — {mvSummary(mv)}</span>
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
@@ -650,7 +766,7 @@ export default function ContractDetail() {
                 </tr></thead>
                 <tbody>
                   {d.akt_entries.map((a: any) => (
-                    <tr key={a.id}>
+                    <tr key={a.id} className={fresh === `akt-${a.id}` ? "row-fresh" : undefined}>
                       <td className="td whitespace-nowrap">
                         <span className={voidRowClass(a)} title={voidTitle(a)}>{a.date}</span>
                       </td>
@@ -840,7 +956,9 @@ export default function ContractDetail() {
                 const open = openMv === mv.id;
                 const mvPid = panelId("mv", mv.id);
                 return (
-                <div key={mv.id} className="relative pb-4 last:pb-0">
+                <div key={mv.id}
+                     className={`relative pb-4 last:pb-0${
+                       fresh === `mv-${mv.id}` ? " row-fresh" : ""}`}>
                   <i className={`absolute -left-[22px] top-1 w-3 h-3 rounded-full bg-white border-[3px] ${
                     MV_DOT[mvTone(mv.type)]}`} />
                   {/* Задардаг мөр — хулганаар ч, Tab+Enter-ээр ч нээгдэнэ */}
@@ -1025,7 +1143,9 @@ export default function ContractDetail() {
             <h2 className="font-bold text-ink text-[15.5px] mb-3">Төлбөрүүд</h2>
             {d.payments.length === 0 && <p className="text-t3 text-sm">Төлбөр бүртгэгдээгүй.</p>}
             {d.payments.map((p: any) => (
-              <div key={p.id} className="flex items-center gap-3 py-2.5 border-b border-sunken last:border-0 flex-wrap">
+              <div key={p.id}
+                   className={`flex items-center gap-3 py-2.5 border-b border-sunken last:border-0 flex-wrap${
+                     fresh === `pay-${p.id}` ? " row-fresh" : ""}`}>
                 {/* Цуцлагдсан бичилт УСТДАГГҮЙ — зурагдаж, бүдгэрч, дэргэдээ
                     «ХҮЧИНГҮЙ» гэсэн ҮГТЭЙГЭЭ үлдэнэ (өнгө дангаараа утга
                     зөөхгүй), шалтгаан нь tooltip дээр. */}
@@ -1057,7 +1177,8 @@ export default function ContractDetail() {
 
           {seesMoney && !isOB && (
             <DepositCard d={d} canWrite={u?.role !== "factory"}
-                         onSettle={() => setModal("deposit")} onDone={load} />
+                         onSettle={() => setModal("deposit")}
+                         onDone={(o) => { announce(o); load(); }} />
           )}
 
           {/* ЗАХЫН ТЭМДЭГЛЭЛ (P1-22) — «7.06нд тооцов», «ирээгүй», «хаав».
@@ -1089,31 +1210,48 @@ export default function ContractDetail() {
       {/* Буцаалт, нэмэлт олголт нь ДАРГЫН ажил (`canManage`) — цонх нь түүнд
           нээгддэг тул мөнгөний зураас цонх дотор ч үргэлжилнэ. */}
       {modal === "return" && <ReturnModal d={d} grades={grades} seesMoney={seesMoney}
-                                          onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+                                          onClose={() => setModal("")}
+                                          onDone={finish("Буцаалт бүртгэгдлээ")} />}
 
       {modal === "sale" && <SaleModal d={d} seesMoney={seesMoney} prefill={null}
-                                      onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+                                      onClose={() => setModal("")}
+                                      onDone={finish("Худалдаа бүртгэгдлээ")} />}
 
       {modal === "add" && <AddModal d={d} seesMoney={seesMoney}
-                                    onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
-      {modal === "pay" && <PayModal d={d} invoices={d.invoices} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
-      {modal === "extend" && <ExtendModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
-      {modal === "deposit" && <DepositModal d={d} onClose={() => setModal("")} onDone={() => { setModal(""); load(); }} />}
+                                    onClose={() => setModal("")}
+                                    onDone={finish("Нэмэлт олголт бүртгэгдлээ")} />}
+      {/* Нэр дэвшигчид нь ЭНЭ гэрээнийх + харилцагчийн ДАНСНЫ (хуучин
+          үлдэгдэл) нэхэмжлэлүүд — `payCandidates` (lib/alloc.ts). Хуучин өртэй
+          хүнээс мөнгө орж ирэхэд баримт «Илүү — кредит болно» гэж бичих
+          ёсгүй. */}
+      {modal === "pay" && <PayModal d={d} invoices={payCandidates(d.invoices || [], cl?.invoices)}
+                                    onClose={() => setModal("")}
+                                    onDone={finish("Төлбөр бүртгэгдлээ")} />}
+      {modal === "extend" && <ExtendModal d={d} onClose={() => setModal("")}
+                                          onDone={finish("Гэрээ сунгагдлаа")} />}
+      {modal === "deposit" && <DepositModal d={d} onClose={() => setModal("")}
+                                            onDone={finish("Барьцаа шинэчлэгдлээ")} />}
       {agree && <AgreeModal d={d} inv={agree} onClose={() => setAgree(null)}
-                            onDone={() => { setAgree(null); load(); }} />}
+                            onDone={(o) => { setAgree(null);
+                                             announce(o ?? { text: "Тооцоо нийлсэн гэж тэмдэглэгдлээ" });
+                                             load(); }} />}
       {unagree && <UnagreeModal inv={unagree} onClose={() => setUnagree(null)}
-                                onDone={() => { setUnagree(null); load(); }} />}
+                                onDone={(o) => { setUnagree(null);
+                                                 announce(o ?? { text: "Нийлсэн тэмдэглэгээ цуцлагдлаа" });
+                                                 load(); }} />}
       {modal === "penalty" && <ChargePenaltyModal d={d} onClose={() => setModal("")}
-                                                  onDone={() => { setModal(""); load(); }} />}
+                                                  onDone={finish("Алданги нэхэгдлээ")} />}
       {/* ХААЛТЫН ЁСЛОЛ (H7) — нэг товчийн баталгаажуулалт байсныг СОЛИВ:
           гадаа үлдсэнээ шийд → эцсийн тасархай циклээ нэх → барьцаагаа
           цэвэрлэ → хаа. Дарааллыг ДАТА нь тодорхойлно (`closeSteps`). */}
       {modal === "close" && <CloseWizard d={d} grades={grades}
                                          onClose={() => setModal("")}
-                                         onDone={() => { setModal(""); load(); }}
+                                         onDone={finish("Гэрээ хаагдлаа")}
                                          onReload={load} pdf={pdf} />}
       {pending && <RebuildModal p={pending} onClose={() => setPending(null)}
-                                onDone={() => { setPending(null); load(); }} />}
+                                onDone={(o) => { setPending(null);
+                                                 announce(o ?? { text: pending.okMsg });
+                                                 load(); }} />}
       {/* ХОНОГИЙН ЗӨРҮҮ — хоёр тоо ТҮҮНИЙ өмнө, шийдвэр нь түүнийх.
           Тоог СЕРВЕР хэлнэ тул уншсан тоо ба нэхэгдэх тоо ХОЁР ӨӨР байхгүй. */}
       {daysWarn && (
@@ -1134,26 +1272,63 @@ export default function ContractDetail() {
           }} />
       )}
       {voidPay && <VoidPaymentModal payment={voidPay} onClose={() => setVoidPay(null)}
-                                    onDone={() => { setVoidPay(null); load(); }} />}
+                                    onDone={() => { setVoidPay(null);
+                                                    announce({ text: `Төлбөр хүчингүй болов — ${money(voidPay.amount)} · ${voidPay.date}` });
+                                                    load(); }} />}
       {voidMv && <VoidMovementModal mv={voidMv} onClose={() => setVoidMv(null)}
-                                    onDone={() => { setVoidMv(null); load(); }}
+                                    onDone={() => { setVoidMv(null);
+                                                    announce({ text: `${mvName(voidMv.type)} хүчингүй болов — ${voidMv.date} · ${mvSummary(voidMv)}` });
+                                                    load(); }}
                                     onRebuild={(p) => { setVoidMv(null); setPending(p); }} />}
       {akt && <AktModal d={d} row={akt === "new" ? null : akt}
                         onClose={() => setAkt(null)}
-                        onDone={() => { setAkt(null); load(); }}
+                        onDone={(o) => { setAkt(null);
+                                         announce(o ?? { text: "Акт бичигдлээ" });
+                                         load(); }}
                         onRebuild={(p) => { setAkt(null); setPending(p); }} />}
       {voidAkt && <VoidAktModal d={d} a={voidAkt} onClose={() => setVoidAkt(null)}
-                                onDone={() => { setVoidAkt(null); load(); }}
+                                onDone={() => { setVoidAkt(null);
+                                                announce({ text: `Актын бичилт хүчингүй болов — ${voidAkt.date} · ${voidAkt.note}` });
+                                                load(); }}
                                 onRebuild={(p) => { setVoidAkt(null); setPending(p); }} />}
       {rateRow && <RateModal d={d} row={rateRow} onClose={() => setRateRow(null)}
-                             onDone={() => { setRateRow(null); load(); }}
+                             onDone={(o) => { setRateRow(null);
+                                              announce(o ?? { text: "Тариф шинэчлэгдлээ" });
+                                              load(); }}
                              onRebuild={(p) => { setRateRow(null); setPending(p); }} />}
       {voidRate && <VoidRateModal d={d} rc={voidRate} onClose={() => setVoidRate(null)}
-                                  onDone={() => { setVoidRate(null); load(); }}
+                                  onDone={() => { setVoidRate(null);
+                                                  announce({ text: "Тарифын өөрчлөлт хүчингүй болов" });
+                                                  load(); }}
                                   onRebuild={(p) => { setVoidRate(null); setPending(p); }} />}
+      {/* АЧИЛТ БАТАЛГААЖУУЛАХ — дашбоардын цонхтой ЯГ ижил асуулт, ижил
+          үгээр (Dashboard.tsx). Нэг үйлдэл хоёр дэлгэц дээр хоёр өөр
+          асуулттай байвал Отгоо аль нь «жинхэнэ» гэдгээ мэдэхгүй. */}
+      {confirmMv && (
+        <ConfirmModal title="Ачилт баталгаажуулах"
+          intro={<>Гэрээ №{d.no} · <b className="text-ink">{d.client}</b> — {confirmMv.date}</>}
+          rows={(confirmMv.lines || []).map((l: any) => ({
+            label: `${l.material} (${l.grade})`, value: `${fmt(l.qty)} ш` }))}
+          total={{ label: "Ачих нийт", value: `${fmt(mvQty(confirmMv))} ш` }}
+          note="Баталгаажуулмагц нөөц хөдөлж, тооцоо эхэлнэ. Энэ үйлдлийг буцаах боломжгүй."
+          confirmLabel="Ачсан ✓"
+          onClose={() => setConfirmMv(null)}
+          onConfirm={async () => {
+            const mv = confirmMv;
+            try {
+              await api(`/api/movements/${mv.id}/confirm`, { method: "POST" });
+              toast("Ачилт баталгаажлаа — нөөц хөдөлж, тооцоо эхэллээ");
+              setConfirmMv(null);
+              announce(shipmentOutcome({ qty: mvQty(mv), date: mv.date, movementId: mv.id }));
+              load();
+            } catch (e: any) { toast(e.message, "err"); }
+          }} />
+      )}
       {voidCharge && <VoidChargeModal d={d} ch={voidCharge}
                                       onClose={() => setVoidCharge(null)}
-                                      onDone={() => { setVoidCharge(null); load(); }}
+                                      onDone={() => { setVoidCharge(null);
+                                                      announce({ text: `Алдангийн нэхэлт хүчингүй болов — ${money(voidCharge.amount)}` });
+                                                      load(); }}
                                       onRebuild={(p) => { setVoidCharge(null); setPending(p); }} />}
     </div>
   );
@@ -1343,7 +1518,7 @@ type Pending = { path: string; body: any; okMsg: string; diffs: any[];
                  warnings: string[]; method?: "PATCH" | "POST" };
 
 function RebuildModal({ p, onClose, onDone }: {
-  p: Pending; onClose: () => void; onDone: () => void;
+  p: Pending; onClose: () => void; onDone: (o?: Outcome) => void;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -1366,7 +1541,7 @@ function RebuildModal({ p, onClose, onDone }: {
         total={{ label: "Нэхэмжлэлийн нийт", value: `${money(oldSum)} → ${money(newSum)}`,
                  accent: newSum < oldSum ? "danger" : newSum > oldSum ? "money" : undefined }} />
       {p.warnings.length > 0 && (
-        <div className="mt-3 text-[12.5px] text-warn space-y-1">
+        <div className="mt-3 text-[13px] text-warn space-y-1">
           {p.warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}
         </div>
       )}
@@ -1378,7 +1553,7 @@ function RebuildModal({ p, onClose, onDone }: {
             await api(p.path, { method: p.method || "PATCH",
                                 body: JSON.stringify({ ...p.body, confirm: true }) });
             toast(p.okMsg + " — тооцоо дахин бодогдлоо");
-            onDone();
+            onDone({ text: p.okMsg + " — тооцоо дахин бодогдлоо" });
           } catch (e: any) { toast(e.message, "err"); setBusy(false); }
         }}>{busy ? "…" : "Баталгаажуулж дахин бодох"}</button>
       </div>
@@ -1401,7 +1576,8 @@ function AktModal({ d, row, onClose, onDone, onRebuild }: {
   /** null = шинэ бичилт; мөр = түүнийг засах */
   row: any | null;
   onClose: () => void;
-  onDone: () => void;
+  /** Хийгдсэн зүйлээ ЗУРВАС болгож дамжуулна (`lib/outcome.ts`). */
+  onDone: (o?: Outcome) => void;
   onRebuild: (p: Pending) => void;
 }) {
   const toast = useToast();
@@ -1433,13 +1609,22 @@ function AktModal({ d, row, onClose, onDone, onRebuild }: {
         return;
       }
       toast(okMsg);
-      onDone();
+      onDone({ text: `${okMsg} — ${aktAmountText(signed)} · ${date} · ${note.trim()}`,
+               mark: freshMark("akt", r?.id ?? row?.id) });
     } catch (e: any) { toast(e.message, "err"); }
   }
 
   return (
     <FormModal title={row ? "Актын бичилт засах" : "Акт бичих"} onClose={onClose}
-               dirty={formDirty(init, { date, kind, amount, note })}>
+               dirty={formDirty(init, { date, kind, amount, note })}
+               footer={
+                 <div className="flex justify-end gap-2.5">
+                   <button className="btn-secondary" onClick={onClose}>Болих</button>
+                   <SubmitButton onSubmit={submit} disabled={!ok}
+                                 title={ok ? undefined : "Дүн ба тэмдэглэл заавал бөглөгдөнө"}>
+                     {row ? "Хадгалах" : "Акт бичих"}
+                   </SubmitButton>
+                 </div>}>
       <div className="grid grid-cols-2 gap-3.5">
         <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
           <input id={`${uid}-date`} type="date" className="inp" value={date}
@@ -1463,7 +1648,7 @@ function AktModal({ d, row, onClose, onDone, onRebuild }: {
         ))}
       </div>
       {/* Хадгалагдах ЯГ тэр дүн — тэмдэгтэйгээ, нүдний өмнө */}
-      <p className="text-[12.5px] text-t2 mb-4 tabular-nums">
+      <p className="text-[13px] text-t2 mb-4 tabular-nums">
         Циклд орох дүн: <b className={Math.abs(signed) > 0
           ? (signed < 0 ? "text-money" : "text-ink") : "text-t3"}>{aktAmountText(signed)}</b>
       </p>
@@ -1475,7 +1660,7 @@ function AktModal({ d, row, onClose, onDone, onRebuild }: {
              placeholder="ж: кран дуудлага, тээвэр, нийт актнаас 15% хасав"
              aria-describedby={`${uid}-help`}
              onChange={(e) => setNote(e.target.value)} />
-      <p id={`${uid}-help`} className="text-[12px] text-t3 mt-1.5">
+      <p id={`${uid}-help`} className="text-[13px] text-t3 mt-1.5">
         Энэ бичиг нэхэмжлэл, хавсралт, актын цаас гуравт хэвлэгдэнэ — «юуны төлөө»
         гэдэг нь гарын үсэгтэй мөрөндөө байх ёстой.
         {/* Бартерын +15% нь тусдаа хөдөлгүүр (P1) — түүнийг ХҮЛЭЭЛГЭХГҮЙ,
@@ -1486,17 +1671,10 @@ function AktModal({ d, row, onClose, onDone, onRebuild }: {
       {/* АМЬД мөр: бичиж буй огноо ХААШАА буухыг хадгалахаас ӨМНӨ хэлнэ.
           Циклийн нэр нь нэхэмжлэлийн мөртэй ижил хэлбэртэй тул Отгоо нүдээрээ
           тулгана. */}
-      <p className="text-[12.5px] text-t2 mt-4 rounded-xl bg-sunken px-3.5 py-2.5">
+      <p className="text-[13px] text-t2 mt-4 rounded-xl bg-sunken px-3.5 py-2.5">
         {aktLandingText(d, date) || "Огноо сонгоно уу"}
       </p>
 
-      <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <SubmitButton onSubmit={submit} disabled={!ok}
-                      title={ok ? undefined : "Дүн ба тэмдэглэл заавал бөглөгдөнө"}>
-          {row ? "Хадгалах" : "Акт бичих"}
-        </SubmitButton>
-      </div>
     </FormModal>
   );
 }
@@ -1546,7 +1724,7 @@ function VoidAktModal({ d, a, onClose, onDone, onRebuild }: {
           onDone();
         } catch (e: any) { toast(e.message, "err"); }
       }}>
-      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+      <label className="block text-[13px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
         Цуцлах шалтгаан <span className="text-danger">*</span>
       </label>
       <input id={rid} className="inp w-full" value={reason} autoFocus
@@ -1567,7 +1745,7 @@ function VoidAktModal({ d, a, onClose, onDone, onRebuild }: {
    гэсэн асуултыг зөөж чадахгүй — тиймээс ЦОНХ. Огноог UI таамаглахгүй:
    гурван хил СЕРВЕРЭЭС ирнэ (`cycle_bounds`). */
 function RateModal({ d, row, onClose, onDone, onRebuild }: {
-  d: any; row: any; onClose: () => void; onDone: () => void;
+  d: any; row: any; onClose: () => void; onDone: (o?: Outcome) => void;
   onRebuild: (p: Pending) => void;
 }) {
   const toast = useToast();
@@ -1598,7 +1776,7 @@ function RateModal({ d, row, onClose, onDone, onRebuild }: {
         return;
       }
       toast(okMsg);
-      onDone();
+      onDone({ text: `${okMsg} · ${row.material} (${row.grade})` });
     } catch (e: any) { toast(e.message, "err"); setBusy(false); }
   }
 
@@ -1634,7 +1812,7 @@ function RateModal({ d, row, onClose, onDone, onRebuild }: {
         </div>
       </fieldset>
       {chosen?.restates && (
-        <p className="text-[12.5px] text-warn mt-2.5">⚠ {RATE_RESTATE_WARN}</p>
+        <p className="text-[13px] text-warn mt-2.5">⚠ {RATE_RESTATE_WARN}</p>
       )}
 
       <div className="mt-4">
@@ -1700,7 +1878,7 @@ function VoidRateModal({ d, rc, onClose, onDone, onRebuild }: {
           onDone();
         } catch (e: any) { toast(e.message, "err"); }
       }}>
-      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+      <label className="block text-[13px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
         Цуцлах шалтгаан <span className="text-danger">*</span>
       </label>
       <input id={rid} className="inp w-full" value={reason} autoFocus
@@ -1835,7 +2013,7 @@ function VoidMovementModal({ mv, onClose, onDone, onRebuild }: {
           onDone();
         } catch (e: any) { toast(e.message, "err"); }
       }}>
-      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+      <label className="block text-[13px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
         Цуцлах шалтгаан <span className="text-danger">*</span>
       </label>
       <input id={rid} className="inp w-full" value={reason} autoFocus
@@ -2120,7 +2298,11 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
         body: JSON.stringify({ type: "RETURN", date, note: "", site, lines }) });
       if (r?.days_warning) { setWarn(r.days_warning); setBusy(false); return; }
       toast("Буцаалт бүртгэгдлээ — тооцоо автоматаар шинэчлэгдэнэ");
-      onDone();
+      /* Мэдэгдэл 3.2 секундын дараа арилна — ХИЙГДСЭН зүйл нь хуудсан дээр
+         тоонуудтайгаа үлдэнэ (`lib/outcome.ts`). */
+      onDone(returnOutcome({ qty: retQty, date, dayBefore: dayNow,
+                             dayAfter: Math.max(dayNow - dayCut, 0),
+                             seesMoney, movementId: r?.id }));
     } catch (e: any) { toast(e.message, "err"); setBusy(false); }
   }
 
@@ -2128,8 +2310,42 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
   const dirty = date !== today() || site !== "" || rows.some(
     (r) => r.ret > 0 || r.repair > 0 || r.writeoff > 0 || r.days !== "" || r.pin !== "0");
 
+  /* ---- ҮР ДҮН НЬ ГОЛ ТОВЧНЫ ДЭРГЭД ЗОГСОНО ----
+     Отгоо 15 мөрийн дунд тоо бичиж яваад «за одоо юу болох вэ» гэдгээ
+     мэдэхийн тулд цонхны ЁРООЛ хүртэл гүйлгэдэг байв (1,468px). Гүйлтийн
+     ГАДНА, товчнуудынхаа дээр гурван мөр зогсоно — бичих бүрд шинэчлэгдэнэ:
+     хэдэн мөр · хэдэн ширхэг · өдрийн дүн ХЭДЭЭС ХЭД болох · түрээс ХЭЗЭЭ
+     зогсох. Дэлгэрэнгүй задаргаа (засвар, акт, гар хоног) нь мөрүүдийнхээ
+     доор, биедээ хэвээр — энэ нь түүний ХУРААНГУЙ. */
+  const acted = rows.filter((r: any) => r.ret > 0);
+  const retQty = acted.reduce((s: number, r: any) => s + r.ret, 0);
+  const dayCut = acted.reduce((s: number, r: any) => s + r.ret * r.daily_rate, 0);
+  const dayNow = d.day_amount || 0;
+
   return (
-    <FormModal title="Буцаалт бүртгэх" onClose={onClose} wide dirty={dirty}>
+    <FormModal title="Буцаалт бүртгэх" onClose={onClose} wide dirty={dirty}
+      footer={
+        <>
+          {retQty > 0 && (
+            <Receipt className="mb-3.5"
+              rows={[
+                { label: "Буцаах", value: `${fmt(acted.length)} мөр · ${fmt(retQty)} ш` },
+                ...(seesMoney ? [{
+                  label: "Өдрийн дүн",
+                  value: `${money(dayNow)} → ${money(Math.max(dayNow - dayCut, 0))}`,
+                  accent: "money" as const,
+                }] : []),
+                { label: "Түрээс", value: `${date}-нд зогсоно`, accent: "dim" },
+              ]} />
+          )}
+          <div className="flex justify-end gap-2.5">
+            <button className="btn-secondary tap-lg" onClick={onClose}>Болих</button>
+            <button className="btn-primary tap-lg px-6" disabled={busy}
+                    onClick={() => void submit()}>
+              {busy ? "…" : "✓ Буцаалт бүртгэх"}
+            </button>
+          </div>
+        </>}>
       <div className="flex gap-3.5 flex-wrap mb-4">
         <div>
           <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
@@ -2175,7 +2391,7 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
               <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <b className="text-[15.5px] text-ink block leading-tight">{r.material}</b>
-                  <span className="text-[12.5px] text-t2">
+                  <span className="text-[13px] text-t2">
                     <span className="pill-grey !py-0 mr-1.5">{r.grade}</span>
                     түрээсэнд <b className="tabular-nums">{fmt(r.qty)}</b>ш
                   </span>
@@ -2189,7 +2405,7 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
 
               {ret > 0 && (
                 <div className="mt-2.5 flex items-center gap-2.5 flex-wrap">
-                  <label className="text-[12.5px] text-t2" htmlFor={`${uid}-rg-${i}`}>Очих зэрэглэл</label>
+                  <label className="text-[13px] text-t2" htmlFor={`${uid}-rg-${i}`}>Очих зэрэглэл</label>
                   <select id={`${uid}-rg-${i}`} className="inp !w-24 !min-h-11 !py-2" value={r.return_grade_id}
                           onChange={(e) => setRow(i, { return_grade_id: +e.target.value })}>
                     {grades.map((g: any) => <option key={g.id} value={g.id}>{g.code}</option>)}
@@ -2199,7 +2415,7 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                     <Chevron open={expanded} /> Гэмтэл/акт
                     {!expanded && flagged > 0 && <b className="text-warn"> · {fmt(flagged)}ш</b>}
                   </button>
-                  <span className={`ml-auto text-[12.5px] tabular-nums ${
+                  <span className={`ml-auto text-[13px] tabular-nums ${
                         over ? "text-danger font-semibold" : "text-t2"}`}>
                     {over ? `түрээсэнд байгаагаас ${fmt(ret - r.qty)}ш их`
                           : `${fmt(r.qty - ret)}ш түрээсэнд үлдэнэ`}
@@ -2212,7 +2428,7 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                   тоог сануулга болгож ХАРУУЛЖ байж л дарж болно (H5). */}
               {ret > 0 && (
                 <div className="mt-2.5 flex items-center gap-2.5 flex-wrap">
-                  <label className="text-[12.5px] text-t2" htmlFor={`${uid}-days-${i}`}>
+                  <label className="text-[13px] text-t2" htmlFor={`${uid}-days-${i}`}>
                     Хоног (гараар)
                   </label>
                   {/* `max` ЗОРИУДААР алга (H5): цонхноос их тоо бол АЛДАА
@@ -2222,12 +2438,12 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                          className={`inp !w-20 !min-h-11 !py-2 text-center font-bold${
                            dayOver ? " !border-warn" : ""}`}
                          value={r.days} onChange={(e) => setRow(i, { days: e.target.value })} />
-                  <span className="text-[12.5px] text-t3">
+                  <span className="text-[13px] text-t3">
                     {hint != null ? `системээр ${hint} хоног` : "хоосон = авто"}
                   </span>
                   {pins.length > 2 && (
                     <>
-                      <label className="text-[12.5px] text-t2 ml-1" htmlFor={`${uid}-pin-${i}`}>
+                      <label className="text-[13px] text-t2 ml-1" htmlFor={`${uid}-pin-${i}`}>
                         Аль падангаас
                       </label>
                       <select id={`${uid}-pin-${i}`} className="inp !w-64 !min-h-11 !py-2"
@@ -2254,8 +2470,8 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                            className="inp !w-20 !min-h-11 text-center font-bold"
                            value={r.writeoff || ""} onChange={(e) => setRow(i, { writeoff: +e.target.value })} />
                   </div>
-                  <p className="text-[12px] text-t2 flex-1 min-w-[170px]">
-                    Засварын фикс үнэ, актын НБҮнэ нэхэмжлэлд автоматаар нэмэгдэнэ.
+                  <p className="text-[13px] text-t2 flex-1 min-w-[170px]">
+                    Засварын фикс үнэ, актын бүртгэлийн үнэ нэхэмжлэлд автоматаар нэмэгдэнэ.
                   </p>
                 </div>
               )}
@@ -2264,14 +2480,14 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                   «болохгүй» гэж улаанаар зогсоодог байв — гэвч гарын үсэг
                   зурсан хоногийг систем татгалзах эрхгүй. */}
               {ret > 0 && dayOver && (
-                <p className="text-[12.5px] text-warn mt-2">
+                <p className="text-[13px] text-warn mt-2">
                   ⚠ Та {rowDays(r)} хоног гэж бичлээ · системээр {maxDays} хоног
                   багтана. Тоо нь тань — «Бүртгэх» дарвал баталгаажуулна.
                 </p>
               )}
 
               {ret > 0 && feeOver && (
-                <p className="text-[12.5px] text-danger mt-2">
+                <p className="text-[13px] text-danger mt-2">
                   Засвар + акт ({fmt(flagged)}ш) нь буцаалтаас ({fmt(ret)}ш) их байна.
                 </p>
               )}
@@ -2295,8 +2511,8 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
         const net = repFee + woFee + eff.delta;
         const signed = (n: number) => (n < 0 ? "−" : "+") + money(Math.abs(n));
         if (!totRet) return (
-          <p className="text-[12.5px] text-t2 mt-3">
-            Засварын фикс үнэ болон актын НБҮнэ автоматаар харилцагчийн тооцоонд нэмэгдэнэ.
+          <p className="text-[13px] text-t2 mt-3">
+            Засварын фикс үнэ болон актын бүртгэлийн үнэ автоматаар харилцагчийн тооцоонд нэмэгдэнэ.
           </p>
         );
         /* Даргад тооцоо нь ШИРХЭГЭЭР зогсоно: юу хэдийг буцаав, хэд нь
@@ -2324,7 +2540,7 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
                       : eff.delta < 0 ? ("money" as const) : ("dim" as const),
               }] : []),
               ...(repQty > 0 ? [{ label: `Засварын төлбөр (${fmt(repQty)}ш × фикс)`, value: "+" + money(repFee), accent: "danger" as const }] : []),
-              ...(woQty > 0 ? [{ label: `Актын төлбөр (${fmt(woQty)}ш × НБҮнэ)`, value: "+" + money(woFee), accent: "danger" as const }] : []),
+              ...(woQty > 0 ? [{ label: `Актын төлбөр (${fmt(woQty)}ш × бүртгэлийн үнэ)`, value: "+" + money(woFee), accent: "danger" as const }] : []),
             ]}
             total={{ label: net < 0 ? "Нэхэмжлэлээс хасагдах нийт"
                                     : "Нэхэмжлэлд нэмэгдэх нийт",
@@ -2342,7 +2558,7 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
           {warn.map((w: any, i: number) => (
             <p key={i} className="text-[13px] text-t2 mb-1.5">⚠ {w.text}</p>
           ))}
-          <p className="text-[12.5px] text-t3 mb-3">
+          <p className="text-[13px] text-t3 mb-3">
             Тоо нь тань — баталгаажуулбал ЯГ тэрээрээ нэхэгдэнэ.
           </p>
           <div className="flex justify-end gap-2.5 flex-wrap">
@@ -2354,13 +2570,6 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
           </div>
         </div>
       )}
-      <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary tap-lg" onClick={onClose}>Болих</button>
-        <button className="btn-primary tap-lg px-6" disabled={busy}
-                onClick={() => void submit()}>
-          {busy ? "…" : "✓ Буцаалт бүртгэх"}
-        </button>
-      </div>
     </FormModal>
   );
 }
@@ -2396,10 +2605,10 @@ function SaleModal({ d, seesMoney, prefill, onClose, onDone }: any) {
     const lines = act.map((r) => ({
       material_id: r.material_id, grade_id: r.grade_id, qty: r.sell }));
     try {
-      await api(`/api/contracts/${d.id}/movements`, { method: "POST",
+      const r = await api(`/api/contracts/${d.id}/movements`, { method: "POST",
         body: JSON.stringify({ type: "SALE", date, note: "Худалдаа болгов", lines }) });
       toast("Худалдаа бүртгэгдлээ — түрээс тэр өдрөөс зогсоно");
-      onDone();
+      onDone(saleOutcome({ qty: totQty, date, total, seesMoney, movementId: r?.id }));
     } catch (e: any) { toast(e.message, "err"); setAsk(false); }
   }
 
@@ -2417,7 +2626,24 @@ function SaleModal({ d, seesMoney, prefill, onClose, onDone }: any) {
 
   return (
     <>
-      <FormModal title="Худалдаа болгох" onClose={onClose} wide dirty={dirty}>
+      <FormModal title="Худалдаа болгох" onClose={onClose} wide dirty={dirty}
+        footer={
+          <>
+            {totQty > 0 && (
+              <Receipt className="mb-3.5"
+                rows={[
+                  { label: "Худалдах", value: `${fmt(act.length)} мөр · ${fmt(totQty)} ш` },
+                  ...(seesMoney ? [{ label: "Нэхэмжлэлд нэмэгдэх",
+                                     value: money(total), accent: "danger" as const }] : []),
+                  { label: "Түрээс", value: `${date}-нд зогсоно`, accent: "dim" },
+                ]} />
+            )}
+            <div className="flex justify-end gap-2.5">
+              <button className="btn-secondary tap-lg" onClick={onClose}>Болих</button>
+              <button className="btn-primary tap-lg px-6" disabled={!totQty || over}
+                      onClick={() => setAsk(true)}>Худалдаа болгох</button>
+            </div>
+          </>}>
         <p className="text-[13.5px] text-t2 mb-4">
           Харилцагч түрээсэнд байгаа бараагаа <b className="text-ink">өөртөө авч
           үлдэх</b> бол энд бүртгэнэ. Тэр тооны түрээс энэ өдрөөс{" "}
@@ -2436,14 +2662,14 @@ function SaleModal({ d, seesMoney, prefill, onClose, onDone }: any) {
               <div key={i} className="py-3 flex items-center gap-3 flex-wrap">
                 <div className="min-w-0 flex-1">
                   <b className="text-[15.5px] text-ink block leading-tight">{r.material}</b>
-                  <span className="text-[12.5px] text-t2">
+                  <span className="text-[13px] text-t2">
                     <span className="pill-grey !py-0 mr-1.5">{r.grade}</span>
                     түрээсэнд <b className="tabular-nums">{fmt(r.qty)}</b>ш
                     {seesMoney && <> · худалдах үнэ{" "}
                       <b className="tabular-nums">{money(r.sale_price || 0)}</b></>}
                   </span>
                   {seesMoney && r.sell > 0 && (
-                    <span className="block text-[12.5px] text-violet tabular-nums">
+                    <span className="block text-[13px] text-violet tabular-nums">
                       {fmt(r.sell)} × {money(r.sale_price || 0)} ={" "}
                       <b>{money(saleRowTotal({ qty: r.sell, sale_price: r.sale_price || 0 }))}</b>
                     </span>
@@ -2461,7 +2687,7 @@ function SaleModal({ d, seesMoney, prefill, onClose, onDone }: any) {
         </div>
 
         {over && (
-          <p className="text-[12.5px] text-danger mt-3">
+          <p className="text-[13px] text-danger mt-3">
             Түрээсэнд байгаагаас их байна — тоогоо шалгана уу.
           </p>
         )}
@@ -2471,16 +2697,10 @@ function SaleModal({ d, seesMoney, prefill, onClose, onDone }: any) {
               ? { label: "Нэхэмжлэлд нэмэгдэх нийт", value: money(total), accent: "danger" }
               : { label: "Худалдах нийт", value: `${fmt(totQty)} ш` }} />
         ) : (
-          <p className="text-[12.5px] text-t2 mt-3">
+          <p className="text-[13px] text-t2 mt-3">
             Худалдах тоогоо оруулна уу — үржвэр нь доор гарна.
           </p>
         )}
-
-        <div className="flex justify-end gap-2.5 mt-5">
-          <button className="btn-secondary tap-lg" onClick={onClose}>Болих</button>
-          <button className="btn-primary tap-lg px-6" disabled={!totQty || over}
-                  onClick={() => setAsk(true)}>Худалдаа болгох</button>
-        </div>
       </FormModal>
 
       {ask && (
@@ -2516,6 +2736,13 @@ function AddModal({ d, seesMoney, onClose, onDone }: any) {
   const dirty = date !== today() || site !== ""
     || rows.some((r) => r.add > 0 || r.rate !== (rent ? r.daily_rate : r.unit_price));
 
+  /* Гүйлтийн ГАДНА зогсох хураангуй — «нэмэх нь хэд, өдрийн дүн ХЭДЭЭС ХЭД
+     болох» хоёр нь товчны дэргэд, бичих бүрд шинэчлэгдэнэ. Олголт нь ХҮЛЭЭЛТ
+     гэдгээ өөрөө хэлнэ: дарга «Ачсан ✓» дартал нөөц ч, тооцоо ч хөдлөхгүй. */
+  const addQty = rows.reduce((s, r) => s + (r.add > 0 ? r.add : 0), 0);
+  const addDay = rows.reduce((s, r) => s + (r.add > 0 ? r.add * r.rate : 0), 0);
+  const dayNow = d.day_amount || 0;
+
   async function submit() {
     /* Даргын олголтод тариф ЯВАХГҮЙ — сервер гэрээний мөрийн тарифыг өөрөө
        тамгална (`billing.default_rates`). Үнэ бол Отгоогийн шийдвэр. */
@@ -2525,15 +2752,37 @@ function AddModal({ d, seesMoney, onClose, onDone }: any) {
     if (!lines.length) { toast("Нэмэх тоо оруулна уу", "err"); return; }
     setBusy(true);
     try {
-      await api(`/api/contracts/${d.id}/movements`, { method: "POST",
+      const r = await api(`/api/contracts/${d.id}/movements`, { method: "POST",
         body: JSON.stringify({ type: "ISSUE", date, note: "Нэмэлт олголт", site, lines }) });
       toast("Нэмэлт олголт үүслээ — дарга баталгаажуулсны дараа тооцоонд орно");
-      onDone();
+      onDone(issueOutcome({ qty: addQty, date, dayBefore: dayNow, dayAfter: dayNow + addDay,
+                            seesMoney, movementId: r?.id }));
     } catch (e: any) { toast(e.message, "err"); setBusy(false); }
   }
 
   return (
-    <FormModal title="Нэмэлт олголт" onClose={onClose} dirty={dirty}>
+    <FormModal title="Нэмэлт олголт" onClose={onClose} dirty={dirty}
+      footer={
+        <>
+          {addQty > 0 && (
+            <Receipt className="mb-3.5"
+              rows={[
+                { label: "Нэмэх", value: `${fmt(addQty)} ш` },
+                ...(seesMoney ? [{
+                  label: "Өдрийн дүн",
+                  value: `${money(dayNow)} → ${money(dayNow + addDay)}`,
+                  accent: "money" as const,
+                }] : []),
+                { label: "Тооцоонд", value: "дарга баталгаажуулсны дараа", accent: "dim" },
+              ]} />
+          )}
+          <div className="flex justify-end gap-2.5">
+            <button className="btn-secondary" onClick={onClose}>Болих</button>
+            <button className="btn-primary" disabled={busy} onClick={submit}>
+              {busy ? "…" : "Илгээх"}
+            </button>
+          </div>
+        </>}>
       <div className="flex gap-3.5 flex-wrap mb-4">
         <div>
           <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
@@ -2577,32 +2826,17 @@ function AddModal({ d, seesMoney, onClose, onDone }: any) {
                  onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, add: +e.target.value } : x))} />
         </div>
       ))}
-      <p className="text-[12px] text-t3 mt-2">
+      <p className="text-[13px] text-t3 mt-2">
         {seesMoney
           ? "Олголт бүр өөрийн тарифаа хадгална — өмнөх олголтын тариф хэвээр үлдэнэ."
           : "Гэрээнд тохирсон тарифаар бүртгэгдэнэ — үнийг менежер тогтооно."}
       </p>
-      {(() => {
-        const addDay = rows.reduce((s, r) => s + (r.add > 0 ? r.add * r.rate : 0), 0);
-        const addQty = rows.reduce((s, r) => s + (r.add > 0 ? r.add : 0), 0);
-        if (!addQty) return null;
-        if (!seesMoney) return (
-          <Receipt className="mt-4" rows={[]}
-            total={{ label: "Нэмж олгох (баталгаажсаны дараа)", value: `${fmt(addQty)} ш` }} />
-        );
-        return (
-          <Receipt className="mt-4"
-            rows={[
-              { label: "Нэмж олгох", value: `${fmt(addQty)} ш` },
-              { label: "Өдрийн тооцоо нэмэгдэнэ", value: "+" + money(addDay), accent: "money" },
-            ]}
-            total={{ label: "Шинэ өдрийн нийт (баталгаажсаны дараа)", value: money((d.day_amount || 0) + addDay) }} />
-        );
-      })()}
-      <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary" disabled={busy} onClick={submit}>{busy ? "…" : "Илгээх"}</button>
-      </div>
+      {seesMoney && addQty > 0 && (
+        <p className="text-[13px] text-t2 mt-2">
+          Өдрийн тооцоонд нэмэгдэх нь{" "}
+          <b className="text-ink tabular-nums">+{money(addDay)}</b> — доорх хураангуйг үз.
+        </p>
+      )}
     </FormModal>
   );
 }
@@ -2670,14 +2904,24 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
     try {
       const r = await api("/api/payments", { method: "POST", body: JSON.stringify(body) });
       toast(`Төлбөр бүртгэгдлээ — ${money(r.allocated)} нэхэмжлэлүүдэд хуваарилагдав`);
-      onDone();
+      onDone(payOutcome({ amount: amt, allocated: r.allocated ?? amt, date,
+                          paymentId: r?.id }));
     } catch (e: any) { toast(e.message, "err"); setBusy(false); }
   }
 
   return (
     /* Гараар хуваарилалт эхлүүлсэн бол тэр хөдөлмөр ч дүнтэй адил алдагдана */
     <FormModal title="Төлбөр бүртгэх" onClose={onClose}
-               dirty={amt > 0 || barter.trim().length > 0 || date !== today() || manual !== null}>
+               dirty={amt > 0 || barter.trim().length > 0 || date !== today() || manual !== null}
+               footer={
+                 <div className="flex justify-end gap-2.5">
+                   <button className="btn-secondary" onClick={onClose}>Болих</button>
+                   <button className="btn-primary !bg-money" disabled={busy || manualOver}
+                           onClick={submit}
+                           title={manualOver ? "Хуваарилсан дүн төлбөрөөс их байна" : undefined}>
+                     {busy ? "…" : "Бүртгэх"}
+                   </button>
+                 </div>}>
       <div className="grid grid-cols-2 gap-3.5">
         <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
           <input id={`${uid}-date`} type="date" className="inp" value={date} onChange={(e) => setDate(e.target.value)} /></div>
@@ -2701,7 +2945,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
           <label className="lbl" htmlFor={`${uid}-barter`}>Бартераар юу орж ирэв? (машин, байр, материал…)</label>
           <input id={`${uid}-barter`} className="inp" placeholder="ж: Автомашин 9957УКК" value={barter}
                  onChange={(e) => setBarter(e.target.value)} />
-          <p className="text-[12px] text-t3 mt-1.5">Үнэлсэн дүнгээр нь авлагаас хасагдана. Бартер модуль Үе 2-т бүрэн болно.</p>
+          <p className="text-[13px] text-t3 mt-1.5">Үнэлсэн дүнгээр нь авлагаас хасагдана. Бартер модуль Үе 2-т бүрэн болно.</p>
         </div>
       )}
       {amt > 0 ? (manual ? (
@@ -2710,14 +2954,14 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
             <div className="min-w-0">
               <b className="text-[13px] text-ink">Хуваарилалт — гараар</b>
               {/* Юуг хуваарилж байгаагаа хараагүй бол хэтрүүлэх нь амархан */}
-              <span className="block text-[12px] text-t3">
+              <span className="block text-[13px] text-t3">
                 Хуваарилах төлбөр: <b className="tabular-nums text-t2">{money(amt)}</b>
               </span>
             </div>
-            <button className="text-[12.5px] font-semibold text-brand-ink hover:underline shrink-0"
+            <button className="text-[13px] font-semibold text-brand-ink hover:underline shrink-0"
                     onClick={() => setManual(null)}>Автоматаар</button>
           </div>
-          {cand.length === 0 && <p className="text-[12.5px] text-t2">Нээлттэй нэхэмжлэл алга — бүх дүн кредит болно.</p>}
+          {cand.length === 0 && <p className="text-[13px] text-t2">Нээлттэй нэхэмжлэл алга — бүх дүн кредит болно.</p>}
           {cand.map((i: any) => {
             const n = nameOf(i.id, i.no);
             return (
@@ -2725,9 +2969,9 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
               <div className="min-w-0">
                 <div className="text-[13px] text-ink truncate">
                   {n.title}
-                  {n.sub && <span className="text-[12px] text-t3 ml-1.5">{n.sub}</span>}
+                  {n.sub && <span className="text-[13px] text-t3 ml-1.5">{n.sub}</span>}
                 </div>
-                <div className="text-[12px] text-t3">
+                <div className="text-[13px] text-t3">
                   Үлдэгдэл {money(i.outstanding)}
                   {i.penalty_due > 0 && <> · алданги {money(i.penalty_due)}</>}
                 </div>
@@ -2744,7 +2988,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
             <span>{manualLeft < 0 ? "Төлбөрөөс хэтэрсэн" : "Хуваарилагдаагүй"}</span>
             <b className="tabular-nums">{money(Math.abs(manualLeft))}</b>
           </div>
-          <p className="text-[12px] text-t3 mt-1.5">
+          <p className="text-[13px] text-t3 mt-1.5">
             Хуваарилагдаагүй үлдсэн дүн хамгийн хуучин нэхэмжлэлээс эхэлж автоматаар хаагдана.
           </p>
         </div>
@@ -2765,24 +3009,17 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
           <button className="btn-ghost mt-2.5" onClick={startManual}>Хуваарилалт өөрчлөх</button>
         </>
       )) : (
-        <p className="text-[12.5px] text-t2">Төлбөр хамгийн хуучин нэхэмжлэлээс эхэлж автоматаар хуваарилагдана.</p>
+        <p className="text-[13px] text-t2">Төлбөр хамгийн хуучин нэхэмжлэлээс эхэлж автоматаар хуваарилагдана.</p>
       )}
       {/* Хадгалахаас ӨМНӨ: энэ төлбөр алданги НЭХЭХГҮЙ гэдгийг ил хэлнэ.
           Урьд нь энд «энэ төлбөрийг бүртгэхэд алданги X₮ нэхэгдэнэ» гэсэн
           анхааруулга хэрэгтэй байсан — одоо чимээгүй номжих зүйл алга. */}
       {uncharged > 0.5 && (
-        <p className="text-[12.5px] text-t3 mt-2.5">
+        <p className="text-[13px] text-t3 mt-2.5">
           Алдангийн тооцоолол <b className="tabular-nums text-t2">≈{money(uncharged)}</b> — {UNCHARGED}.
           Энэ төлбөр түүнийг хөндөхгүй; нэхэх бол «Алданги нэхэх» товчоор нэхнэ.
         </p>
       )}
-      <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <button className="btn-primary !bg-money" disabled={busy || manualOver} onClick={submit}
-                title={manualOver ? "Хуваарилсан дүн төлбөрөөс их байна" : undefined}>
-          {busy ? "…" : "Бүртгэх"}
-        </button>
-      </div>
     </FormModal>
   );
 }
@@ -2913,7 +3150,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
               <b className="text-ink text-[14px]">{invoiceLabel(inv).title}</b>
               <b className="tabular-nums text-[15px]">{money(inv.total)}</b>
             </div>
-            <span className="block text-[12px] text-t3 mb-2.5">
+            <span className="block text-[13px] text-t3 mb-2.5">
               Эцсийн тасархай цикл · №{inv.no}
             </span>
             <div className="flex gap-2 flex-wrap">
@@ -2933,9 +3170,33 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
 
   return (
     <>
-      <Modal title="Гэрээ хаах" onClose={onClose} wide>
+      <Modal title="Гэрээ хаах" onClose={onClose} wide
+        footer={
+          <>
+            {/* ЗОГСООХ ШАЛТГААН нь ГОЛ ТОВЧНЫ дэргэд — гүйлтийн ГАДНА.
+                Урьд нь энэ мөр цонхны ёроолд, 1,759px доор үлддэг байв. */}
+            {block && (
+              <p className="text-[13px] text-danger mb-2.5" role="status">⚠ {block}</p>
+            )}
+            <div className="flex justify-end gap-2.5 flex-wrap">
+              <button className="btn-secondary" ref={cancelRef} onClick={onClose}>Болих</button>
+              {at > 0 && (
+                <button className="btn-ghost" onClick={() => setAt(at - 1)}>← Буцах</button>
+              )}
+              {!last ? (
+                <button className="btn-primary" disabled={!p || !!block}
+                        title={block || undefined}
+                        onClick={() => setAt(at + 1)}>Цааш →</button>
+              ) : (
+                <button className="btn-primary !bg-danger" disabled={busy || !p || !!block}
+                        title={block || undefined} onClick={doClose}>
+                  {busy ? "…" : "Гэрээ хаах"}
+                </button>
+              )}
+            </div>
+          </>}>
         {/* Алхмын мөр — хэдэн алхам үлдсэнийг НЭГ харцаар */}
-        <ol className="flex gap-2 flex-wrap mb-5 text-[12.5px]">
+        <ol className="flex gap-2 flex-wrap mb-5 text-[13px]">
           {steps.map((s, i) => (
             <li key={s.key}
                 className={`px-2.5 py-1 rounded-full ${
@@ -2952,7 +3213,8 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
             <p className="text-[13.5px] text-t2 mb-4">
               Түрээсэнд <b className="text-ink tabular-nums">{fmt(outstandingQty(p.outstanding))}</b>ш
               байсаар байна. Мөр бүрийг шийднэ: ирсэн бол <b>буцаалт</b>, ирээгүй бол{" "}
-              <b>дутагдуулсан</b> (НБҮнээр), харилцагч <b>өөртөө авч үлдсэн</b> бол{" "}
+              <b>дутагдуулсан</b> (бүртгэлийн үнээр), харилцагч{" "}
+              <b>өөртөө авч үлдсэн</b> бол{" "}
               <b>худалдаа болгоно</b> (худалдах үнээр).
             </p>
             <div className="divide-y divide-line border-t border-line">
@@ -2961,20 +3223,37 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                      className="py-3 flex items-center gap-3 flex-wrap">
                   <div className="min-w-0 flex-1">
                     <b className="text-[14.5px] text-ink block leading-tight">{r.material}</b>
-                    <span className="text-[12.5px] text-t2">
+                    <span className="text-[13px] text-t2">
                       <span className="pill-grey !py-0 mr-1.5">{r.grade}</span>
                       гадаа <b className="tabular-nums">{fmt(r.qty)}</b>ш
                     </span>
                     {/* ХОЁР ҮНЭ ЗЭРЭГ, ҮРЖВЭРТЭЙГЭЭ. Отгоогийн арга нь бүх
                         арифметикээ дахин бодох явдал — үр дүн ганцаараа
                         зогсвол шалгах юмгүй болно (§4). */}
-                    <span className="block text-[12.5px] text-t2 tabular-nums">
-                      дутагдуулбал {fmt(r.qty)} × {money(r.nb_price)} ={" "}
-                      <b className="text-danger">{money(r.writeoff_amount)}</b>
+                    {/* ҮНЭ ТОГТООГООГҮЙ бол «0₮» гэж бичих нь ХУДАЛ: «энэ 1,825ш
+                        нь үнэгүй» гэж уншигдана. Каталогт үнэ нь ороогүй гэдгийг
+                        ҮГЭЭР хэлээд, ХААНА тогтоохыг нь зааж өгнө. */}
+                    <span className="block text-[13px] text-t2 tabular-nums">
+                      дутагдуулбал{" "}
+                      {r.nb_price > 0 ? (
+                        <>{fmt(r.qty)} × {money(r.nb_price)} ={" "}
+                          <b className="text-danger">{money(r.writeoff_amount)}</b></>
+                      ) : <b className="text-warn">үнэ тогтоогоогүй</b>}
                       <span className="text-t3"> · </span>
-                      худалдвал {fmt(r.qty)} × {money(r.sale_price)} ={" "}
-                      <b className="text-violet">{money(r.sale_amount)}</b>
+                      худалдвал{" "}
+                      {r.sale_price > 0 ? (
+                        <>{fmt(r.qty)} × {money(r.sale_price)} ={" "}
+                          <b className="text-violet">{money(r.sale_amount)}</b></>
+                      ) : <b className="text-warn">үнэ тогтоогоогүй</b>}
                     </span>
+                    {(r.nb_price <= 0 || r.sale_price <= 0) && (
+                      <span className="block text-[13px] text-warn">
+                        Бүртгэлийн үнэ (акт) ба худалдах үнийг{" "}
+                        <Link to="/settings" className="font-semibold underline">
+                          Тохиргоо → Материалын каталог
+                        </Link>{" "}дээр тогтооно.
+                      </span>
+                    )}
                   </div>
                   <div className="flex gap-2 flex-wrap">
                     <button className="btn-secondary btn-row"
@@ -2995,14 +3274,21 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                 </div>
               ))}
             </div>
+            {/* Каталогт үнэ ороогүй бол НИЙЛБЭР нь «0₮» гэж гарах ёсгүй —
+                тэр нь «үнэгүй» гэж уншигдана. Мөр нь ҮГЭЭР хэлнэ. */}
             <Receipt className="mt-4"
               rows={[
                 { label: "Гадаа нийт", value: `${fmt(outstandingQty(p.outstanding))} ш` },
-                { label: "Бүгдийг дутагдуулсан гэж бичвэл",
-                  value: money(outstandingWriteoff(p.outstanding)), accent: "danger" },
+                { label: "Бүгдийг дутагдуулсан гэж бичвэл (бүртгэлийн үнээр)",
+                  ...(p.outstanding.some((r: OutRow) => r.nb_price <= 0)
+                      ? { value: "үнэ тогтоогоогүй", accent: "dim" as const }
+                      : { value: money(outstandingWriteoff(p.outstanding)),
+                          accent: "danger" as const }) },
               ]}
-              total={{ label: "Бүгдийг худалдаа болговол",
-                       value: money(outstandingSale(p.outstanding)), accent: "violet" }} />
+              total={p.outstanding.some((r: OutRow) => r.sale_price <= 0)
+                ? { label: "Бүгдийг худалдаа болговол", value: "үнэ тогтоогоогүй", accent: "dim" }
+                : { label: "Бүгдийг худалдаа болговол",
+                    value: money(outstandingSale(p.outstanding)), accent: "violet" }} />
           </>
         ) : step?.key === "final" ? (
           <>
@@ -3010,7 +3296,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
             <input id={`${uid}-cd`} type="date" className="inp max-w-[200px] mb-4"
                    value={closeDate} onChange={(e) => setCloseDate(e.target.value)} />
             {p.close_error && (
-              <p className="text-[12.5px] text-danger mb-3">⚠ {p.close_error}</p>
+              <p className="text-[13px] text-danger mb-3">⚠ {p.close_error}</p>
             )}
 
             {/* ---------- ХОНОГИЙН ЗӨРЧИЛ (H5-ийн сүүлчийн миль) ----------
@@ -3023,7 +3309,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
             {conflicts.length > 0 && (
               <div className="rounded-xl border border-warn p-3.5 mb-4">
                 <b className="text-[14.5px] text-ink block">Тохирсон хоног хаалтын огноотой зөрж байна</b>
-                <p className="text-[12.5px] text-t2 mt-1 mb-3">
+                <p className="text-[13px] text-t2 mt-1 mb-3">
                   Хаах огноо нь эцсийн циклийг таслах тул доорх мөрүүдийн
                   тохирсон хоног цонхондоо багтахгүй байна. Аль тоогоор
                   нэхэхийг ТА шийднэ — сонгосон тоо хавсралт дээр хэвлэгдэнэ.
@@ -3041,7 +3327,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                     return (
                       <div key={cf.line_id} className="py-3">
                         <b className="text-[14px] text-ink block leading-tight">{cf.material}</b>
-                        <span className="text-[12.5px] text-t2">
+                        <span className="text-[13px] text-t2">
                           <span className="pill-grey !py-0 mr-1.5">{cf.grade}</span>
                           {fmt(cf.qty)}ш · {cf.date}-нд буцсан
                         </span>
@@ -3066,7 +3352,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                         </div>
                         {pick.mode === "other" && (
                           <div className="flex items-center gap-2.5 mt-2.5 flex-wrap">
-                            <label className="text-[12.5px] text-t2"
+                            <label className="text-[13px] text-t2"
                                    htmlFor={`${uid}-oth-${cf.line_id}`}>Хоног</label>
                             <input id={`${uid}-oth-${cf.line_id}`} type="number"
                                    inputMode="numeric" min={0} autoFocus
@@ -3077,7 +3363,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                                                             { mode: "other", text: e.target.value })} />
                           </div>
                         )}
-                        <p className="text-[12.5px] text-t2 mt-2 tabular-nums">
+                        <p className="text-[13px] text-t2 mt-2 tabular-nums">
                           {dayLineText(days, cf.day_amount, pickedAmount(cf, pick))}
                           {delta !== 0 && (
                             <span className={delta > 0 ? " text-danger" : " text-money"}>
@@ -3127,7 +3413,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                                     + p.final_invoices.reduce((s, f) => s + f.total, 0)),
                        accent: "danger" }} />
             {p.penalty_unbooked > 0 && (
-              <p className="text-[12.5px] text-t2 mt-2.5">
+              <p className="text-[13px] text-t2 mt-2.5">
                 Алдангийн тооцоолол нь нэхэгдээгүй тул хаалтын дүнд ОРОХГҮЙ.
                 Нэхэх бол эхлээд «Алданги нэхэх» товчоор нэхнэ.
               </p>
@@ -3150,7 +3436,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                     onClick={() => setSub({ kind: "deposit" })}>
               Барьцааны тооцоо хийх
             </button>
-            <p className="text-[12.5px] text-warn mt-2.5">
+            <p className="text-[13px] text-warn mt-2.5">
               ⚠ Алгасвал барьцаа тооцоогүй хэвээр үлдэнэ — дараа нь гэрээний
               хуудаснаас хийж болно.
             </p>
@@ -3185,33 +3471,6 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
           </>
         )}
 
-        {/* ЗОГСООХ ШАЛТГААН нь АЛХАМ БҮР дээр ил байна.
-            Урьд нь энэ мөр зөвхөн СҮҮЛЧИЙН (хаах) алхам дотор байсан: «Гадаа
-            үлдэгдэл» алхам дээр «Цааш →» товч чимээгүй идэвхгүй болж, шалтгаан
-            нь товчны `title`-д НУУГДДАГ байв. Отгоо эгч идэвхгүй товч дээр
-            хулгана БАРЬДАГГҮЙ (дэлгэц дээр болж буйг анзаардаггүй) — түүний
-            хувьд тэр тайлбар БАЙХГҮЙТЭЙ адил: «дараад юу ч болсонгүй».
-            Одоо шалтгаан нь товчныхоо дэргэд, алхмаас үл хамааран зурагдана. */}
-        {block && (
-          <p className="text-[12.5px] text-danger mt-3" role="status">⚠ {block}</p>
-        )}
-
-        <div className="flex justify-end gap-2.5 mt-5 flex-wrap">
-          <button className="btn-secondary" ref={cancelRef} onClick={onClose}>Болих</button>
-          {at > 0 && (
-            <button className="btn-ghost" onClick={() => setAt(at - 1)}>← Буцах</button>
-          )}
-          {!last ? (
-            <button className="btn-primary" disabled={!p || !!block}
-                    title={block || undefined}
-                    onClick={() => setAt(at + 1)}>Цааш →</button>
-          ) : (
-            <button className="btn-primary !bg-danger" disabled={busy || !p || !!block}
-                    title={block || undefined} onClick={doClose}>
-              {busy ? "…" : "Гэрээ хаах"}
-            </button>
-          )}
-        </div>
       </Modal>
 
       {sub?.kind === "return" && (
@@ -3240,7 +3499,7 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
  * санамсаргүй товшилтоор зурж болохгүй.
  */
 function AgreeModal({ d, inv, onClose, onDone }: {
-  d: any; inv: any; onClose: () => void; onDone: () => void;
+  d: any; inv: any; onClose: () => void; onDone: (o?: Outcome) => void;
 }) {
   const toast = useToast();
   const uid = useId();
@@ -3266,7 +3525,7 @@ function AgreeModal({ d, inv, onClose, onDone }: {
           await api(`/api/invoices/${inv.id}/agree`, { method: "POST",
             body: JSON.stringify({ date: day, by: by.trim() }) });
           toast("Тооцоо нийлсэн гэж тэмдэглэв");
-          onDone();
+          onDone({ text: `Тооцоо нийлсэн гэж тэмдэглэгдлээ — ${invoiceLabel(inv).title} · ${day} · ${by.trim()}` });
         } catch (e: any) { toast(e.message, "err"); }
       }}>
       <div className="grid grid-cols-2 gap-3.5">
@@ -3287,7 +3546,7 @@ function AgreeModal({ d, inv, onClose, onDone }: {
 }
 
 function UnagreeModal({ inv, onClose, onDone }: {
-  inv: any; onClose: () => void; onDone: () => void;
+  inv: any; onClose: () => void; onDone: (o?: Outcome) => void;
 }) {
   const toast = useToast();
   const [reason, setReason] = useState("");
@@ -3303,10 +3562,10 @@ function UnagreeModal({ inv, onClose, onDone }: {
           await api(`/api/invoices/${inv.id}/unagree`, { method: "POST",
             body: JSON.stringify({ reason: reason.trim() }) });
           toast("Нийлсэн тэмдэг цуцлагдлаа");
-          onDone();
+          onDone({ text: `Нийлсэн тэмдэглэгээ цуцлагдлаа — ${invoiceLabel(inv).title} · ${reason.trim()}` });
         } catch (e: any) { toast(e.message, "err"); }
       }}>
-      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+      <label className="block text-[13px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
         Шалтгаан <span className="text-danger">*</span>
       </label>
       <input id={rid} className="inp w-full" value={reason} autoFocus
@@ -3324,7 +3583,7 @@ function UnagreeModal({ inv, onClose, onDone }: {
  * задрах тэмдэг). Дүрэм нь `lib/deposit.ts`-д, тесттэйгээ.
  */
 function DepositCard({ d, canWrite, onSettle, onDone }: {
-  d: any; canWrite: boolean; onSettle: () => void; onDone: () => void;
+  d: any; canWrite: boolean; onSettle: () => void; onDone: (o?: Outcome) => void;
 }) {
   const led: DepositLedger = d.deposit_ledger
     ?? { events: [], balance: d.deposit || 0, lodged: 0, applied: d.deposit_applied || 0,
@@ -3430,10 +3689,14 @@ function DepositCard({ d, canWrite, onSettle, onDone }: {
 
       {add && <DepositEventModal d={d} led={led} kind={add}
                                  onClose={() => setAdd(null)}
-                                 onDone={() => { setAdd(null); onDone(); }} />}
+                                 onDone={(o) => { setAdd(null); onDone(o); }} />}
       {voidEv && <VoidDepositEventModal d={d} led={led} ev={voidEv}
                                         onClose={() => setVoidEv(null)}
-                                        onDone={() => { setVoidEv(null); onDone(); }} />}
+                                        onDone={() => {
+                                          setVoidEv(null);
+                                          onDone({ text: `Барьцааны бичилт хүчингүй болов — `
+                                                       + `${voidEv.date} · ${depositKindLabel(voidEv.kind)}` });
+                                        }} />}
     </div>
   );
 }
@@ -3442,7 +3705,8 @@ function DepositCard({ d, canWrite, onSettle, onDone }: {
    хоёр төрөлд (суутгах, буцаах) баталгаажуулах цонх + Receipt нэмэгдэнэ —
    UI-ЗАРЧИМ §4: «болох гэж буйгаа navy Receipt дээр ЭХЛЭЭД харуулаад л асууна». */
 function DepositEventModal({ d, led, kind, onClose, onDone }: {
-  d: any; led: DepositLedger; kind: DepositKind; onClose: () => void; onDone: () => void;
+  d: any; led: DepositLedger; kind: DepositKind; onClose: () => void;
+  onDone: (o?: Outcome) => void;
 }) {
   const toast = useToast();
   const uid = useId();
@@ -3461,7 +3725,8 @@ function DepositEventModal({ d, led, kind, onClose, onDone }: {
       method: "POST",
       body: JSON.stringify({ kind, date: f.date, amount, note: f.note.trim() }) });
     toast(`${act.title} — ${money(amount)}`);
-    onDone();
+    onDone({ text: `${act.title} — ${money(amount)} · ${f.date} · барьцаа `
+                 + `${money(led.balance)} → ${money(depositAfter(led.balance, kind, amount))}` });
   };
 
   const receipt = (
@@ -3517,7 +3782,7 @@ function DepositEventModal({ d, led, kind, onClose, onDone }: {
         <input id={`${uid}-note`} className="inp" value={f.note}
                placeholder="ж: 2025 оны гэрээгээр"
                onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
-      {err && <p className="text-[12.5px] text-danger mt-2.5">⚠ {err}</p>}
+      {err && <p className="text-[13px] text-danger mt-2.5">⚠ {err}</p>}
       {receipt}
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
@@ -3568,7 +3833,7 @@ function VoidDepositEventModal({ d, led, ev, onClose, onDone }: {
           onDone();
         } catch (e: any) { toast(e.message, "err"); }
       }}>
-      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+      <label className="block text-[13px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
         Цуцлах шалтгаан <span className="text-danger">*</span>
       </label>
       <input id={rid} className="inp w-full" value={reason} autoFocus
@@ -3628,7 +3893,7 @@ function DepositModal({ d, onClose, onDone }: any) {
         total={{ label: over ? "Барьцаанаас хэтэрсэн!" : "Тооцогдоогүй үлдэх",
                  value: money(left), accent: over ? "danger" : left > 0 ? "dim" : undefined }} />
       {apply > debt && debt >= 0 && (
-        <p className="text-[12px] text-t2 mt-2.5">
+        <p className="text-[13px] text-t2 mt-2.5">
           Суутгах дүн өрөөс их байна — илүү нь кредит болж дараагийн нэхэмжлэлд автоматаар суусна.
         </p>
       )}
@@ -3640,7 +3905,7 @@ function DepositModal({ d, onClose, onDone }: any) {
           БОЛОХГҮЙ (UI-ЗАРЧИМ §4) — `ConfirmModal` нь энгийн `Modal` дээр
           суудаг тул санамсаргүй гадна товшилт бичсэн дүнг чимээгүй устгана.
           Харин ГҮЙЦЭТГЭХ товч нь гэрээ хаах wizard-тай ижил улаан жинтэй. */}
-      <p className="text-[12.5px] text-danger mt-2.5">
+      <p className="text-[13px] text-danger mt-2.5">
         ⚠ Барьцааны тооцоо гэрээнд НЭГ л удаа хийгдэнэ. Энэ үйлдлийг буцаах боломжгүй.
       </p>
       <div className="flex justify-end gap-2.5 mt-5">
@@ -3773,7 +4038,7 @@ function VoidChargeModal({ d, ch, onClose, onDone, onRebuild }: {
           onDone();
         } catch (e: any) { toast(e.message, "err"); }
       }}>
-      <label className="block text-[12.5px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
+      <label className="block text-[13px] font-semibold text-t2 mb-1.5" htmlFor={rid}>
         Цуцлах шалтгаан <span className="text-danger">*</span>
       </label>
       <input id={rid} className="inp w-full" value={reason} autoFocus
@@ -3783,26 +4048,50 @@ function VoidChargeModal({ d, ch, onClose, onDone, onRebuild }: {
   );
 }
 
-/* ---------- Сунгах ---------- */
+/* ---------- Сунгах ----------
+   Цонх нь ӨНӨӨДРИЙГ санал болгодог байв: «сунгах» гэж нээгээд ижил огноо
+   тавихад гэрээ сунгагдахын оронд БОГИНОСНО (сервер ч «өнөөдрөөс өмнө байж
+   болохгүй» гэж л хэлнэ — ЯАГААД гэдгийг Отгоо тэр үед мэдэхгүй). Одоо:
+   санал нь дуусах огноогоо НЭГ ЦИКЛЭЭР урагшлуулсан тоо, өнгөрсөн огноог
+   маягт ӨӨРӨӨ, товч дарахаас ӨМНӨ нэрлэж татгалзана (`lib/contract.ts`). */
 function ExtendModal({ d, onClose, onDone }: any) {
   const toast = useToast();
-  const date0 = d.end_date || today();
+  const date0 = extendDefault(d.end_date, today());
   const [date, setDate] = useState(date0);
   const uid = useId();
+  const stop = extendStop(date, today());
+  const errId = `${uid}-err`;
   return (
-    <FormModal title="Гэрээ сунгах" onClose={onClose} dirty={date !== date0}>
+    <FormModal title="Гэрээ сунгах" onClose={onClose} dirty={date !== date0}
+      footer={
+        <div className="flex justify-end gap-2.5">
+          <button className="btn-secondary" onClick={onClose}>Болих</button>
+          {/* Сунгалт нь давхар дарахад давхар бүртгэгддэг байв */}
+          <SubmitButton disabled={!!stop} title={stop || undefined}
+            onSubmit={async () => {
+              try {
+                await api(`/api/contracts/${d.id}/extend`, { method: "POST",
+                  body: JSON.stringify({ end_date: date }) });
+                toast("Гэрээ сунгагдлаа");
+                onDone({ text: `Гэрээ сунгагдлаа — дуусах огноо ${date}` });
+              } catch (e: any) { toast(e.message, "err"); }
+            }}>Сунгах</SubmitButton>
+        </div>}>
+      <p className="text-[13px] text-t2 mb-3">
+        Одоогийн дуусах огноо: <b className="text-ink">{endDateLabel(d.end_date)}</b>
+      </p>
       <label className="lbl" htmlFor={`${uid}-end`}>Шинэ дуусах огноо</label>
-      <input id={`${uid}-end`} type="date" className="inp mb-5" value={date} onChange={(e) => setDate(e.target.value)} />
-      <div className="flex justify-end gap-2.5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        {/* Сунгалт нь давхар дарахад давхар бүртгэгддэг байв */}
-        <SubmitButton onSubmit={async () => {
-          try {
-            await api(`/api/contracts/${d.id}/extend`, { method: "POST", body: JSON.stringify({ end_date: date }) });
-            toast("Гэрээ сунгагдлаа"); onDone();
-          } catch (e: any) { toast(e.message, "err"); }
-        }}>Сунгах</SubmitButton>
-      </div>
+      <input id={`${uid}-end`} type="date" className="inp" value={date}
+             aria-invalid={stop ? true : undefined}
+             aria-describedby={stop ? errId : undefined}
+             onChange={(e) => setDate(e.target.value)} />
+      {stop
+        ? <p id={errId} className="text-[13px] text-danger mt-2">
+            <span aria-hidden="true">⚠ </span>{stop}
+          </p>
+        : <p className="text-[13px] text-t3 mt-2">
+            Санал нь нэг цикл (30 хоног) — өөр огноо тавьж болно.
+          </p>}
     </FormModal>
   );
 }

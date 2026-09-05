@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { daysBetween, dueLabel, todayIso } from "./schedule";
+import { addDays, daysBetween, dueLabel, todayIso } from "./schedule";
 
 // «2026-09-14» гэсэн огноо ганцаараа «удахгүй юу, дараа сар уу» гэдгийг
 // хэлдэггүй. Хүлээгдэж буй төлбөрийн жагсаалт дээр Отгоо огноог биш ХОНОГИЙГ
@@ -43,5 +43,25 @@ describe("todayIso", () => {
   it("ЛОКАЛ огноог өгнө — toISOString() нь UTC тул шөнө нэг хоног хазайдаг", () => {
     expect(todayIso(new Date(2026, 7, 29, 23, 30))).toBe("2026-08-29");
     expect(todayIso(new Date(2026, 0, 1, 0, 15))).toBe("2026-01-01");
+  });
+});
+
+/* `addDays` — «дуусах огноо + 30 хоног» гэсэн САНАЛЫГ бодох ганц зам.
+   `new Date(iso)` нь UTC-гээр уншдаг тул UTC+8 дээр нэг хоногоор хазайдаг:
+   энэ функц нь `daysBetween`-тэй ижил ЛОКАЛ хуанлигаар явна. */
+
+describe("addDays", () => {
+  it("хоног нэмнэ — сар, жилийн зааг дамжина", () => {
+    expect(addDays("2026-09-05", 30)).toBe("2026-10-05");
+    expect(addDays("2026-12-20", 30)).toBe("2027-01-19");
+    expect(addDays("2026-01-31", 1)).toBe("2026-02-01");
+  });
+
+  it("хасах чиглэлд ч ажиллана", () => {
+    expect(addDays("2026-09-05", -5)).toBe("2026-08-31");
+  });
+
+  it("нэмсэн хоног нь `daysBetween`-ээр буцаж уншигдана", () => {
+    expect(daysBetween("2026-09-05", addDays("2026-09-05", 30))).toBe(30);
   });
 });

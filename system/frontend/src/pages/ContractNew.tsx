@@ -1,11 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useBlocker, useNavigate } from "react-router-dom";
 import { api, fmt, money } from "../api";
 import { Spinner, useToast, Receipt, ConfirmModal, SubmitButton } from "../ui";
 import { parseMoney, formatMoneyInput } from "../lib/num";
 import { contractDraftDirty } from "../lib/dirty";
 import { todayIso } from "../lib/schedule";
-import { CYCLE_MODES, cycleModeHint, cycleModeLabel } from "../lib/contract";
+import { CYCLE_MODES, cycleModeHint, cycleModeLabel, rateStop, stockStop } from "../lib/contract";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
 // хойш маргаашийн огноог анхны утга болгож санал болгодог байв.
@@ -87,6 +87,25 @@ export default function ContractNew() {
   const client = clients.find((c) => c.id === clientId);
   const daySum = items.reduce((s, i) => s + i.qty * i.daily_rate, 0);
   const saleSum = items.reduce((s, i) => s + i.qty * i.unit_price, 0);
+
+  /* ---- ХАТУУ ЗОГСООЛ (`lib/contract.ts`) ----
+     Улаан хүрээ нь «болохгүй» гэж ХЭЛДЭГГҮЙ: 34ш нөөцтэй материалаас 120ш
+     олгох мөр, 0₮ тарифтай мөр хоёулаа 4-р алхам хүртэл чөлөөтэй явдаг байв.
+     Тэр гэрээ ТӨРСӨН ЦАГААСАА буруу тоо үйлдвэрлэнэ — нөөц сөрөг болж,
+     өдрийн дүн 0 гарна; Отгоо түүнийг сар хагасын дараа авлага зөрөхөөр нь
+     олно. Зогсоол бүр ӨГҮҮЛБЭРТЭЙ, өгүүлбэр нь мөрийнхөө ДООР зогсоно. */
+  const stopsOf = (it: Item) => {
+    const m = materials.find((x: any) => x.id === it.material_id);
+    const st = m?.stock?.find((s: any) => s.grade_id === it.grade_id);
+    return {
+      stock: stockStop(it.qty, st?.on_hand),
+      rate: rateStop(type === "rent" ? it.daily_rate : it.unit_price, type),
+    };
+  };
+  const blocked = items.some((it) => {
+    const st = stopsOf(it);
+    return !!st.stock || !!st.rate;
+  });
 
   function addItem(m: any, stock: any) {
     if (items.some((i) => i.material_id === m.id && i.grade_id === stock.grade_id)) return;
@@ -213,9 +232,11 @@ export default function ContractNew() {
                     {items.map((it, i) => {
                       const m = materials.find((x: any) => x.id === it.material_id);
                       const st = m?.stock?.find((s: any) => s.grade_id === it.grade_id);
-                      const over = st && it.qty > st.on_hand;
+                      const stop = stopsOf(it);
+                      const over = !!stop.stock;
                       return (
-                        <tr key={i}>
+                        <Fragment key={i}>
+                        <tr>
                           <td className="td"><b className="text-ink">{m?.name}</b>
                             <span className="block text-xs text-t3">{st?.grade} · агуулахад {fmt(st?.on_hand || 0)}ш</span></td>
                           <td className="td text-right">
@@ -223,11 +244,13 @@ export default function ContractNew() {
                                 ямар материалын юуг гуйж байгаагаа хэлэх ёстой */}
                             <input type="number" min={0} aria-label={`${m?.name} — тоо ширхэг`}
                               className={`inp !min-h-10 !py-2 w-24 text-right ${over ? "!border-danger" : ""}`}
+                              aria-invalid={over || undefined}
                               value={it.qty} onChange={(e) => setItems(items.map((x, j) => j === i ? { ...x, qty: +e.target.value } : x))} />
-                            {over && <span className="block text-[12px] text-danger mt-1">нөөцөөс их!</span>}
                           </td>
                           <td className="td text-right">
-                            <input type="number" min={0} className="inp !min-h-10 !py-2 w-28 text-right"
+                            <input type="number" min={0}
+                              className={`inp !min-h-10 !py-2 w-28 text-right ${stop.rate ? "!border-danger" : ""}`}
+                              aria-invalid={stop.rate ? true : undefined}
                               aria-label={`${m?.name} — ${type === "rent" ? "тариф ₮/ш/хоног" : "нэгж үнэ ₮"}`}
                               value={type === "rent" ? it.daily_rate : it.unit_price}
                               onChange={(e) => setItems(items.map((x, j) => j === i
@@ -240,6 +263,26 @@ export default function ContractNew() {
                             aria-label={`${m?.name} — жагсаалтаас хасах`}
                             onClick={() => setItems(items.filter((_, j) => j !== i))}>✕</button></td>
                         </tr>
+                        {/* ЗОГСООЛ нь МӨРИЙНХӨӨ ДООР — «нөөцөөс их!» гэсэн хоёр
+                            үг нь юу хийхийг хэлдэггүй. Тоог нь нэрлээд, засах
+                            газрыг нь зааж өгнө. */}
+                        {(stop.stock || stop.rate) && (
+                          <tr>
+                            <td className="td !pt-0 !border-t-0" colSpan={5}>
+                              {stop.stock && (
+                                <span className="block text-[13px] text-danger font-medium">
+                                  <span aria-hidden="true">⚠ </span>{stop.stock}
+                                </span>
+                              )}
+                              {stop.rate && (
+                                <span className="block text-[13px] text-danger font-medium">
+                                  <span aria-hidden="true">⚠ </span>{stop.rate}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       );
                     })}
                   </tbody>
@@ -260,9 +303,17 @@ export default function ContractNew() {
                 </div>
               </div>
             )}
+            {/* Товч ЧИМЭЭГҮЙ идэвхгүй болох нь «дараад юу ч болсонгүй» —
+                шалтгаан нь товчныхоо дэргэд ил зогсоно. */}
+            {blocked && (
+              <p className="text-[13px] text-danger font-medium mt-4" role="status">
+                Улаанаар тэмдэглэсэн мөрийг засвал цааш үргэлжилнэ.
+              </p>
+            )}
             <div className="flex justify-between mt-6">
               <button className="btn-secondary" onClick={() => setStep(1)}>← Буцах</button>
-              <button className="btn-primary" disabled={!items.some((i) => i.qty > 0)} onClick={() => setStep(3)}>Үргэлжлүүлэх →</button>
+              <button className="btn-primary" disabled={!items.some((i) => i.qty > 0) || blocked}
+                      onClick={() => setStep(3)}>Үргэлжлүүлэх →</button>
             </div>
           </>
         )}
@@ -329,9 +380,17 @@ export default function ContractNew() {
             <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
               <input id={`${uid}-note`} className="inp" placeholder="ж: тээврийг захиалагч хариуцна" value={cond.note}
                      onChange={(e) => setCond({ ...cond, note: e.target.value })} /></div>
+            {/* 4-р алхам руу ч ЭНЭ хаалгаар: 2-р алхам дээр нөөц/үнэ засагдсан
+                эсэхийг дахин шалгана (буцаж очоод засаагүй бол зам нээгдэхгүй). */}
+            {blocked && (
+              <p className="text-[13px] text-danger font-medium mt-4" role="status">
+                Материалын мөрөнд засах зүйл байна — «← Буцах» дарж засна уу.
+              </p>
+            )}
             <div className="flex justify-between mt-6">
               <button className="btn-secondary" onClick={() => setStep(2)}>← Буцах</button>
-              <button className="btn-primary" onClick={() => setStep(4)}>Үргэлжлүүлэх →</button>
+              <button className="btn-primary" disabled={blocked}
+                      onClick={() => setStep(4)}>Үргэлжлүүлэх →</button>
             </div>
           </>
         )}

@@ -47,9 +47,24 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 /* ---------- Modal ----------
    `dirty` өгвөл — хэрэглэгч ямар нэг юм бөглөсөн байвал — санамсаргүй дарсан
    гадна талын товшилт, Escape нь оруулсан зүйлийг чимээгүй устгахгүй:
-   эхлээд модал дотроо баталгаажуулна. ✕ товч ч мөн адил ажиллана. */
-export function Modal({ title, onClose, children, wide, dirty }: {
-  title: string; onClose: () => void; children: ReactNode; wide?: boolean; dirty?: boolean;
+   эхлээд модал дотроо баталгаажуулна. ✕ товч ч мөн адил ажиллана.
+
+   ЦОНХ ӨӨРӨӨ ГҮЙНЭ, ГОЛ ТОВЧ НЬ ХАРАГДАЖ ЗОГСОНО (2026-09).
+   Отгоогийн дэлгэц 768px өндөртэй; «Буцаалт бүртгэх» цонх 15 материалын
+   мөртэй үед 1,468px, «Гэрээ хаах» 1,759px хүрдэг байв. Цонх дотроо
+   гүйдэггүй тул ХУУДАС гүйдэг: «✓ Буцаалт бүртгэх» товч нүднээс 700px
+   доор үлдэж, Отгоо мөрөө бөглөөд «дараа нь юу хийх вэ» гэдгээ олохгүй
+   (тэр хуудсыг доош гүйлгэдэг ч ЦОНХ дотор гүйлгэх гэсэн зүйл түүний
+   толгойд байхгүй — Excel-ийн 20 жилд ийм юм байгаагүй).
+
+   Одоо: биет нь дэлгэцийн 85%-д багтаж, АГУУЛГА нь дотроо гүйнэ; гарчиг
+   (× товчтойгоо) ба `footer` (Болих + гол товч) нь гүйлтийн ГАДНА, үргэлж
+   нүдний өмнө үлдэнэ. Escape, `dirty` хамгаалалт ЯГ хэвээр. */
+export function Modal({ title, onClose, children, footer, wide, dirty }: {
+  title: string; onClose: () => void; children: ReactNode;
+  /** Гүйлтийн ГАДНА үлдэх мөр — «Болих» ба гол товч (заримдаа баримт). */
+  footer?: ReactNode;
+  wide?: boolean; dirty?: boolean;
 }) {
   const [askClose, setAskClose] = useState(false);
   const guardRef = useRef<HTMLDivElement | null>(null);
@@ -118,9 +133,9 @@ export function Modal({ title, onClose, children, wide, dirty }: {
          style={{ background: "rgba(11,37,69,0.4)" }}
          onMouseDown={(e) => e.target === e.currentTarget && attemptClose()}>
       <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
-           className={`rounded-[26px] shadow-2xl w-full border border-line ${wide ? "max-w-3xl" : "max-w-lg"} p-6 outline-none`}
+           className={`rounded-[26px] shadow-2xl w-full border border-line ${wide ? "max-w-3xl" : "max-w-lg"} p-6 outline-none flex flex-col max-h-[85vh]`}
            style={{ background: "var(--color-cardbg)" }}>
-        <div className="flex items-center justify-between mb-5 pb-4 border-b border-line">
+        <div className="flex items-center justify-between mb-5 pb-4 border-b border-line shrink-0">
           <h3 id={titleId} className="text-[17px] font-bold text-ink tracking-tight">{title}</h3>
           {/* 28×36 байв — өндөр нь шатандаа хүрсэн ч ӨРГӨН нь дутуу. Бүх 23
               модалын хаах товч тул нэг мөрөөр 36×36 (--target-sm) болов. */}
@@ -129,7 +144,7 @@ export function Modal({ title, onClose, children, wide, dirty }: {
         </div>
         {askClose && (
           <div ref={guardRef}
-               className="mb-5 rounded-xl bg-danger-50 px-4 py-3 flex items-center gap-3 flex-wrap">
+               className="mb-5 rounded-xl bg-danger-50 px-4 py-3 flex items-center gap-3 flex-wrap shrink-0">
             <span className="text-[13.5px] font-medium text-danger flex-1 min-w-[180px]">
               Хаавал оруулсан мэдээлэл устна. Хаах уу?
             </span>
@@ -138,7 +153,13 @@ export function Modal({ title, onClose, children, wide, dirty }: {
                     onClick={() => setAskClose(false)}>Үргэлжлүүлэх</button>
           </div>
         )}
-        {children}
+        {/* Гүйлт нь ЗӨВХӨН энд. `-mx-6 px-6` — гүйлтийн зураас нь биетийн
+            ирмэг дээр зогсож, агуулга нь дүүргэлтээ хадгална. */}
+        <div className="min-h-0 flex-1 overflow-y-auto -mx-6 px-6">{children}</div>
+        {footer && (
+          /* Гол товч нь ХЭЗЭЭ Ч нүднээс гардаггүй — гүйлтийн ГАДНА. */
+          <div className="shrink-0 pt-4 mt-4 border-t border-line">{footer}</div>
+        )}
       </div>
     </div>
   );
@@ -153,7 +174,10 @@ export function Modal({ title, onClose, children, wide, dirty }: {
    (Асуулт-хариултын модал — ConfirmModal, RebuildModal — Modal хэвээр:
    тэдгээрт бөглөх юм байхгүй тул хаах нь юу ч алдагдуулахгүй.) */
 export function FormModal(p: {
-  title: string; onClose: () => void; children: ReactNode; wide?: boolean; dirty: boolean;
+  title: string; onClose: () => void; children: ReactNode;
+  /** Гүйлтийн ГАДНА үлдэх мөр — «Болих» ба гол товч (`Modal`-ийн тайлбарыг үз). */
+  footer?: ReactNode;
+  wide?: boolean; dirty: boolean;
 }) {
   return <Modal {...p} />;
 }
@@ -250,27 +274,28 @@ export function ConfirmModal({ title, intro, rows, total, note, children, confir
     }
   }, [danger, title]);
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={onClose}
+           footer={
+             <div className="flex justify-end gap-2.5">
+               {/* Устгах/хаах төрлийн үйлдэлд Enter дарахад ЦУЦЛАХ нь сонгогдоно —
+                   санамсаргүй товшилт мөнгө хөдөлгөх ёсгүй. */}
+               <button className="btn-secondary" disabled={busy} autoFocus={danger}
+                       onClick={onClose}>{cancelLabel}</button>
+               <button className={`btn-primary ${danger ? "!bg-danger" : ""}`}
+                       disabled={busy || confirmDisabled} autoFocus={!danger}
+                       onClick={async () => {
+                         setBusy(true);
+                         // Амжилттай бол дуудагч тал биднийг хаана; амжилтгүй бол
+                         // товчийг сэргээж дахин оролдох боломж үлдээнэ.
+                         try { await onConfirm(); } finally { if (alive.current) setBusy(false); }
+                       }}>
+                 {busy ? "…" : confirmLabel}
+               </button>
+             </div>}>
       {intro && <p className="text-[13.5px] text-t2 mb-4">{intro}</p>}
       {(rows?.length || total) && <Receipt rows={rows || []} total={total} />}
       {children && <div className="mt-4">{children}</div>}
-      {note && <p className="text-[12.5px] text-t2 mt-3">{note}</p>}
-      <div className="flex justify-end gap-2.5 mt-5">
-        {/* Устгах/хаах төрлийн үйлдэлд Enter дарахад ЦУЦЛАХ нь сонгогдоно —
-            санамсаргүй товшилт мөнгө хөдөлгөх ёсгүй. */}
-        <button className="btn-secondary" disabled={busy} autoFocus={danger}
-                onClick={onClose}>{cancelLabel}</button>
-        <button className={`btn-primary ${danger ? "!bg-danger" : ""}`}
-                disabled={busy || confirmDisabled} autoFocus={!danger}
-                onClick={async () => {
-                  setBusy(true);
-                  // Амжилттай бол дуудагч тал биднийг хаана; амжилтгүй бол
-                  // товчийг сэргээж дахин оролдох боломж үлдээнэ.
-                  try { await onConfirm(); } finally { if (alive.current) setBusy(false); }
-                }}>
-          {busy ? "…" : confirmLabel}
-        </button>
-      </div>
+      {note && <p className="text-[13px] text-t2 mt-3">{note}</p>}
     </Modal>
   );
 }
