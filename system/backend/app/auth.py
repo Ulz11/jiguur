@@ -88,9 +88,28 @@ def current_user(authorization: str = Header(default=""), db: Session = Depends(
     return user
 
 
+#: Ролийн МОНГОЛ нэр — 403-ын мөр дээр гарна.
+ROLE_MN = {"manager": "менежер", "finance": "санхүү", "factory": "үйлдвэрийн дарга"}
+
+#: Татгалзлын мөрийн ЭХЛЭЛ — хуучин текст ХЭВЭЭР (дэлгэц, тест үүгээр таньдаг).
+DENIED = "Энэ үйлдлийг хийх эрх байхгүй"
+
+
+def roles_text(roles) -> str:
+    """('manager', 'finance') → 'менежер, санхүү'. Танихгүй роль ӨӨРӨӨРӨӨ."""
+    return ", ".join(ROLE_MN.get(r, r) for r in roles)
+
+
 def require_roles(*roles):
+    """Рольын хаалт. Татгалзал нь ХЭН хийж болохыг НЭРЛЭНЭ.
+
+    «Энэ үйлдлийг хийх эрх байхгүй» гэдэг нь Отгоо эгчид асуулт үлдээдэг:
+    «тэгвэл хэн хийх вэ?» Тэр асуултын хариу нь дэлгэцэн дээр байхгүй бол
+    хүн утас руу гүйнэ. Мөрийн ЭХЛЭЛ хуучин хэвээр — уншигч нь ижил өгүүлбэр
+    хайж олно, зөвхөн төгсгөлд нь нэр нэмэгдэв.
+    """
     def dep(user: models.User = Depends(current_user)) -> models.User:
         if user.role not in roles:
-            raise HTTPException(403, "Энэ үйлдлийг хийх эрх байхгүй")
+            raise HTTPException(403, f"{DENIED} — зөвхөн {roles_text(roles)}")
         return user
     return dep

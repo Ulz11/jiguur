@@ -686,3 +686,32 @@ def test_a_sheet_sourced_balance_does_not_have_the_netting_subtracted(db):
     assert round(billing.client_receivable(cl, date.fromisoformat(AS_OF))["total"]) \
         == 291_539_644 + 139_648_000
     assert any("139,648,000" in w and "Бутангууд" in w for w in r["warnings"])
+
+
+# ═════════════════════════════════ ХЭРЭГСЛИЙН нэр ТҮҮНИЙ талбарт үлдэхгүй (P0-15)
+
+def test_entries_and_deposit_events_carry_no_migration_marker(db):
+    """«Шилжүүлэлт — хуучин системээс» гэсэн тэмдэглэл, «Шилжүүлэлт» гэсэн
+    зохиогч нь Excel-ээс ирсэн бичилт, барьцааны явдал дээр ҮЛДДЭГ байв —
+    Отгоо эгчийн «Бусад бичилт» таб дээр 12px-ээр хэвлэгдэнэ. Түүнд «хуучин
+    систем» байгаагүй, дэвтэр байсан: тэмдэглэл ХООСОН, зохиогч «Дэвтрээс»."""
+    from app.services import migration as M
+
+    entry = {"date": "2026-06-22", "amount": 139_648_000, "kind": "transfer",
+             "label": "Өнө Ордтой тооцоо — 2026.06.22 акт",
+             "ref": "2026 тооцоо!R24"}
+    events = [{"date": "2026-03-15", "kind": "lodge", "amount": 20_000_000},
+              {"date": "2026-04-01", "kind": "apply", "amount": 3_000_000,
+               "note": "суутгав"}]
+    M.load_data(db, _data(
+        clients=[_client("Бутангууд", balance=291_539_644, entries=[entry])],
+        contracts=[_contract("Бутангууд", "25.19", deposit=20_000_000,
+                             deposit_events=events)]))
+    e = db.query(models.ClientEntry).one()
+    assert e.note == ""                         # машины тэмдэглэл БИШ
+    assert e.user_name == "Дэвтрээс"
+    assert e.label == "Өнө Ордтой тооцоо — 2026.06.22 акт"   # түүний үг хэвээр
+    evs = db.query(models.DepositEvent).order_by(models.DepositEvent.id).all()
+    assert [x.kind for x in evs] == ["lodge", "apply"]
+    assert {x.user_name for x in evs} == {"Дэвтрээс"}
+    assert evs[1].note == "суутгав"             # түүний үг хэвээр

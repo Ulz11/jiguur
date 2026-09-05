@@ -200,7 +200,15 @@ def export_receivables(db: Session = Depends(get_db), user=Depends(guard)):
 @router.post("/import/clients")
 async def import_clients(file: UploadFile, db: Session = Depends(get_db),
                          user=Depends(auth.require_roles("manager", "finance"))):
-    """XLSX: Нэр | Регистр | Хариуцагч | Утас (эхний мөр — толгой)."""
+    """XLSX: Нэр | Регистр | Хариуцагч | Утас (эхний мөр — толгой).
+
+    ХАРИУ НЬ НЭРСЭЭ АВЧ ЯВНА. Урьд нь ЗӨВХӨН хоёр тоо буцаадаг байсан —
+    «Импорт: 12 нэмэгдэв, 3 давхардал алгасав» гэсэн 3.2 секундын мэдэгдэл.
+    Отгоо эгч ХЭН алгасагдсаныг мэдэхгүй тул файлаа Excel дээр нээж, 200 мөр
+    дундуур нүдээрээ хайж эхэлнэ (эсвэл шалгахаа больж, дутуу орсон нэрийг
+    хожим олно). Нэрс нь ХАРИУНД ирвэл дэлгэц түүнийг жагсаалт болгож,
+    цонх нь «Хаах» дартал зогсоно (`Clients.tsx` — импортын үр дүн).
+    """
     data = await file.read()
     try:
         wb = load_workbook(io.BytesIO(data), read_only=True)
@@ -208,7 +216,8 @@ async def import_clients(file: UploadFile, db: Session = Depends(get_db),
         raise HTTPException(400, "XLSX файл уншигдсангүй")
     ws = wb.active
     existing = {c.name.strip().lower() for c in db.query(models.Client).all()}
-    created = skipped = 0
+    added_names: list[str] = []
+    skipped_names: list[str] = []
     for i, row in enumerate(ws.iter_rows(values_only=True)):
         if i == 0:
             continue  # толгой
@@ -216,13 +225,15 @@ async def import_clients(file: UploadFile, db: Session = Depends(get_db),
         if not name:
             continue
         if name.lower() in existing:
-            skipped += 1
+            skipped_names.append(name)
             continue
         db.add(models.Client(name=name,
                              reg=str(row[1] or "").strip() if len(row) > 1 else "",
                              person=str(row[2] or "").strip() if len(row) > 2 else "",
                              phone=str(row[3] or "").strip() if len(row) > 3 else ""))
         existing.add(name.lower())
-        created += 1
+        added_names.append(name)
     db.commit()
-    return {"created": created, "skipped": skipped}
+    # Тоонууд нь ХЭВЭЭР (хуучин дуудагч тал хэвээр ажиллана) — нэрс НЭМЭГДЭВ.
+    return {"created": len(added_names), "skipped": len(skipped_names),
+            "added_names": added_names, "skipped_names": skipped_names}

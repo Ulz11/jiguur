@@ -72,7 +72,7 @@ def create_opening_balance(db: Session, client: models.Client, amount: float,
     if deposit:
         # Барьцаа нь дэвтрийн ЭХНИЙ мөр болж орно (H8) — «байршуулаагүй»
         # (явдалгүй) ба «0 байршуулсан» хоёр цаашид ялгагдана.
-        deposit_svc.set_lodged(db, c, deposit, "Шилжүүлэлт")
+        deposit_svc.set_lodged(db, c, deposit, "Дэвтрээс")
     inv = None
     if amount > 0:
         inv = models.Invoice(contract_id=c.id, no=f"OB-{client.id}",
@@ -363,10 +363,14 @@ def load_data(db: Session, data: dict) -> dict:
             except ValueError:
                 day = as_of
             try:
+                # Тэмдэглэл ХООСОН, зохиогч «Дэвтрээс» (P0-15): «Шилжүүлэлт —
+                # хуучин системээс» гэдэг нь ХЭРЭГСЛИЙН хэл — Отгоо эгчийн
+                # «Бусад бичилт» таб дээр хэвлэгддэг байв. Түүний үг нь `label`.
+                # `ref` (нүдний хаяг) нь тулгалтад л хэрэгтэй — дэлгэц дээр гарахгүй.
                 entries_svc.create_entry(db, cl, day, float(e["amount"]),
                                          e.get("kind", "adjustment"), e["label"],
-                                         note="Шилжүүлэлт — хуучин системээс",
-                                         ref=e.get("ref", ""), user_name="Шилжүүлэлт")
+                                         note="", ref=e.get("ref", ""),
+                                         user_name="Дэвтрээс")
                 counts["entries"] += 1
             except ValueError as ex:
                 warnings.append(f"«{name}» бичилт нэмэгдсэнгүй: {ex}")
@@ -492,7 +496,7 @@ def load_data(db: Session, data: dict) -> dict:
             db.add(models.DepositEvent(contract_id=c.id, date=day, kind=ev["kind"],
                                        amount=round(float(ev["amount"]), 2),
                                        note=ev.get("note", ""), payment_id=None,
-                                       user_name="Шилжүүлэлт"))
+                                       user_name="Дэвтрээс"))
             counts["deposit_events"] += 1
         db.commit()
         db.refresh(c)

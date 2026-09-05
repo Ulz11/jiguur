@@ -432,7 +432,29 @@ def invoice(inv: models.Invoice, today: date):
             # ХАМТАРСАН ГАРЫН ҮСГИЙН ТӨЛӨВ (№69) — «энэ тоог хоёр тал баталсан»
             "agreed_at": str(inv.agreed_at) if inv.agreed_at else None,
             "agreed_by": inv.agreed_by or "",
+            # ГАРААР БИЧСЭН БИЧИЛТИЙН ШОШГО (`A-…`) — «Өнө Ордтой тооцоо —
+            # 2026.06.22 акт». Дэлгэц энэ мөрийг ХАРИЛЦАГЧИЙН хуудсан дээр
+            # гарчиг болгоно: тэдгээр нэхэмжлэл нь хуучин үлдэгдлийн ЗОХИОМОЛ
+            # гэрээн дээр (`OB-{id}`) суудаг тул гэрээгээр нь таньвал бүгд
+            # «Хуучин үлдэгдэл» гэж нэрлэгдэнэ (`lib/invoice.clientInvoiceLabel`).
+            # Түрээсийн нэхэмжлэлд ХООСОН — тэдний нэр нь циклээсээ гардаг.
+            "label": _invoice_label(inv),
             "detail": json.loads(inv.detail_json or "[]")}
+
+
+def _invoice_label(inv: models.Invoice) -> str:
+    """`detail_json`-д бичигдсэн бичилтийн шошго (`services/entries._debit`).
+
+    Түрээсийн нэхэмжлэлийн `detail_json` нь МАССИВ (материалын мөрүүд) тул
+    шошго ГАРАХГҮЙ — хэлбэрээр нь ялгана, дугаараар нь биш.
+    """
+    try:
+        d = json.loads(inv.detail_json or "[]")
+    except ValueError:
+        return ""
+    if isinstance(d, dict):
+        return str(d.get("label") or d.get("note") or "").strip()
+    return ""
 
 
 def akt_entry(a: models.AktEntry):
@@ -500,12 +522,21 @@ def payment(p: models.Payment):
 
     `allocations` нь цуцлах цонхны баримтад ХЭРЭГТЭЙ: «энэ мөнгө аль
     нэхэмжлэлээс суларна» гэдгийг Отгоо дарахаасаа ӨМНӨ уншина.
+
+    `allocated` / `unallocated` нь ИЛҮҮ ТӨЛӨЛТИЙГ ил гаргана. Хурд групп
+    78,165,000₮ илүү төлсөн атал харилцагчийн хуудас «Авлага 0₮ · Хэвийн»
+    гэж зогсдог байв: тэр мөнгө зөвхөн «Төлбөр» табын нэг мөр болж нуугдана.
+    Дүнг ЭНД нэрлэвэл дэлгэц тоог өөрөө нийлүүлэхгүй (H9 — нэг факт, нэг тоо).
+    Дугаарлалт нь `POST /api/payments`-ийн хариутай ЯГ ижил хос нэртэй.
     """
+    allocated = round(sum(a.amount for a in p.allocations))
     return {"id": p.id, "client_id": p.client_id, "client": p.client.name,
             "contract_id": p.contract_id,
             "contract_no": p.contract.no if p.contract else None,
             "date": str(p.date), "amount": p.amount, "method": p.method,
             "barter_desc": p.barter_desc, "note": p.note,
+            "allocated": allocated,
+            "unallocated": round(p.amount) - allocated,
             "voided": p.voided_at is not None,
             "void_reason": p.void_reason or "",
             "voided_by": p.voided_by or "",

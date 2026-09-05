@@ -1,6 +1,8 @@
 """Харилцагч + бүрэн профайл."""
+import re
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..db import get_db
@@ -9,10 +11,20 @@ from ..services import billing
 from ..services import audit as audit_svc
 from ..services import contacts as contacts_svc
 from ..services import entries as entries_svc
+from ..services import pdfstatement
 from .barter import ser as barter_ser
 
 router = APIRouter(prefix="/api")
 fin = auth.require_roles("manager", "finance")
+
+
+def _safe(name: str) -> str:
+    """Файлын нэрэнд оруулж болох тэмдэгт л үлдээнэ (`contracts._safe`-тэй ижил).
+
+    Отгоогийн огноо нь зураастай (2026-03-20) тул энэ нь ихэвчлэн юу ч
+    хийхгүй — гэхдээ `/` агуулсан нэр Content-Disposition-ыг эвдэнэ.
+    """
+    return re.sub(r"[^0-9A-Za-z._-]+", "-", name).strip("-") or "file"
 
 
 @router.get("/clients")
@@ -24,12 +36,81 @@ def list_clients(db: Session = Depends(get_db), user=Depends(auth.current_user))
             for c in db.query(models.Client).order_by(models.Client.name).all()]
 
 
+# ---------------- ДАВХАР ХАРИЛЦАГЧ (нэг нэр — нэг мөр) ----------------
+#
+# Урьд нь `POST /clients` ЮУ Ч шалгадаггүй байв: «Бутангууд ХХК», «бутангууд
+# ххк», «Бутангууд  ХХК» гурав нь ГУРВАН харилцагч болж бүртгэгдэнэ. Тэр
+# агшнаас эхлэн авлага гурав хуваагдаж, төлбөр нь аль нэг дээр нь сууж,
+# «Авлагын үлдэгдэл» гурван хуудсан дээр гурван өөр тоо болно — Отгоо эгчийг
+# Excel рүү буцаадаг яг тэр мэдрэмж. Устгал нь эмчилгээ БИШ (H1): үүсэхээс
+# нь өмнө зогсооно.
+#
+# xlsx оруулагч (`routers/reports.py`) нь ӨӨРИЙН алгасах журамтай хэвээр:
+# багц оруулалт нь нэг давхардлаас болж бүхэлдээ унах ёсгүй.
+
+NAME_REQUIRED = "Харилцагчийн нэр заавал"
+
+
+def _norm(value: str) -> str:
+    """Харьцуулах хэлбэр — том/жижиг үсэг, давхар зай, захын зай ялгагдахгүй."""
+    return " ".join((value or "").split()).casefold()
+
+
+def _duplicate(db: Session, name: str, reg: str) -> tuple[models.Client | None, str]:
+    """Ижил НЭР эсвэл ижил РЕГИСТРТЭЙ харилцагч байна уу — (мөр, талбар).
+
+    Мөрүүдийг Python талд алхана: SQL-ийн `lower()` нь давхар зайг цэвэрлэдэггүй,
+    кириллийн `casefold`-ыг ч SQLite баталгаажуулдаггүй. Харилцагчийн тоо
+    хэдэн зуугаар хэмжигдэх тул энэ нь бүртгэл бүрд нэг хямд гүйлт.
+    """
+    key = _norm(name)
+    reg_key = _norm(reg)
+    for c in db.query(models.Client).order_by(models.Client.id).all():
+        if key and _norm(c.name) == key:
+            return c, "name"
+        if reg_key and _norm(c.reg) == reg_key:
+            return c, "reg"
+    return None, ""
+
+
+def _duplicate_409(existing: models.Client, field: str) -> HTTPException:
+    """409-ийн БҮТЭЦТЭЙ хариу.
+
+    Биет нь: `{"detail": {"msg": <өгүүлбэр>, "existing_id": <id>,
+    "existing_name": <нэр>, "field": "name" | "reg"}}`.
+
+    `msg` гэсэн нэр нь САНААТАЙ: дэлгэцийн `lib/errors.ts` объект ирвэл
+    түүнийг л уншиж хүнд харуулдаг тул хуучин мөр хэвээр гарна. `existing_id`
+    нь «тэр харилцагч руу ор» гэсэн холбоос зурах боломжийг үлдээнэ — «аль
+    хэдийн бүртгэлтэй» гэдэг нь хаана байгааг хэлэхгүй бол мухардмал хана.
+    """
+    what = "нэртэй" if field == "name" else "регистртэй"
+    return HTTPException(status_code=409, detail={
+        "msg": f"Энэ {what} харилцагч аль хэдийн бүртгэлтэй: "
+               f"{existing.name} (№{existing.id})",
+        "existing_id": existing.id, "existing_name": existing.name,
+        "field": field})
+
+
 @router.post("/clients")
 def add_client(body: schemas.ClientIn, db: Session = Depends(get_db),
                user=Depends(auth.require_roles("manager", "finance"))):
-    c = models.Client(**body.model_dump())
+    """Шинэ харилцагч. ДАВХАРДВАЛ 409 (`_duplicate_409`-ийн биетийг үзнэ үү)."""
+    data = body.model_dump()
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, NAME_REQUIRED)
+    data["name"] = name
+    data["reg"] = (data.get("reg") or "").strip()
+    existing, field = _duplicate(db, name, data["reg"])
+    if existing is not None:
+        raise _duplicate_409(existing, field)
+    c = models.Client(**data)
     db.add(c)
     db.commit()
+    db.refresh(c)
+    audit_svc.log(db, user, "create", "client", c.id,
+                  f"{c.name}" + (f" · ТТД {c.reg}" if c.reg else ""))
     return serializers.client_row(c, date.today())
 
 
@@ -134,6 +215,134 @@ def deactivate_contact(kid: int, db: Session = Depends(get_db), user=Depends(fin
     return contacts_svc.serialize(k)
 
 
+@router.post("/clients/{cid}/contacts/{kid}/reactivate")
+def reactivate_contact(cid: int, kid: int, db: Session = Depends(get_db),
+                       user=Depends(fin)):
+    """БУЦАЖ ИРСЭН ХҮН — `deactivate`-ийн толин тусгал.
+
+    Хүн ажлаасаа гарч, дараа нь буцаж ирдэг; андуурч идэвхгүй болгосон ч
+    байж болно. Хоёр тохиолдолд ч ШИНЭ мөр үүсгэх нь ХОЁР Н.Соль төрүүлж,
+    аль нь одоогийнх болохыг мэдэх аргагүй болгоно.
+
+    Хаяг нь ХАРИЛЦАГЧААР дамжина (`deactivate` шиг ганцаараа биш): өөр
+    харилцагчийн хүнийг энэ хаягаар сэргээх боломжгүй — 404.
+    """
+    cl = _client_or_404(db, cid)
+    k = _contact_or_404(db, kid)
+    if k.client_id != cid:
+        # «Өөр хүний хүн» гэдэг нь ЭНЭ хаяг дээр БАЙХГҮЙ гэсэн үг.
+        raise HTTPException(404, "Холбоо барих хүн олдсонгүй")
+    if k.active:
+        raise HTTPException(409, "Энэ хүн идэвхтэй байна")
+    k.active = True
+    db.commit()
+    db.refresh(k)
+    audit_svc.log(db, user, "reactivate", "client_contact", k.id,
+                  f"{cl.name} · {contacts_svc.detail(k)} — идэвхтэй болгов")
+    return contacts_svc.serialize(k)
+
+
+# ---------------- ХООСОН ХАРИЛЦАГЧИЙГ УСТГАХ ----------------
+#
+# H1 «устгал байхгүй» нь ТҮҮХИЙГ хамгаалдаг дүрэм: болсон явдал мөрөндөө
+# үлдэнэ. ХООСОН харилцагчид түүх БАЙХГҮЙ — андуурч бичсэн нэр, хоёр дахин
+# оруулсан мөр, туршилтын бичилт. Тэднийг мөнхөд үлдээх нь жагсаалтыг
+# бохирдуулж, хайлтыг худал болгоно. Тиймээс хаалга нь НАРИЙН: ганц ч
+# наалдсан зүйлгүй бол л онгойно.
+
+#: Наалдсан зүйлийн үг — тоолол бүр өөрийн нэртэй («2 гэрээ, 1 төлбөр»).
+_ATTACHED_MN = {"contracts": "гэрээ", "payments": "төлбөр", "entries": "бичилт",
+                "notes": "тэмдэглэл", "files": "файл", "barter": "бартер хөрөнгө"}
+
+
+def _attached(db: Session, cid: int) -> list[str]:
+    """Харилцагчид наалдсан зүйлс — «2 гэрээ (№OB-3)», «1 төлбөр» гэх мэт.
+
+    Хоосон жагсаалт = устгаж болно. ХҮЧИНГҮЙ болсон мөр ч ТООЛОГДОНО:
+    цуцлагдсан төлбөр бол түүх, түүхтэй харилцагч бол хоосон биш.
+    """
+    parts: list[str] = []
+    contracts = (db.query(models.Contract).filter_by(client_id=cid)
+                 .order_by(models.Contract.id).all())
+    if contracts:
+        nos = ", ".join(f"№{c.no}" for c in contracts[:3])
+        if len(contracts) > 3:
+            nos += " …"
+        parts.append(f"{len(contracts)} {_ATTACHED_MN['contracts']} ({nos})")
+    counts = [
+        ("payments", db.query(models.Payment).filter_by(client_id=cid).count()),
+        ("entries", db.query(models.ClientEntry).filter_by(client_id=cid).count()),
+        ("notes", db.query(models.CollectionNote).filter_by(client_id=cid).count()
+         + db.query(models.Note).filter_by(entity_type="client", entity_id=cid).count()),
+        ("files", db.query(models.Attachment)
+         .filter_by(entity_type="client", entity_id=cid).count()),
+        ("barter", db.query(models.BarterAsset).filter_by(client_id=cid).count()),
+    ]
+    parts += [f"{n} {_ATTACHED_MN[key]}" for key, n in counts if n]
+    return parts
+
+
+@router.delete("/clients/{cid}")
+def delete_client(cid: int, db: Session = Depends(get_db),
+                  user=Depends(auth.require_roles("manager"))):
+    """ХООСОН харилцагчийг устгана. Наалдсан зүйлтэй бол 409, ЮУ наалдсаныг НЭРЛЭНЭ.
+
+    Гарын үсэгтнүүд нь харилцагчийнхаа хамт явна: тэд өөрийн гэсэн амьдралгүй
+    (`client_id`-гүй холбоо барих хүн гэж байхгүй).
+    """
+    c = _client_or_404(db, cid)
+    blockers = _attached(db, cid)
+    if blockers:
+        raise HTTPException(409, f"Энэ харилцагчид {', '.join(blockers)} "
+                                 f"бүртгэлтэй тул устгах боломжгүй")
+    name, reg = c.name, c.reg
+    kids = db.query(models.ClientContact).filter_by(client_id=cid).all()
+    for k in kids:
+        db.delete(k)
+    db.delete(c)
+    db.commit()
+    audit_svc.log(db, user, "delete", "client", cid,
+                  f"{name}" + (f" · ТТД {reg}" if reg else "")
+                  + (f" · {len(kids)} холбоо барих хүн" if kids else "")
+                  + " — устгав (наалдсан бичилтгүй)")
+    return {"ok": True, "deleted_contacts": len(kids)}
+
+
+# ---------------- ТООЦООНЫ ХУУЛГА (PDF) ----------------
+
+@router.get("/clients/{cid}/statement-pdf")
+def client_statement_pdf(cid: int,
+                         d_from: date | None = Query(None, alias="from"),
+                         d_to: date | None = Query(None, alias="to"),
+                         db: Session = Depends(get_db), user=Depends(fin)):
+    """ХАРИЛЦАГЧИЙН ХУУДАС — түүний Excel хуудсыг орлох баримт.
+
+    `from` хоосон бол ХАМГИЙН ЭХНИЙ явдлаас (бүтэн түүх), `to` хоосон бол
+    өнөөдөр хүртэл. Хугацаа урвуу байвал 400.
+
+    Мөнгөний баримт тул үйлдвэрийн даргад хаалттай (`fin`) — хаалт нь
+    ЭРХИЙН зураас, харагдацынх биш (UI-ЗАРЧИМ §4).
+    """
+    c = _client_or_404(db, cid)
+    today = date.today()
+    # Явагдаж буй циклийн хуримтлал ёроолын тоонд ордог тул нэхэмжлэл нь
+    # ЭНЭ агшинд бэлэн байх ёстой — эс бөгөөс дуусчихсан цикл «нэхэмжлэгдээгүй»
+    # мөрөнд орж, дэлгэцтэй зөрнө.
+    for ct in c.contracts:
+        billing.ensure_invoices(db, ct, today)
+    db.refresh(c)
+    d_to = d_to or today
+    if d_from is None:
+        d_from = pdfstatement.first_event_date(db, c) or d_to
+    if d_from > d_to:
+        raise HTTPException(400, "Эхлэх огноо дуусах огнооноос хойш байна")
+    pdf = pdfstatement.client_statement_pdf(db, c, d_from, d_to)
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             f'inline; filename="huulga-{cid}-'
+                             f'{_safe(str(d_from))}-{_safe(str(d_to))}.pdf"'})
+
+
 @router.get("/clients/{cid}")
 def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.current_user)):
     """Профайл — тухайн харилцагчтай холбоотой бүх зүйл нэг дор."""
@@ -175,7 +384,7 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
             opening = sum(i.total for i in ct.invoices if i.voided_at is None)
             timeline.append({"date": str(ct.start_date), "kind": "contract",
                              "title": f"Хуучин үлдэгдэл бүртгэв — {opening:,.0f}₮",
-                             "sub": "Хуучин системээс шилжсэн"})
+                             "sub": "Excel дэвтрээс шилжсэн"})
         else:
             timeline.append({"date": str(ct.start_date), "kind": "contract",
                              "title": f"Гэрээ №{ct.no} эхлэв",

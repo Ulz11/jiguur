@@ -123,6 +123,71 @@ def test_a_missing_contact_is_404(client, as_role):
     assert client.post("/api/contacts/999999/deactivate", headers=h).status_code == 404
 
 
+# ---------- 3б. БУЦАЖ ИРСЭН ХҮН (deactivate-ийн толин тусгал) ----------
+
+def test_a_contact_comes_back_to_the_calling_list(client, as_role):
+    """Ажлаасаа гарсан хүн буцаж ирдэг; андуурч идэвхгүй болгосон ч байж
+    болно. ШИНЭ мөр нэмбэл ХОЁР Н.Соль төрж, аль нь одоогийнх болохыг мэдэх
+    аргагүй болно — тиймээс тэр л мөр буцаж асна."""
+    h = as_role("otgoo")
+    cl, *_ = mk_contract(client, as_role, qty=20, days_ago=40)
+    _butangууd(client, h, cl["id"])
+    sole = next(c for c in _contacts(client, h, cl["id"]) if c["name"] == "Н.Соль")
+    client.post(f"/api/contacts/{sole['id']}/deactivate", headers=h)
+
+    r = client.post(f"/api/clients/{cl['id']}/contacts/{sole['id']}/reactivate", headers=h)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["active"] is True
+    after = _contacts(client, h, cl["id"])
+    assert len(after) == 3, "сэргээлт нь ШИНЭ мөр үүсгэхгүй"
+    assert next(x for x in after if x["id"] == sole["id"])["active"] is True
+    row = next(x for x in client.get("/api/audit?entity=client_contact", headers=h).json()
+               if x["action"] == "reactivate")
+    assert "Н.Соль" in row["detail"] and "идэвхтэй болгов" in row["detail"]
+
+
+def test_reactivating_an_active_person_is_409(client, as_role):
+    h = as_role("otgoo")
+    cl, *_ = mk_contract(client, as_role, qty=20, days_ago=40)
+    k = _add(client, h, cl["id"], "Н.Соль", "Нярав", "99966285").json()
+
+    r = client.post(f"/api/clients/{cl['id']}/contacts/{k['id']}/reactivate", headers=h)
+
+    assert r.status_code == 409
+    assert r.json()["detail"] == "Энэ хүн идэвхтэй байна"
+
+
+def test_another_clients_contact_is_not_found_here(client, as_role):
+    """Хаяг нь ХАРИЛЦАГЧААР дамждаг тул өөр харилцагчийн хүн энэ хаяг дээр
+    БАЙХГҮЙ — 403 биш, 404 (тэр хүн энэ хуудсын хүн биш)."""
+    h = as_role("otgoo")
+    mine, *_ = mk_contract(client, as_role, qty=20, days_ago=40)
+    other, *_ = mk_contract(client, as_role, qty=21, days_ago=41)
+    k = _add(client, h, other["id"], "С.Лхагвасүрэн", "Захирал", "99113579").json()
+    client.post(f"/api/contacts/{k['id']}/deactivate", headers=h)
+
+    r = client.post(f"/api/clients/{mine['id']}/contacts/{k['id']}/reactivate", headers=h)
+
+    assert r.status_code == 404
+    assert client.post("/api/clients/999999/contacts/1/reactivate",
+                       headers=h).status_code == 404
+    # Өөрийнх нь хаягаар сэргээгдсэн хэвээр
+    assert client.post(f"/api/clients/{other['id']}/contacts/{k['id']}/reactivate",
+                       headers=h).status_code == 200
+
+
+def test_the_factory_boss_may_not_reactivate(client, as_role):
+    h = as_role("otgoo")
+    cl, *_ = mk_contract(client, as_role, qty=20, days_ago=40)
+    k = _add(client, h, cl["id"], "Н.Соль", "Нярав").json()
+    client.post(f"/api/contacts/{k['id']}/deactivate", headers=h)
+    path = f"/api/clients/{cl['id']}/contacts/{k['id']}/reactivate"
+
+    assert client.post(path, headers=as_role("darga")).status_code == 403
+    assert client.post(path, headers=as_role("sanhuu")).status_code == 200
+
+
 # ---------- 4. Эрх ----------
 
 def test_the_factory_boss_may_read_but_not_write(client, as_role):
