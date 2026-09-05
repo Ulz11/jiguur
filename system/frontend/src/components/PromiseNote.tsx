@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { api, money } from "../api";
-import { FormModal, SubmitButton, useToast } from "../ui";
+import { FormModal, RescueNote, SubmitButton, useRescued, useToast } from "../ui";
 import { formDirty } from "../lib/dirty";
 import { parseMoney } from "../lib/num";
 import { contactRolePill, preferredContact, telHref, type Contact } from "../lib/contact";
@@ -48,12 +48,17 @@ export function PromiseNoteModal({ t, onClose, onDone }: {
   const toast = useToast();
   const f0 = { date: todayIso(), kind: "call", note: "",
                promise_date: "", promise_amount: "" };
-  const [f, setF] = useState(f0);
+  /* Ярианы тэмдэглэл нь ДАХИН СЭРГЭЭГДЭХГҮЙ мэдээлэл: залгасны дараа 401
+     ирвэл «тэр юу гэж хэлэв?» гэдгийг дахин залгаж байж мэднэ. Тиймээс
+     шидэгдэхийн өмнө бичсэн зүйл нь үлдэж, буцахад сэргэнэ. */
+  const saved = useRescued("promise");
+  const [f, setF] = useState({ ...f0, ...(saved || {}) });
   const uid = useId();
   return (
     /* Ярианы тэмдэглэл нь дахин сэргээгдэхгүй мэдээлэл — залгасны дараа
        санамсаргүй товшилтод алдагдвал дахин залгах шаардлагатай болно. */
     <FormModal title={`Тэмдэглэл — ${t.client}`} onClose={onClose} dirty={formDirty(f0, f)}
+      rescue={{ name: "promise", values: f }}
       footer={
         <div className="flex justify-end gap-2.5">
           <button className="btn-secondary" onClick={onClose}>Болих</button>
@@ -73,6 +78,7 @@ export function PromiseNoteModal({ t, onClose, onDone }: {
             } catch (e: any) { toast(e.message, "err"); }
           }}>Хадгалах</SubmitButton>
         </div>}>
+      <RescueNote shown={!!saved} />
       <div className="bg-sunken rounded-lg px-3.5 py-2.5 mb-4 text-[13px] text-t2">
         {/* «Хэтэрсэн» нь ЗӨВХӨН залгах жагсаалтын тоо — профайл дээр байхгүй */}
         {t.overdue !== undefined && t.overdue !== null && (

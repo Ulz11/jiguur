@@ -159,10 +159,14 @@ body::before {
   /* Эрэмбэлдэг баганын толгой. Бичиг нь `.th`-ээсээ ЯГ хэвээр өвлөгдөнө —
      зөвхөн дарагддаг болно. Босоо зай нь өөрийгөө сөрөг захаар нөхөж авдаг тул
      толгойн өндөр хөдлөхгүй, гэхдээ хүрэх талбай 24px-ээс намхан болохгүй. */
+  /* Эрэмбийн толгой нь 28px өндөртэй байв (12px бичиг + 2×5px) — шатны доод
+     хязгаар 36px (--target-sm). Отгоо эгч эрэмбийн толгойг гурав дарж байж
+     ондог. Дүүргэлт нь СӨРӨГ захаар нөхөгдөнө: хүснэгтийн толгойн өндөр
+     хэвээрээ, зөвхөн ОНОХ талбай томорно. */
   .th-sort {
     @apply inline-flex items-center gap-1.5 cursor-pointer;
     font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
-    padding: 5px 0; margin: -5px 0;
+    min-height: var(--target-sm); padding: 9px 4px; margin: -9px -4px;
   }
   .th-sort:hover { color: var(--color-ink); }
 
@@ -516,6 +520,43 @@ tr.row-fresh { box-shadow: none; }
 .jz-location i { display: inline-block; width: 4px; height: 4px; margin: 0 10px 2px; border-radius: 50%; background: var(--jz-orange); }
 .jz-topbar-actions { display: flex; align-items: center; gap: 15px; margin-left: auto; }
 .top-pulse { width: 8px; height: 8px; background: var(--color-money); border-radius: 50%; box-shadow: 0 0 0 4px var(--color-money-50); }
+/* ---- АМЬД ЗААГЧ: «Шинэчилсэн: 14:03» ----
+   Ногоон цэг дангаараа зогсож байв — тэр нь ХЭЗЭЭ Ч өөрчлөгддөггүй тул юу ч
+   хэлдэггүй. Одоо цэгний хажууд ЦАГ бичигдэж, дарагддаг товч болов: 36px
+   өндөр (гар хүрэх хамгийн бага хэмжээ), өнгө нь төлөвөө дагана.
+   ⚠ ӨНГӨ ДАНГААРАА УТГА ЗӨӨХГҮЙ — үг нь хажуудаа явна (UI-ЗАРЧИМ §4). */
+.top-live { display: inline-flex; align-items: center; gap: 7px; min-height: 36px;
+  padding: 0 11px; border-radius: 999px; border: 1px solid transparent;
+  background: transparent; color: var(--color-t2);
+  font: 600 12.5px var(--jz-mono); letter-spacing: .02em; white-space: nowrap;
+  cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.top-live:hover { background: var(--color-canvas); border-color: var(--color-line); }
+.top-live:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.top-live .top-pulse { transition: background .2s, box-shadow .2s; }
+.top-live.is-warn { color: var(--color-warn); background: var(--color-warn-50); border-color: var(--color-warn-50); }
+.top-live.is-warn .top-pulse { background: var(--color-warn); box-shadow: 0 0 0 4px var(--color-warn-50); }
+.top-live.is-down { color: var(--color-danger); background: var(--color-danger-50); border-color: var(--color-danger); }
+.top-live.is-down .top-pulse { background: var(--color-danger); box-shadow: 0 0 0 4px var(--color-danger-50); }
+.top-live.is-idle .top-pulse { background: var(--color-t3); box-shadow: 0 0 0 4px var(--color-sunken); }
+@media (max-width: 760px) {
+  /* Явцуу дэлгэц дээр цаг нь хумигдана — цэг нь ҮЛДЭНЭ (төлөв нь чухал) */
+  .top-live .top-live-text { display: none; }
+  .top-live { padding: 0 8px; }
+}
+
+/* ---- ТОГТМОЛ ЗУРВАС (топбарын доор) ----
+   Toast нь 3.2 секундын дараа арилдаг — Отгоо тэр агшинд цаас руугаа харж
+   байна. Эрх хаагдсан, нэвтрэлт дуусах гэж байгаа, нууц үг анхныхаараа
+   байгаа гэсэн ГУРВАН зүйл нь ӨӨРӨӨ АРИЛАХ ЁСГҮЙ: хүн уншаад, шийдээд,
+   өөрөө хаана. */
+.jz-strip { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 42px; font-size: 13px; font-weight: 600; line-height: 1.45;
+  border-bottom: 1px solid var(--color-line); }
+.jz-strip .jz-strip-text { flex: 1; min-width: 200px; }
+.jz-strip-warn { background: var(--color-warn-50); color: var(--color-warn); }
+.jz-strip-danger { background: var(--color-danger-50); color: var(--color-danger); }
+@media (max-width: 840px) { .jz-strip { padding: 10px 24px; } }
+@media (max-width: 760px) { .jz-strip { padding: 9px 12px; } }
 .jz-content { max-width: 1560px; margin: 0 auto; padding: 35px 42px 64px; }
 /* Dashboard — a branded control ledger rather than generic KPI cards. */
 .dashboard-header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 22px; flex-wrap: wrap; }
@@ -733,3 +774,11 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2p
   .command-hero { min-height: 158px; }
   .login-stage::after { display: none; }
 }
+
+/* ---- Тооллогын доод тууз ----
+   Урьд нь `fixed bottom-0 left-0 right-0` байсан нь дэлгэцийн БҮХ өргөнийг
+   эзэлж, зүүн талын navy цэсийг доод талаас нь таслан хучиж байв: «Агуулах»
+   мөр, «Гарах» товч 52px-ийн цагаан туузан доор үлддэг. `sticky` нь туузыг
+   агуулгын баганад үлдээнэ — цэс хураагдсан (76px) эсвэл дэлгэгдсэн (262px)
+   аль ч үед өөрөө тохирно, планшет дээр цэс drawer болоход ч зөв. */
+.stocktake-bar { background: rgba(255, 255, 255, .94); }

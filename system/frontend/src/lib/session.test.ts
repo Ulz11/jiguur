@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { isSessionExpiry, markSessionExpired, takeSessionExpired } from "./session";
+import { isSessionExpiry, markSessionExpired, takeSessionExpired,
+         parseExpiry, tokenAge, shouldRefresh, minutesLeft, expiryWarning,
+         keepDraft, takeDraft, dropDraft,
+         TOKEN_TTL_MS, REFRESH_AFTER_MS, EXPIRY_WARN_MS, DRAFT_TTL_MS } from "./session";
 
 /* Отгоо гэрээ бөглөж байтал токен нь хүчингүй болж, нэвтрэх хуудас руу
    шидэгддэг. Тайлбар нь ЯГ НЭГ УДАА гарч ирээд арилах ёстой — эс бөгөөс
@@ -64,5 +67,101 @@ describe("session expiry flag", () => {
     };
     expect(() => markSessionExpired()).not.toThrow();
     expect(takeSessionExpired()).toBe(false);
+  });
+});
+
+/* ══ ТОКЕНЫ НАС ══
+   Өглөө 9-д нэвтэрсэн Отгоо орой 9-д ГЭРЭЭ БӨГЛӨЖ БАЙХДАА шидэгддэг байв.
+   Сервер гулсдаг хугацаа өгсөн; дэлгэц түүнийг ЯГ тэр хоёр тоогоор дуудна. */
+describe("токены нас", () => {
+  const NOW = new Date(2026, 8, 6, 14, 0).getTime();
+  const inMs = (ms: number) => new Date(NOW + ms).toISOString();
+
+  it("шинэ токеныг шинэчлэхгүй — сервер ямар ч байсан «үгүй» гэнэ", () => {
+    // 12 цаг үлдсэн = дөнгөж гарсан
+    expect(shouldRefresh(parseExpiry(inMs(TOKEN_TTL_MS)), NOW)).toBe(false);
+    // 11 цаг 30 мин үлдсэн = 30 минутын настай
+    expect(shouldRefresh(parseExpiry(inMs(TOKEN_TTL_MS - 30 * 60_000)), NOW)).toBe(false);
+  });
+
+  it("1 цагаас хөгширсөн токеныг шинэчилнэ", () => {
+    expect(shouldRefresh(parseExpiry(inMs(TOKEN_TTL_MS - REFRESH_AFTER_MS)), NOW)).toBe(true);
+    expect(shouldRefresh(parseExpiry(inMs(2 * 60 * 60_000)), NOW)).toBe(true);
+  });
+
+  it("уншигдахгүй цаг нь ТААМАГЛАЛ төрүүлэхгүй", () => {
+    expect(parseExpiry(null)).toBeNull();
+    expect(parseExpiry("хачин")).toBeNull();
+    expect(shouldRefresh(null, NOW)).toBe(false);
+    expect(tokenAge(null, NOW)).toBeNull();
+  });
+
+  it("10 минутаас бага үлдвэл САНУУЛНА", () => {
+    expect(expiryWarning(parseExpiry(inMs(9 * 60_000)), NOW))
+      .toBe("Нэвтрэлт 9 минутын дараа дуусна");
+    expect(expiryWarning(parseExpiry(inMs(EXPIRY_WARN_MS)), NOW))
+      .toBe("Нэвтрэлт 10 минутын дараа дуусна");
+  });
+
+  it("эрт ч, хожуу ч сануулахгүй", () => {
+    // 11 минут — хараахан эрт
+    expect(expiryWarning(parseExpiry(inMs(11 * 60_000)), NOW)).toBe("");
+    // аль хэдийн дууссан — 401 өөрөө ажиллана, зурвас нь хоцрогдоно
+    expect(expiryWarning(parseExpiry(inMs(-60_000)), NOW)).toBe("");
+    expect(expiryWarning(null, NOW)).toBe("");
+  });
+
+  it("минут ДЭЭШ бүхэлчлэгдэнэ — «0 минутын дараа» гэж хэлэхгүй", () => {
+    expect(minutesLeft(NOW + 30_000, NOW)).toBe(1);
+  });
+});
+
+/* ══ БӨГЛӨСӨН ЗҮЙЛИЙГ АВРАХ ══
+   401 нь Отгоог шиднэ; тэр агшинд төлбөрийн цонхонд шивсэн дүн React-ийн
+   санах ойтой хамт алга болно. Дахин нэвтрээд буцахад цонх нь ХООСОН. */
+describe("цонхны ноорог", () => {
+  it("ЯГ тэр зам дээр, ЯГ тэр цонхонд сэргэнэ", () => {
+    keepDraft("pay", "/contracts/26", { amount: "1200000", date: "2026-09-06" });
+    expect(takeDraft("pay", "/contracts/26"))
+      .toEqual({ amount: "1200000", date: "2026-09-06" });
+  });
+
+  it("ӨӨР гэрээн дээр буулгахгүй — буруу тоо шивэхээс дор", () => {
+    keepDraft("pay", "/contracts/26", { amount: "1200000" });
+    expect(takeDraft("pay", "/contracts/31")).toBeNull();
+  });
+
+  it("ӨӨР цонхонд буулгахгүй", () => {
+    keepDraft("pay", "/contracts/26", { amount: "1200000" });
+    expect(takeDraft("return", "/contracts/26")).toBeNull();
+  });
+
+  it("НЭГ л удаа сэргэнэ — «яагаад энэ тоо энд байна» дахин төрөхгүй", () => {
+    keepDraft("promise", "/collections", { note: "залгасан" });
+    expect(takeDraft("promise", "/collections")).toEqual({ note: "залгасан" });
+    expect(takeDraft("promise", "/collections")).toBeNull();
+  });
+
+  it("хэтэрхий хуучин ноорог сэргэхгүй — маргааш өглөө гарч ирэх ёсгүй", () => {
+    const t0 = 1_000_000;
+    keepDraft("pay", "/contracts/26", { amount: "5" }, t0);
+    expect(takeDraft("pay", "/contracts/26", t0 + DRAFT_TTL_MS + 1)).toBeNull();
+  });
+
+  it("хаях товч нь санах ойг цэвэрлэнэ", () => {
+    keepDraft("pay", "/contracts/26", { amount: "5" });
+    dropDraft();
+    expect(takeDraft("pay", "/contracts/26")).toBeNull();
+  });
+
+  it("санах ой хаалттай байсан ч ажил зогсохгүй", () => {
+    (globalThis as any).sessionStorage = {
+      getItem() { throw new Error("denied"); },
+      setItem() { throw new Error("denied"); },
+      removeItem() { throw new Error("denied"); },
+    };
+    expect(() => keepDraft("pay", "/x", { a: 1 })).not.toThrow();
+    expect(takeDraft("pay", "/x")).toBeNull();
+    expect(() => dropDraft()).not.toThrow();
   });
 });

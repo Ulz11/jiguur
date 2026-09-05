@@ -3,7 +3,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { api, money, fmt, user } from "../api";
 import { Spinner, StatePill, TypePill, Prog, Modal, FormModal, SubmitButton, useToast,
          InlineEdit, Receipt, ConfirmModal, Chevron, DisclosureCell, DisclosureHead,
-         FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
+         FinanceDisclosure, FinanceBlock, FinanceRow, useRescued, RescueNote } from "../ui";
 import { panelId, disclosureProps } from "../lib/disclosure";
 import { allocationPreview, payCandidates } from "../lib/alloc";
 import { CYCLE_MODES, cycleModeHint, cycleModeLabel, endDateLabel,
@@ -2225,16 +2225,26 @@ export function PdfButton({ pdf, path, children, className = "btn-secondary", bu
    ХИЙХГҮЙ: тэр бол буцаалтын мөрийн АКТЛАХ багана, өөр үйлдэл биш. */
 function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
   const toast = useToast();
-  const [date, setDate] = useState(today());
+  /* 15 мөр бөглөсний дараа 401 ирвэл бүх ажил алга болдог байв — мөрүүд нь
+     дахин нэвтрээд буцахад сэргэнэ (`lib/session.ts`). Материалын жагсаалт
+     хооронд өөрчлөгдсөн байж болох тул ЗӨВХӨН таарсан мөрүүд буцна. */
+  const saved = useRescued("return");
+  const [date, setDate] = useState(saved?.date ?? today());
   /* ТАЛБАЙ (№88, 97) — буцаалт ТАЛБАЙГААРАА тоологдоно (Блүүмийн гурван талбай) */
-  const [site, setSite] = useState("");
-  const [rows, setRows] = useState<any[]>(
-    applyPrefill(d.items.filter((i: any) => i.qty > 0).map((i: any) => ({
+  const [site, setSite] = useState(saved?.site ?? "");
+  const [rows, setRows] = useState<any[]>(() => {
+    const base = applyPrefill(d.items.filter((i: any) => i.qty > 0).map((i: any) => ({
       ...i, ret: 0, return_grade_id: i.grade_id, repair: 0, writeoff: 0,
       /* Аль падангаас хасах вэ («0» = авто, FIFO) ба ТҮҮНИЙ тоолсон хоног
          (хоосон = машины тоо) — хоёулаа бүртгэх агшинд шийдэгдэнэ (H5/R8). */
       pin: "0", days: "",
-    })), prefill));
+    })), prefill);
+    const keep: Record<string, any> = (saved?.rows as any) || {};
+    return base.map((r: any) => {
+      const v = keep[`${r.material_id}-${r.grade_id}`];
+      return v ? { ...r, ...v } : r;
+    });
+  });
   /* Задарсан «Гэмтэл/акт» мөр. Дутагдуулсан гэж ирсэн бол тэр мөр НЭЭЛТТЭЙ
      төрнө — актлах тоо нуугдсан хэвээр «Бүртгэх» дарагдвал НБҮнээр нэхэгдэх
      мөнгө харагдалгүй өнгөрнө (R13). */
@@ -2324,6 +2334,15 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
 
   return (
     <FormModal title="Буцаалт бүртгэх" onClose={onClose} wide dirty={dirty}
+      rescue={{ name: "return", values: { date, site,
+        /* Мөрүүд нь материал+зэрэглэлээр түлхүүрлэгдэнэ: цонх дахин нээгдэхэд
+           жагсаалт өөрчлөгдсөн байж болно, тэгвэл таарсан нь л буцна. */
+        rows: Object.fromEntries(rows
+          .filter((r: any) => r.ret > 0 || r.repair > 0 || r.writeoff > 0
+                              || r.days !== "" || r.pin !== "0")
+          .map((r: any) => [`${r.material_id}-${r.grade_id}`,
+            { ret: r.ret, repair: r.repair, writeoff: r.writeoff,
+              pin: r.pin, days: r.days, return_grade_id: r.return_grade_id }])) } }}
       footer={
         <>
           {retQty > 0 && (
@@ -2346,6 +2365,7 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
             </button>
           </div>
         </>}>
+      <RescueNote shown={!!saved} />
       <div className="flex gap-3.5 flex-wrap mb-4">
         <div>
           <label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
@@ -2844,10 +2864,14 @@ function AddModal({ d, seesMoney, onClose, onDone }: any) {
 /* ---------- Төлбөр ---------- */
 export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
   const toast = useToast();
-  const [date, setDate] = useState(today());
-  const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState("BANK");
-  const [barter, setBarter] = useState("");
+  /* 401 нь бөглөж байгаа хүнийг АСУУЛГҮЙ шиднэ. Тэр агшинд шивсэн дүн
+     React-ийн санах ойтой хамт алга болдог байв — дахин нэвтрээд буцахад
+     цонх нь ХООСОН нээгдэж, Отгоо тоогоо дахин хайна (`lib/session.ts`). */
+  const saved = useRescued("pay");
+  const [date, setDate] = useState(saved?.date ?? today());
+  const [amount, setAmount] = useState(saved?.amount ?? "");
+  const [method, setMethod] = useState(saved?.method ?? "BANK");
+  const [barter, setBarter] = useState(saved?.barter ?? "");
   const [busy, setBusy] = useState(false);
   const uid = useId();
   // null = автомат хуваарилалт (хуучин зам). Object = дарга гараар чиглүүлж байна.
@@ -2913,6 +2937,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
     /* Гараар хуваарилалт эхлүүлсэн бол тэр хөдөлмөр ч дүнтэй адил алдагдана */
     <FormModal title="Төлбөр бүртгэх" onClose={onClose}
                dirty={amt > 0 || barter.trim().length > 0 || date !== today() || manual !== null}
+               rescue={{ name: "pay", values: { date, amount, method, barter } }}
                footer={
                  <div className="flex justify-end gap-2.5">
                    <button className="btn-secondary" onClick={onClose}>Болих</button>
@@ -2922,6 +2947,7 @@ export function PayModal({ d, client_id, invoices, onClose, onDone }: any) {
                      {busy ? "…" : "Бүртгэх"}
                    </button>
                  </div>}>
+      <RescueNote shown={!!saved} />
       <div className="grid grid-cols-2 gap-3.5">
         <div><label className="lbl" htmlFor={`${uid}-date`}>Огноо</label>
           <input id={`${uid}-date`} type="date" className="inp" value={date} onChange={(e) => setDate(e.target.value)} /></div>

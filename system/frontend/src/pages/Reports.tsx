@@ -1,10 +1,11 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { api, money, sayaFmt } from "../api";
-import { Spinner, useToast, Refreshing, Chevron } from "../ui";
+import { api, fmt, money, sayaFmt } from "../api";
+import { Spinner, useToast, Refreshing, Chevron, PageError, OutcomeStrip, Exact } from "../ui";
 import { useDownload } from "../lib/docs";
 import { useLive } from "../lib/live";
 import { cycleLabel } from "../lib/cycle";
-import { RangeMode, rangeError, reportQuery } from "../lib/report";
+import { RangeMode, REPORT_FILE, cashflowTitle, downloadOutcome, rangeError,
+         rangeHint, reportQuery } from "../lib/report";
 import { panelId, disclosureProps } from "../lib/disclosure";
 import { rowClickProps } from "../lib/rowClick";
 
@@ -24,6 +25,12 @@ export default function Reports() {
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [d, setD] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  /* Хуудас АЧААЛАГДСАНГҮЙ — урьд нь `.catch` нь зөвхөн toast харуулаад `d`
+     нь null хэвээр үлдэж, «Ачаалж байна…» ҮҮРД зогсдог байв. */
+  const [err, setErr] = useState<string | null>(null);
+  /* Excel татагдсаны ҮР ДҮН — toast 3.2 секундэд арилдаг, атал Отгоо тэр
+     агшинд файлаа хайж эхэлсэн байна. */
+  const [outcome, setOutcome] = useState<string | null>(null);
   const toast = useToast();
   const dl = useDownload();
 
@@ -38,19 +45,27 @@ export default function Reports() {
   // өмнөх тоонууд дэлгэцэн дээрээ хэвээр зогсоно.
   const q = reportQuery(mode, months, from, to);
   const rangeErr = mode === "range" ? rangeError(from, to) : "";
+  /* ХАГАС бөглөсөн муж дээр хуудас ЧИМЭЭГҮЙ зогсдог байв: тоо нь өмнөх
+     мужийнхаа хэвээр байхад Отгоо тэднийг ШИНЭ мужийн хариу гэж уншина. */
+  const hint = rangeHint(mode, from, to);
 
   /* Хугацаа солиход `setD(null)` хийж БҮТЭН хуудсыг нурааж байв: Отгоо 6 сарын
      тайлангаа хараад 12 руу дарахад дэлгэц хоосорч, юутай харьцуулж байснаа
      алддаг. Одоо өмнөх тоо байрандаа үлдэж, зөвхөн бүдгэрнэ. */
   const load = (query: string) => {
     setBusy(true);
-    return api(`/api/reports?${query}`).then(setD)
-      .catch((e) => toast(e.message, "err"))
+    return api(`/api/reports?${query}`)
+      .then((v: any) => { setD(v); setErr(null); })
+      .catch((e: any) => { toast(e.message, "err"); setErr(e.message); })
       .finally(() => setBusy(false));
   };
-  /** Фонд шинэчлэх — бүдгэрүүлэг ч гаргахгүй, алдааг чимээгүй залгина. */
-  const refresh = (query: string) => api(`/api/reports?${query}`).then(setD).catch(() => {});
+  /** Фонд шинэчлэх — бүдгэрүүлэг ч гаргахгүй. Уналт нь ТОПБАРЫН заагчийг
+   *  шарлуулна (`api.ts` → `lib/live.ts`). */
+  const refresh = (query: string) =>
+    api(`/api/reports?${query}`).then((v: any) => { setD(v); setErr(null); }).catch(() => {});
   useLive((bg) => { if (q) (bg ? refresh(q) : load(q)); }, [q]);
+  if (err && !d) return <PageError error={err}
+                                   onRetry={() => { setErr(null); load(q || `months=${months}`); }} />;
   if (!d) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
   const p = d.pnl;
   const dt = p.detail;          // задаргаа — хуучин серверийн payload-д байхгүй байж болно
@@ -94,14 +109,22 @@ export default function Reports() {
                      onChange={(e) => setTo(e.target.value)} />
             </div>
           )}
+          {/* Товч дээрх нэр нь ЖИНХЭНЭ файлын нэр (`tailan.xlsx`) — Отгоо
+              татсан файлаа «Downloads» дотроос НЭРЭЭР нь хайдаг. Урьд нь товч
+              нь «jiguur-tailan.xlsx» гэж татдаг байсан ч сервер өөрөө
+              `Content-Disposition: tailan.xlsx` гэж илгээдэг: хоёр нэр
+              хоорондоо зөрөх нь файл алга болсонтой адил. */}
           <button className="btn-secondary" disabled={dl.busy || (mode === "range" && !q)}
                   aria-busy={dl.busyPath === exportPath || undefined}
-                  onClick={() => dl.download(exportPath, "jiguur-tailan.xlsx")}>
-            {dl.busyPath === exportPath ? "Бэлтгэж байна…" : "⇩ Excel татах"}
+                  onClick={() => dl.download(exportPath, REPORT_FILE)
+                    .then((r) => { if (r === "done") setOutcome(downloadOutcome()); })}>
+            {dl.busyPath === exportPath ? "Бэлтгэж байна…" : `⇩ Excel татах (${REPORT_FILE})`}
           </button>
         </div>
       </div>
       {rangeErr && <p className="text-[12.5px] text-danger -mt-2 mb-3">{rangeErr}</p>}
+      {hint && <p className="text-[12.5px] text-warn -mt-2 mb-3">{hint}</p>}
+      {outcome && <OutcomeStrip text={outcome} onClose={() => setOutcome(null)} />}
 
       {/* Bento stat cards */}
       <div className="grid grid-cols-12 gap-4 mb-4">
@@ -109,34 +132,52 @@ export default function Reports() {
           <div className="text-[12px] text-t3 font-medium mb-1.5 flex items-center gap-2">
             <span className="cdot" style={{ background: "#2BBA82", boxShadow: "0 0 0 3px #E0F5EC" }} />Нийт орлого
           </div>
-          <div className="text-[28px] font-bold tracking-tight text-ink tabular-nums">
+          <div className="text-[28px] font-bold tracking-tight text-ink tabular-nums"
+               title={money(p.total_income)}>
             {sayaFmt(p.total_income)}<span className="text-[15px] text-t3 font-medium ml-1">₮</span>
           </div>
-          <div className="text-[12px] text-t3 mt-1">түрээс + худалдаа + механизм</div>
+          <Exact n={p.total_income} />
+          {/* ТООНЫ СУУРЬ нь тооны ХАЖУУД. «Орлого 87 сая» гэж бичээд доор нь
+              «дансанд 51 сая» гэсэн тоо зэрэгцэхэд аль нь юу болохыг мэдэхгүй
+              хүн ХОЁУЛАНД нь итгэхээ болино. Серверийн үг (`basis_mn`) —
+              дэлгэц өөрийн үг зохиохгүй. */}
+          <div className="text-[12px] text-t3 mt-1">
+            түрээс + худалдаа + механизм
+            <span className="block">{p.basis_mn || "нэхэмжилсэн түрээс"}, хуучин үлдэгдэл ороогүй</span>
+          </div>
         </div>
         <div className="card p-5 col-span-3 max-lg:col-span-6 max-sm:col-span-12">
           <div className="text-[12px] text-t3 font-medium mb-1.5 flex items-center gap-2">
             <span className="cdot" style={{ background: "#E5484D", boxShadow: "0 0 0 3px #FBE2E3" }} />Нийт зардал
           </div>
-          <div className="text-[28px] font-bold tracking-tight text-ink tabular-nums">
+          <div className="text-[28px] font-bold tracking-tight text-ink tabular-nums"
+               title={money(p.total_expense)}>
             {sayaFmt(p.total_expense)}<span className="text-[15px] text-t3 font-medium ml-1">₮</span>
           </div>
-          <div className="text-[12px] text-t3 mt-1">цалин + хүү + зарлага</div>
+          <Exact n={p.total_expense} />
+          <div className="text-[12px] text-t3 mt-1">
+            цалин + хүү + зарлага
+            <span className="block">цалин нь {p.salary_basis_mn || "гарт олгосон цалин"}</span>
+          </div>
         </div>
         <div className="card p-5 col-span-3 max-lg:col-span-6 max-sm:col-span-12">
           <div className="text-[12px] text-t3 font-medium mb-1.5 flex items-center gap-2">
             <span className="cdot" style={{ background: "#6756a4", boxShadow: "0 0 0 3px #eeeafa" }} />Бартерын үр дүн
           </div>
-          <div className={`text-[28px] font-bold tracking-tight tabular-nums ${p.barter_result < 0 ? "text-danger" : "text-money"}`}>
+          <div className={`text-[28px] font-bold tracking-tight tabular-nums ${p.barter_result < 0 ? "text-danger" : "text-money"}`}
+               title={money(p.barter_result)}>
             {p.barter_result > 0 ? "+" : ""}{sayaFmt(p.barter_result)}<span className="text-[15px] text-t3 font-medium ml-1">₮</span>
           </div>
-          <div className="text-[12px] text-t3 mt-1">зарагдсан хөрөнгийн зөрүү</div>
+          <Exact n={p.barter_result} />
+          <div className="text-[12px] text-t3 mt-1">зарагдсан хөрөнгийн зөрүү — ХЭРЭГЖСЭН нь л</div>
         </div>
         <div className="card hero p-5 col-span-3 max-lg:col-span-6 max-sm:col-span-12">
           <div className="text-[12px] text-white/80 font-medium mb-1.5">Цэвэр үр дүн</div>
-          <div className="text-[30px] font-bold tracking-tight tabular-nums text-white">
+          <div className="text-[30px] font-bold tracking-tight tabular-nums text-white"
+               title={money(p.net)}>
             {p.net >= 0 ? "+" : ""}{sayaFmt(p.net)}<span className="text-[15px] text-white/75 font-medium ml-1">₮</span>
           </div>
+          <Exact n={p.net} className="text-white/75" />
           <div className="mt-1.5">
             <span className="pill"
                   style={{ background: "rgba(255,255,255,.12)", color: p.net >= 0 ? "#7de8b8" : "#ffb3b6" }}>
@@ -194,16 +235,32 @@ export default function Reports() {
               <b className="tabular-nums text-brand-ink text-[15px]">{money(p.accruing)}</b>
             </div>
           )}
+          {/* ХУУЧИН ҮЛДЭГДЭЛ — Отгоогийн хамгийн байнгын асуулт: «7-р сарын
+              түрээс яагаад энд алга вэ?» Шилжүүлэлтээс ӨМНӨХ түрээс нь
+              нэхэмжлэл болж бичигдээгүй: тэр нь нэг дүн болж «хуучин
+              үлдэгдэл» рүү ороод, АВЛАГАД л харагддаг. Ашиг-алдагдалд тэр
+              мөнгө ХЭЗЭЭ Ч гарахгүй — энэ нь алдаа биш, шилжүүлэлтийн дүрэм. */}
           <p className="text-[12px] text-t3 mt-4 leading-relaxed">
-            Нийт өглөг (зээл): {sayaFmt(d.loans_total)}₮ — үр дүнд орохгүй, хүү нь зардалд орсон.
-            Хуучин системээс шилжсэн үлдэгдэл орлогод тооцогдохгүй (авлагад л харагдана).
+            <b className="text-t2">Шилжүүлэлтээс өмнөх түрээс нь хуучин үлдэгдэлд — энд ороогүй.</b>
+            {" "}Тэр дүн зөвхөн авлагад харагдана.
+            <span className="block mt-1">
+              Нийт өглөг (зээл): {sayaFmt(d.loans_total)}₮ ({fmt(d.loans_total)}₮) — үр дүнд
+              орохгүй, хүү нь зардалд орсон.
+            </span>
+            <span className="block mt-1">
+              Түрээсийн орлогын суурь: {p.basis_mn || "нэхэмжилсэн түрээс"} ·
+              цалингийн суурь: {p.salary_basis_mn || "гарт олгосон цалин"}.
+            </span>
           </p>
         </div>
 
         {/* Cashflow */}
         <div className="card p-6 col-span-7 max-lg:col-span-12">
           <div className="flex items-center justify-between mb-1">
-            <h2 className="font-bold text-ink text-[14px] flex items-center gap-2"><span className="cdot" />Мөнгөн урсгал — сүүлийн 6 сар</h2>
+            {/* Гарчиг нь ХАТУУ «сүүлийн 6 сар» байв: тайланг 7-р сараар
+                шүүхэд график тэр мужаар зурагдаж, гарчиг нь хэвээр зогсоно —
+                нэг хуудсан дээр хоёр өөр хугацаа, аль нь ч шошгогүй. */}
+            <h2 className="font-bold text-ink text-[14px] flex items-center gap-2"><span className="cdot" />{cashflowTitle(d.series)}</h2>
           </div>
           <p className="text-[12px] text-t3 mb-3">Орсон: харилцагчийн төлбөр + механизм · Гарсан: зарлага + хүү + цалин</p>
           <CashBars s={d.series} />

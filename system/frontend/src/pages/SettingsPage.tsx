@@ -1,6 +1,8 @@
 import { useEffect, useId, useState } from "react";
 import { api, fmt } from "../api";
 import { Spinner, SubmitButton, useToast } from "../ui";
+import { ErrorCard, SideStrip } from "../components/SideStrip";
+import { settingChange, settingsSavedOutcome } from "../lib/outcomeSide";
 /* Каталогийн хоёр цонх нь ЭНД амьдардаг байв. Отгоо шинэ материал нэмэхдээ
    АГУУЛАХ дээр зогсдог тул тэндээс ч нээгддэг болов — цонх нь НЭГ хэвээр
    (`components/CatalogModals.tsx`), энэ хуудас нь ХЭВЭЭР ажиллана. */
@@ -13,14 +15,22 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<any>(null);
   const [gradeModal, setGradeModal] = useState<any>(null);      // {} = шинэ, {id..} = засах
   const [matModal, setMatModal] = useState<any>(null);
+  /** Хадгалахын ӨМНӨХ утгууд — «юуг юу болгов» гэдгийг зурвас хэлэхийн тулд. */
+  const [saved, setSaved] = useState<any>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [err, setErr] = useState("");
   const uid = useId();
 
   const load = () => {
-    api("/api/grades").then(setGrades);
-    api("/api/materials").then(setMaterials);
-    api("/api/settings").then(setSettings);
+    const fail = (e: any) => { setErr(e.message); toast(e.message, "err"); };
+    api("/api/grades").then((x) => { setGrades(x); setErr(""); }).catch(fail);
+    api("/api/materials").then(setMaterials).catch(fail);
+    api("/api/settings").then((x) => { setSettings(x); setSaved(x); }).catch(fail);
   };
   useEffect(load, []);
+  if (err && (!grades || !materials || !settings)) {
+    return <ErrorCard message={err} onRetry={() => { setErr(""); load(); }} />;
+  }
   if (!grades || !materials || !settings) return <Spinner />;
 
   return (
@@ -32,6 +42,8 @@ export default function SettingsPage() {
           <p className="dashboard-subtitle">Зэрэглэл, каталог, үнэ, системийн суурь утгууд.</p>
         </div>
       </div>
+
+      {outcome && <div className="mb-4"><SideStrip text={outcome} onClose={() => setOutcome(null)} /></div>}
 
       <div className="grid grid-cols-[1fr_1.8fr] gap-4 max-lg:grid-cols-1 items-start">
         <div className="space-y-4">
@@ -76,6 +88,18 @@ export default function SettingsPage() {
                    aria-describedby={`${uid}-ndsh-hint`}
                    onChange={(e) => setSettings({ ...settings, ndsh_percent: e.target.value })} />
             <p id={`${uid}-ndsh-hint`} className="text-[12px] text-t3 mb-4">Дараагийн цалингийн бодолтоос шинэ хувиар суутгана.</p>
+            {/* МЕХАНИЗМЫН НӨАТ нь компанийн ерөнхий `vat_percent`-ээс ТУСДАА
+                түлхүүр (`machine_vat_percent`): краны нэхэмжлэл түүгээр
+                бодогддог. Тохиргоо дээр талбар нь БАЙХГҮЙ байсан тул тэр
+                хувийг солих ганц зам нь DB-д гараар бичих байв. */}
+            <label className="lbl" htmlFor={`${uid}-mvat`}>Механизмын НӨАТ %</label>
+            <input id={`${uid}-mvat`} className="inp mb-1" inputMode="decimal"
+                   value={settings.machine_vat_percent ?? "0"}
+                   aria-describedby={`${uid}-mvat-hint`}
+                   onChange={(e) => setSettings({ ...settings, machine_vat_percent: e.target.value })} />
+            <p id={`${uid}-mvat-hint`} className="text-[12px] text-t3 mb-4">
+              Краны нэхэмжлэлд нэмэгдэх татвар. 0 = нэхэмжлэл дээр НӨАТ-ын мөр огт гарахгүй.
+            </p>
             {/* Барихгүй бол алдаа чимээгүй залгигдаж, хадгалагдсан мэт харагдана.
                 Хадгалалт дуустал товч өөрийгөө түгжинэ — эс бөгөөс хоёр дарахад
                 хоёр PUT нисч, аль нь сүүлд буусан нь тодорхойгүй болно. */}
@@ -83,6 +107,21 @@ export default function SettingsPage() {
               try {
                 await api("/api/settings", { method: "PUT", body: JSON.stringify({ values: settings }) });
                 toast("Тохиргоо хадгалагдлаа");
+                /* Тохиргоо нь ЧИМЭЭГҮЙ мөнгө хөдөлгөдөг (алдангийн суурь %, НДШ,
+                   механизмын НӨАТ). Зурвас нь ЮУГ ЮУ БОЛГОСНЫГ нэрлэж үлдэнэ —
+                   сервер ч яг тэр өгүүлбэрийг /audit дээр бичдэг. */
+                setOutcome(settingsSavedOutcome([
+                  settingChange("Компанийн нэр", saved?.company_name ?? "", settings.company_name ?? ""),
+                  settingChange("Алдангийн суурь %", String(saved?.penalty_default ?? ""),
+                                String(settings.penalty_default ?? "")),
+                  settingChange("Циклийн урт", String(saved?.cycle_days_default ?? ""),
+                                String(settings.cycle_days_default ?? "")),
+                  settingChange("НДШ %", String(saved?.ndsh_percent ?? ""),
+                                String(settings.ndsh_percent ?? "")),
+                  settingChange("Механизмын НӨАТ %", String(saved?.machine_vat_percent ?? ""),
+                                String(settings.machine_vat_percent ?? "")),
+                ]).text);
+                setSaved({ ...settings });
               } catch (e: any) { toast(e.message, "err"); }
             }}>Хадгалах</SubmitButton>
           </div>

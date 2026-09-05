@@ -2,11 +2,16 @@ import { Fragment, useEffect, useId, useState } from "react";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty, InlineEdit, Receipt, ConfirmModal,
          DisclosureCell, DisclosureHead } from "../ui";
+import { ErrorCard, SideStrip } from "../components/SideStrip";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { rowClickProps } from "../lib/rowClick";
 import { panelId, disclosureProps } from "../lib/disclosure";
 import { partLabel, partSign, balanceAfterRemoving } from "../lib/loan";
+import { exactBelow } from "../lib/credit";
+import { balanceAfterPay, isOverdue, overdueHeroText, overdueText } from "../lib/sideRows";
+import { loanAddedOutcome, loanPayDeletedOutcome, loanPayOutcome, loanStatusOutcome,
+         type Outcome } from "../lib/outcomeSide";
 import { todayIso } from "../lib/schedule";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -20,9 +25,19 @@ export default function Loans() {
   const [open, setOpen] = useState<number | null>(null);
   // Уугуул confirm() биш — системийн бусад мөнгөн үйлдэлтэй ижил Modal + Receipt
   const [ask, setAsk] = useState<any>(null);     // {kind:'del'|'status', loan, payment?}
+  /* ҮР ДҮНГИЙН ЗУРВАС. Хамгийн чухал нь СЕРВЕРИЙН шийдвэрүүд: төлөлт бүртгэхэд
+     үлдэгдэл 0 болбол зээл АВТОМАТААР хаагдаж (`closed: true`) мөр нь
+     жагсаалтаас алга болно; төлөлт устгахад ЭРГЭЖ нээгдэнэ (`reopened: true`).
+     Урьд нь хоёулаа чимээгүй болдог тул Отгоо «зээл минь хаана байна?» гэж
+     асуудаг байв. Зурвас нь «Хаах» дартал зогсоно. */
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [err, setErr] = useState("");
   const toast = useToast();
+  const announce = (o?: Outcome | null) => { if (o) setOutcome(o.text); };
 
-  const load = () => api("/api/loans").then(setD).catch((e) => toast(e.message, "err"));
+  const load = () => api("/api/loans")
+    .then((x) => { setD(x); setErr(""); })
+    .catch((e) => { setErr(e.message); if (d) toast(e.message, "err"); });
   useEffect(() => { load(); }, []);
 
   // Inline засвар: амжилтгүй бол алдааг toast-оор гаргаж, InlineEdit-д дахин throw хийнэ
@@ -39,7 +54,13 @@ export default function Loans() {
       msg ?? (p.part === "topup" ? "Нэмэлт олголт шинэчлэгдлээ" : "Төлөлт шинэчлэгдлээ"));
   const delPay = async (l: any, p: any) => {
     try {
-      await api(`/api/loans/${l.id}/payments/${p.id}`, { method: "DELETE" });
+      /* Хариу нь ЗЭЭЛИЙН шинэ байдал: `reopened: true` бол сервер хаагдсан
+         зээлийг ЭРГҮҮЛЭН нээсэн гэсэн үг. Тэр шийдвэр зурвас дээр үлдэнэ. */
+      const r = await api(`/api/loans/${l.id}/payments/${p.id}`, { method: "DELETE" });
+      const after = Number(r?.balance ?? balanceAfterRemoving(l.balance, p.part, p.amount));
+      announce(loanPayDeletedOutcome({ name: l.name, amount: p.amount, part: p.part,
+                                       date: p.date, before: l.balance, after,
+                                       reopened: !!r?.reopened }));
       toast(p.part === "topup" ? "Нэмэлт олголт устгагдлаа" : "Төлөлт устгагдлаа");
       setAsk(null); load();
     } catch (e: any) { toast(e.message, "err"); setAsk(null); }
@@ -49,12 +70,20 @@ export default function Loans() {
     try {
       await api(`/api/loans/${l.id}`, { method: "PATCH",
         body: JSON.stringify({ status: closing ? "closed" : "active" }) });
+      announce(loanStatusOutcome(l.name, closing, l.balance));
       toast(closing ? "Зээл хаагдлаа" : "Зээл сэргээгдлээ"); setAsk(null); load();
     } catch (e: any) { toast(e.message, "err"); }
   };
 
+  if (err && !d) return <ErrorCard message={err} onRetry={() => { setErr(""); load(); }} />;
   if (!d) return <Spinner />;
   const s = d.summary;
+  const overdueCount = Number(s.overdue_count ?? 0);
+  /* «Сарын хүү» ба «Тохирсон сарын төлөлт» нь ХОЁР ӨӨР тоо бөгөөд Аналитик
+     хуудас нь ТОХИРСНООР нь уншдаг. Нэг нь энд, нөгөө нь тэнд гарвал хоёр
+     дэлгэц зөрсөн мэт болно — хоёулаа НЭГ нүдэнд, нэрлэгдсэн байдлаар. */
+  const monthlyInterest = Number(s.monthly_interest ?? s.monthly_burden ?? 0);
+  const monthlyPlanned = Number(s.monthly_planned ?? 0);
 
   return (
     <div>
@@ -68,19 +97,43 @@ export default function Loans() {
                 onClick={() => setModal({ kind: "add" })}>+ Шинэ зээл</button>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-4 max-sm:grid-cols-1">
+      {/* ЗУРВАС — толгойн доор, ажлын дээр. */}
+      {outcome && <div className="mb-4"><SideStrip text={outcome} onClose={() => setOutcome(null)} /></div>}
+
+      {/* ДУГУЙЛСАН тоо нь ХАРЦНЫХ, БҮТЭН тоо нь доороо зогсоно. Урьд нь бүтэн
+          тоо нь ЗӨВХӨН `title` дээр байсан: Отгоо хулгана хүргэж хүлээх
+          зуршилгүй тул «2.04 тэрбум₮» гэсэн тоог дэвтэртээ бичиж чадахгүй. */}
+      <div className="grid grid-cols-4 gap-4 mb-4 max-lg:grid-cols-2 max-sm:grid-cols-1">
         <div className="card hero p-5">
           <div className="text-[12.5px] text-white/80 font-medium mb-2">Нийт өглөг</div>
-          {/* Дугуйлсан тоо нь харцанд, бүтэн тоо нь хулгана хүрэхэд */}
           <div className="text-[26px] font-extrabold text-white tabular-nums leading-tight"
                title={money(s.total_debt)}>{sayaFmt(s.total_debt)}₮</div>
+          {exactBelow(sayaFmt(s.total_debt) + "₮", money(s.total_debt)) && (
+            <div className="text-[12px] text-white/70 tabular-nums mt-0.5">{money(s.total_debt)}</div>
+          )}
           <div className="mt-2"><span className="pill bg-white/10 text-white/80">{s.active_count} идэвхтэй зээл</span></div>
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Сарын хүүгийн дарамт</div>
           <div className="text-[26px] font-extrabold text-danger tabular-nums leading-tight"
-               title={money(s.monthly_burden)}>{sayaFmt(s.monthly_burden)}₮</div>
+               title={money(monthlyInterest)}>{sayaFmt(monthlyInterest)}₮</div>
+          {exactBelow(sayaFmt(monthlyInterest) + "₮", money(monthlyInterest)) && (
+            <div className="text-[12px] text-t2 tabular-nums mt-0.5">{money(monthlyInterest)}</div>
+          )}
+          {/* Аналитик хуудасны «Сарын зээлийн төлбөр» нь ЭНЭ тоо (тохирсон
+              төлөлт) — хоёр дэлгэц зөрсөн мэт харагдахаа болино. */}
+          <div className="text-[12px] text-t3 tabular-nums mt-0.5">
+            Тохирсон сарын төлөлт: {money(monthlyPlanned)}
+          </div>
           <div className="mt-2"><span className="pill-red">сар бүр</span></div>
+        </div>
+        <div className="card p-5">
+          <div className="text-[12.5px] text-t2 font-medium mb-2">Хоцорсон</div>
+          <div className={`text-[26px] font-extrabold tabular-nums leading-tight ${
+            overdueCount ? "text-danger" : "text-money"}`}>{overdueCount}</div>
+          <div className="mt-2">
+            <span className={overdueCount ? "pill-red" : "pill-green"}>{overdueHeroText(overdueCount)}</span>
+          </div>
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Хамгийн ойрын төлөлт</div>
@@ -88,6 +141,9 @@ export default function Loans() {
             <>
               <div className="text-[26px] font-extrabold text-ink tabular-nums leading-tight"
                    title={money(s.upcoming[0].amount)}>{sayaFmt(s.upcoming[0].amount)}₮</div>
+              {exactBelow(sayaFmt(s.upcoming[0].amount) + "₮", money(s.upcoming[0].amount)) && (
+                <div className="text-[12px] text-t2 tabular-nums mt-0.5">{money(s.upcoming[0].amount)}</div>
+              )}
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <span className="pill-amber">{s.upcoming[0].due} · {s.upcoming[0].name}</span>
                 {/* Тохирсон дүн үү, эсвэл зөвхөн сарын хүү үү — тоо нь ЮУ болохыг хэлнэ */}
@@ -133,15 +189,20 @@ export default function Loans() {
                                       `${l.name} — төлөлтийн түүхийг ${isOpen ? "хаах" : "нээх"}`,
                                       "row")}>
                   <DisclosureCell open={isOpen} />
-                  <td className="td whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                  {/* ⚠ МӨРИЙН ТОВШИЛТ — НЭГ ЖУРАМ. Урьд нь InlineEdit-тэй нүд
+                      БҮХЭЛДЭЭ (нүдний хоосон талбай ч оруулаад) товшилтыг
+                      залгидаг байв: Отгоо мөрийн зүүн хагаст дарвал задарч,
+                      баруун хагаст дарвал ЮУ Ч БОЛОХГҮЙ. Одоо зөвхөн засварын
+                      ЗОГСООЛ өөрөө залгина (`InlineEdit` дотроо `stopPropagation`
+                      хийдэг) — нүдний бусад хэсэг мөртэйгөө хамт задарна. */}
+                  <td className="td whitespace-nowrap">
                     <span className="flex items-center gap-1.5">
                       <InlineEdit label="Зээлдүүлэгч" value={l.name} width="w-44" confirmText="Нэр солих уу?"
                         onSave={(v) => doPatch(`/api/loans/${l.id}`, { name: v }, "Нэр шинэчлэгдлээ")} />
                       {l.status === "closed" && <span className="pill-grey">хаагдсан</span>}
                     </span>
                   </td>
-                  <td className="td text-right tabular-nums whitespace-nowrap" title={money(l.principal)}
-                      onClick={(e) => e.stopPropagation()}>
+                  <td className="td text-right tabular-nums whitespace-nowrap" title={money(l.principal)}>
                     {/* Мөрийн зогсоол бүр ЯМАР зээлийнх болохоо өөрөө үүрнэ —
                         «Үндсэн дүн: 250 сая₮ · засах» олон мөрөнд ижилхэн дуудагдана. */}
                     <InlineEdit type="number" label={`${l.name} — үндсэн дүн`} value={l.principal} display={sayaFmt(l.principal) + "₮"}
@@ -163,8 +224,7 @@ export default function Loans() {
                   {/* Бодогдсон сарын хүү + түүнийг гаргасан ХУВЬ — нэг нүдэнд.
                       Тоо нь бодогддог, хувь нь засагдана: аль нь аль болохыг
                       хэмжээ, өнгө хоёр хэлнэ. */}
-                  <td className="td text-right tabular-nums whitespace-nowrap" title={money(l.monthly_due)}
-                      onClick={(e) => e.stopPropagation()}>
+                  <td className="td text-right tabular-nums whitespace-nowrap" title={money(l.monthly_due)}>
                     <span className="inline-flex items-center gap-2">
                       <b className="font-bold text-danger">{sayaFmt(l.monthly_due)}₮</b>
                       <span className="text-[12px] text-t3 font-medium">
@@ -177,15 +237,38 @@ export default function Loans() {
                   </td>
                   {/* Гэрээгээр тохирсон сарын төлөлт — бодогддог хүүгээс ТУСДАА тоо */}
                   <td className="td text-right tabular-nums whitespace-nowrap"
-                      title={l.monthly_payment ? money(l.monthly_payment) : "Гэрээгээр тохирсон сарын төлөлт"}
-                      onClick={(e) => e.stopPropagation()}>
+                      title={l.monthly_payment ? money(l.monthly_payment) : "Гэрээгээр тохирсон сарын төлөлт"}>
                     <InlineEdit type="number" label={`${l.name} — сарын төлөлт`} value={l.monthly_payment || ""}
                       display={l.monthly_payment ? sayaFmt(l.monthly_payment) + "₮" : "тохироогүй"}
                       width="w-28" right confirmText="Сарын төлөлт хадгалах уу?"
                       onSave={(v) => doPatch(`/api/loans/${l.id}`, { monthly_payment: parseMoney(v) },
                         "Сарын төлөлт шинэчлэгдлээ — ойрын төлөлт үүгээр харагдана")} />
                   </td>
-                  <td className="td">{l.status === "active" ? <span className="pill-amber">{l.next_due}</span> : <span className="pill-grey">—</span>}</td>
+                  {/* ХОЦРОЛТ нь МӨРӨН ДЭЭР зогсоно. Сервер `overdue`,
+                      `days_late`, `due_day` гурвыг өгдөг мөртөө дэлгэц дээр
+                      ЮУ Ч гардаггүй байв: «энэ сарынх төлөгдсөн үү» гэсэн
+                      асуулт нь төлөлтийн түүхийг задалж, огноог нүдээр
+                      тулгахаас өөр хариугүй. Улаан нь §4-ийн «хэтэрсэн»
+                      шат — үг нь дэргэдээ (өнгө дангаараа утга зөөхгүй). */}
+                  {/* ⚠ ӨРГӨН нь ХАТУУ ТӨСӨВТЭЙ. Энэ хүснэгт 1366×768 дээр 1,018px-д
+                      багтдаг ба «Төлөлт хоцорсон · 12 хоног» гэсэн бүтэн өгүүлбэр
+                      нэг мөрөнд 175px эзэлдэг — тэр 64px-ээр халиж, мөрийн
+                      «Төлөлт» ба «+ Олголт» товчнууд гүйлтийн ард үлдэнэ
+                      (`her/fits-her-screen.spec.ts` — Отгоо хажуу тийш гүйлгэдэггүй).
+                      Тиймээс өгүүлбэр нь БҮТЭН хэвээр, зөвхөн ХОЁР МӨР болж эвхэгдэнэ. */}
+                  <td className="td align-top max-w-[116px]">
+                    {l.status !== "active" ? <span className="pill-grey">—</span>
+                     : isOverdue(l) ? (
+                       <>
+                         <span className="pill-red !inline-block !whitespace-normal max-w-[104px]
+                                          leading-[1.35]">{overdueText(l.days_late)}</span>
+                         <span className="block text-[11.5px] text-t3 tabular-nums mt-0.5
+                                          max-w-[104px] leading-tight">
+                           {l.due_day}-нд төлөх байсан
+                         </span>
+                       </>
+                     ) : <span className="pill-amber">{l.next_due}</span>}
+                  </td>
                   <td className="td whitespace-nowrap">
                     {l.status === "active" && (
                       <span className="flex items-center gap-1 justify-end">
@@ -298,9 +381,20 @@ export default function Loans() {
         {d.loans.length === 0 && <Empty title="Зээл алга" />}
       </div>
 
-      {modal?.kind === "pay" && <PayLoanModal l={modal.loan} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
-      {modal?.kind === "topup" && <TopUpModal l={modal.loan} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
-      {modal?.kind === "add" && <AddLoanModal onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
+      {/* Цонх хаагдана → ЗУРВАС үлдэнэ → хуудас дахин уншина (гэрээ ба
+          харилцагчийн хуудсанд байдаг `finish` загвар). */}
+      {modal?.kind === "pay" && (
+        <PayLoanModal l={modal.loan} onClose={() => setModal(null)}
+                      onDone={(o?: Outcome) => { setModal(null); announce(o); load(); }} />
+      )}
+      {modal?.kind === "topup" && (
+        <TopUpModal l={modal.loan} onClose={() => setModal(null)}
+                    onDone={(o?: Outcome) => { setModal(null); announce(o); load(); }} />
+      )}
+      {modal?.kind === "add" && (
+        <AddLoanModal onClose={() => setModal(null)}
+                      onDone={(o?: Outcome) => { setModal(null); announce(o); load(); }} />
+      )}
 
       {ask?.kind === "del" && (
         <ConfirmModal
@@ -352,8 +446,53 @@ function PayLoanModal({ l, onClose, onDone }: any) {
   const [f, setF] = useState(f0);
   const amt = parseMoney(f.amount);
   const uid = useId();
+  const after = balanceAfterPay(l.balance, f.part, amt);
+  /* ЮУ БОЛОХЫГ ХАДГАЛАХЫН ӨМНӨ. Баримт нь гүйлтийн ГАДНА, гол товчны
+     дэргэд зогсоно: Отгоо «Бүртгэх» дарахын өмнө «үлдэгдэл 2.04 тэрбум →
+     2.03 тэрбум» гэсэн хоёр тоог нэг харцаар хардаг. */
+  const receipt = amt > 0 ? (
+    f.part === "principal" ? (
+      <Receipt className="mb-3"
+        rows={[
+          { label: "Одоогийн үлдэгдэл", value: money(l.balance) },
+          { label: "Үндсэн төлбөр", value: "−" + money(amt), accent: "money" },
+          { label: "Шинэ сарын хүү", value: money(after * l.monthly_rate / 100), accent: "money" },
+        ]}
+        total={{ label: "Үлдэгдэл", value: `${sayaFmt(l.balance)}₮ → ${sayaFmt(after)}₮` }} />
+    ) : (
+      /* Хүү нь ҮЛДЭГДЛИЙГ хөндөхгүй — «X → X» гэсэн хоёр ижил тоо зурвал
+         Отгоо «аль нь үнэн бэ» гэж асууна. Тиймээс энд ганц мөр. */
+      <Receipt className="mb-3"
+        rows={[
+          { label: `Сарын хүү (${l.monthly_rate}% × үлдэгдэл)`, value: money(l.monthly_due), accent: "dim" },
+          { label: "Үлдэгдэл өөрчлөгдөхгүй", value: sayaFmt(l.balance) + "₮", accent: "dim" },
+        ]}
+        total={{ label: "Төлөх хүү", value: money(amt) }} />
+    )
+  ) : null;
   return (
-    <FormModal title={`Төлөлт — ${l.name}`} onClose={onClose} dirty={formDirty(f0, f)}>
+    <FormModal title={`Төлөлт — ${l.name}`} onClose={onClose} dirty={formDirty(f0, f)}
+               footer={
+                 <>
+                   {receipt}
+                   <div className="flex justify-end gap-2.5">
+                     <button className="btn-secondary" onClick={onClose}>Болих</button>
+                     <SubmitButton className="btn-primary !bg-money" disabled={!amt} onSubmit={async () => {
+                       try {
+                         /* Хариу нь ЗЭЭЛИЙН шинэ байдал (`closed: true` бол
+                            сервер зээлийг автоматаар хаасан) — тэр шийдвэрийг
+                            зурвас үүрч гарна. */
+                         const r = await api(`/api/loans/${l.id}/payments`, { method: "POST",
+                           body: JSON.stringify({ date: f.date, amount: amt, part: f.part, note: f.note }) });
+                         toast("Төлөлт бүртгэгдлээ");
+                         onDone(loanPayOutcome({
+                           name: l.name, amount: amt, part: f.part as any, date: f.date,
+                           before: l.balance, after: Number(r?.balance ?? after),
+                           closed: !!r?.closed }));
+                       } catch (e: any) { toast(e.message, "err"); }
+                     }}>Бүртгэх</SubmitButton>
+                   </div>
+                 </>}>
       {/* Хүү/Үндсэн дүн нь ЮУГ төлж байгааг сонгодог — бүлгээ нэрлэнэ */}
       <div className="lbl" id={`${uid}-part`}>Юуг төлөх вэ</div>
       <div className="flex gap-2 mb-4" role="group" aria-labelledby={`${uid}-part`}>
@@ -372,37 +511,13 @@ function PayLoanModal({ l, onClose, onDone }: any) {
       </div>
       <div className="mt-3.5"><label className="lbl" htmlFor={`${uid}-note`}>Тэмдэглэл</label>
         <input id={`${uid}-note`} className="inp" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></div>
-      {amt > 0 && (
-        <div className="mt-3.5">
-          {f.part === "principal" ? (
-            <Receipt
-              rows={[
-                { label: "Одоогийн үлдэгдэл", value: money(l.balance) },
-                { label: "Үндсэн төлбөр", value: "−" + money(amt), accent: "money" },
-                { label: "Шинэ сарын хүү", value: money((l.balance - amt) * l.monthly_rate / 100), accent: "money" },
-              ]}
-              total={{ label: "Шинэ үлдэгдэл", value: money(l.balance - amt) }} />
-          ) : (
-            <Receipt
-              rows={[
-                { label: `Сарын хүү (${l.monthly_rate}% × үлдэгдэл)`, value: money(l.monthly_due), accent: "dim" },
-                { label: "Үлдэгдэл өөрчлөгдөхгүй", value: sayaFmt(l.balance) + "₮", accent: "dim" },
-              ]}
-              total={{ label: "Төлөх хүү", value: money(amt) }} />
-          )}
-        </div>
+      {/* Хүү нь ҮЛДЭГДЛИЙГ хөндөхгүй гэдгийг цонх өөрөө хэлнэ (баримт нь
+          «→» -гүй хоёр ижил тоо зурахгүйн тулд доод мөрөнд). */}
+      {amt > 0 && f.part === "interest" && (
+        <p className="text-[12.5px] text-t3 mt-3.5">
+          Хүүгийн төлөлт үндсэн үлдэгдлийг бууруулахгүй — үлдэгдэл {money(l.balance)} хэвээр.
+        </p>
       )}
-      <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <SubmitButton className="btn-primary !bg-money" disabled={!amt} onSubmit={async () => {
-          try {
-            await api(`/api/loans/${l.id}/payments`, { method: "POST",
-              body: JSON.stringify({ date: f.date, amount: amt, part: f.part, note: f.note }) });
-            toast("Төлөлт бүртгэгдлээ");
-            onDone();
-          } catch (e: any) { toast(e.message, "err"); }
-        }}>Бүртгэх</SubmitButton>
-      </div>
     </FormModal>
   );
 }
@@ -447,10 +562,12 @@ function TopUpModal({ l, onClose, onDone }: any) {
         <button className="btn-secondary" onClick={onClose}>Болих</button>
         <SubmitButton disabled={!amt} onSubmit={async () => {
           try {
-            await api(`/api/loans/${l.id}/payments`, { method: "POST",
+            const r = await api(`/api/loans/${l.id}/payments`, { method: "POST",
               body: JSON.stringify({ date: f.date, amount: amt, part: "topup", note: f.note }) });
             toast("Нэмэлт олголт бүртгэгдлээ — үлдэгдэл нэмэгдлээ");
-            onDone();
+            onDone(loanPayOutcome({ name: l.name, amount: amt, part: "topup", date: f.date,
+                                    before: l.balance,
+                                    after: Number(r?.balance ?? l.balance + amt) }));
           } catch (e: any) { toast(e.message, "err"); }
         }}>Бүртгэх</SubmitButton>
       </div>
@@ -501,7 +618,7 @@ function AddLoanModal({ onClose, onDone }: any) {
               ...f, principal: parseMoney(f.principal), monthly_rate: parseMoney(f.monthly_rate),
               monthly_payment: parseMoney(f.monthly_payment) }) });
             toast("Зээл бүртгэгдлээ");
-            onDone();
+            onDone(loanAddedOutcome(f.name, parseMoney(f.principal), parseMoney(f.monthly_rate)));
           } catch (e: any) { toast(e.message, "err"); }
         }}>Бүртгэх</SubmitButton>
       </div>

@@ -150,9 +150,13 @@ test('үйлдлийн бүртгэл: void · akt · rate_change · book_penalt
     const rawFilters = filters.filter((t) => /[A-Za-z]/.test(t));
     expect(rawFilters, `шүүлтүүр дээр түүхий түлхүүр: ${rawFilters.join(' | ')}`).toEqual([]);
 
-    /* 3. Энэ тестийн төрүүлсэн үйлдлүүд ЯГ ЭНЭ үгсээр гарсан байх ёстой. */
+    /* 3. Энэ тестийн төрүүлсэн үйлдлүүд ЯГ ЭНЭ үгсээр гарсан байх ёстой.
+          ⚠ ӨРГӨТГӨВ (2026-09): шүүлтүүрт «Юу хийсэн» сонголт нэмэгдсэн ба
+          түүний `<option>` нь ЯГ ижил үгсийг агуулдаг — хаалттай сонголтын
+          дотор байгаа тул `hidden`. Баталгаа нь ХУВИРААГҮЙ, зөвхөн БАЙРЛАЛАА
+          нэрлэв: эдгээр үг МӨРӨН дээр (бүртгэлийн хүснэгтэд) гарах ёстой. */
     for (const word of ['Хүчингүй болгосон', 'Алданги нэхсэн', 'Гэрээ хаасан']) {
-      await expect(managerPage.getByText(word, { exact: true }).first(),
+      await expect(managerPage.locator('tbody').getByText(word, { exact: true }).first(),
                    `«${word}» гэсэн үйлдэл бүртгэлд алга`).toBeVisible();
     }
     for (const word of ['Акт', 'Тарифын өөрчлөлт', 'Алдангийн нэхэлт']) {

@@ -1,5 +1,8 @@
 import { errorMessage, FALLBACK_ERROR } from "./lib/errors";
-import { isSessionExpiry, markSessionExpired } from "./lib/session";
+import { isSessionExpiry, markSessionExpired, keepDraft,
+         clearSessionInfo } from "./lib/session";
+import { dirtySnapshot } from "./lib/dirty";
+import { live } from "./lib/live";
 
 export type User = { id: number; name: string; role: string; username: string };
 
@@ -17,6 +20,8 @@ export function setAuth(t: string, u: User) {
 export function clearAuth() {
   localStorage.removeItem("jz_token");
   localStorage.removeItem("jz_user");
+  // Сессийн санамж (хугацаа, нууц үгийн анхааруулга) токентой хамт явна
+  clearSessionInfo();
 }
 
 export async function api(path: string, opts: RequestInit = {}): Promise<any> {
@@ -24,7 +29,24 @@ export async function api(path: string, opts: RequestInit = {}): Promise<any> {
   if (!(opts.body instanceof FormData)) headers["Content-Type"] = "application/json";
   const t = token();
   if (t) headers["Authorization"] = `Bearer ${t}`;
-  const res = await fetch(path, { ...opts, headers });
+  /* ТОПБАРЫН ЗААГЧ (`lib/live.ts`). Дэлгэц дээрх тоо ХЭР ШИНЭ болохыг зөвхөн
+     ӨГӨГДӨЛ УНШИХ хүсэлт хэлж чадна: POST/PATCH нь дэлгэцийг шинэчилдэггүй
+     (араас нь ирэх GET л шинэчилнэ) тул тэдгээрийг «Шинэчилсэн: 14:03»
+     болгож бичвэл цаг нь худал болно.
+     ⚠ Сүлжээ тасарсныг ЗӨВХӨН fetch өөрөө унасан үед хэлнэ: 400/403/409 нь
+     сервер ХАРИУЛСАН гэсэн үг — холболт бүтэн, зөвхөн хүсэлт нь буруу. */
+  const reads = !opts.method || opts.method.toUpperCase() === "GET";
+  let res: Response;
+  try {
+    res = await fetch(path, { ...opts, headers });
+  } catch (e) {
+    if (reads) live.fail();
+    throw e;
+  }
+  if (reads) {
+    // 5xx = сервер өөрөө унасан — тоо шинэчлэгдээгүй гэсэн үг
+    if (res.status >= 500) live.fail(); else live.ok();
+  }
   /* 401 нь ХОЁР өөр зүйл байж болно. Токентой хүсэлтийн 401 = хугацаа дууссан
      (шидэгдэнэ, тайлбар үлдээнэ). НЭВТРЭХ хүсэлтийн 401 = нэр/нууц үг буруу —
      энэ нь ердийн алдаа тул доорх `!res.ok` салбар нь серверийн ЯГ үгийг
@@ -36,6 +58,11 @@ export async function api(path: string, opts: RequestInit = {}): Promise<any> {
       // Хуудас руу шидэгдэхийн ӨМНӨ шалтгааныг үлдээнэ — эс бөгөөс Отгоо
       // гэрээ бөглөж байгаад гэнэт нэвтрэх дэлгэц дээр тайлбаргүй зогсоно.
       markSessionExpired();
+      /* ...БА БИЧСЭН ЗҮЙЛИЙГ НЬ. Тэр агшинд гарын доор 45 минутын ажил байж
+         болно: төлбөрийн дүн, буцаалтын мөр, амлалтын тэмдэглэл. Дахин
+         нэвтрээд ЯГ тэр зам дээр буцахад цонх нь бөглөгдсөнөөрөө нээгдэнэ. */
+      const snap = dirtySnapshot();
+      if (snap) keepDraft(snap.name, location.pathname, snap.values);
       location.href = "/login";
     }
     throw new Error("Нэвтрэлт дууссан");

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, fmt, user } from "../api";
-import { Spinner, useToast, Receipt } from "../ui";
+import { Spinner, useToast, Receipt, PageError, OutcomeStrip } from "../ui";
 import { parseMoney } from "../lib/num";
+import { canOpen } from "../lib/guard";
+import { conflictMaterial, stocktakeOutcome } from "../lib/stock";
 import { todayIso } from "../lib/schedule";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -42,10 +44,19 @@ export default function Stocktake() {
   const [busy, setBusy] = useState(false);
   const [restored, setRestored] = useState<string | null>(null); // сэргээсэн ноорогийн огноо
   const [draftKey] = useState(() => `jz_stocktake_draft:${user()?.id ?? 0}`);
+  /* Хуудас АЧААЛАГДСАНГҮЙ — урьд нь `.catch` нь зөвхөн toast харуулаад
+     `rows` нь null хэвээр үлдэж, «Ачаалж байна…» ҮҮРД зогсдог байв. */
+  const [err, setErr] = useState<string | null>(null);
+  /* 409 — тооллого явж байх зуур агуулахын тоо ӨӨРЧЛӨГДСӨН. Серверийн ЯГ
+     өгүүлбэр нь МАТЕРИАЛААРАА эхэлдэг тул зурвасыг мөрөн дээр нь буулгана. */
+  const [conflict, setConflict] = useState<string>("");
+  const [done, setDone] = useState<string | null>(null);   // үр дүнгийн зурвас
   const toast = useToast();
   const nav = useNavigate();
+  const u = user();
 
-  useEffect(() => {
+  const loadStock = () => {
+    setErr(null);
     api("/api/stock").then((d) => {
       const out: Row[] = [];
       for (const m of d.rows)
@@ -65,8 +76,9 @@ export default function Stocktake() {
         setRestored(draft?.savedAt || "");
       }
       setRows(out);
-    }).catch((e) => toast(e.message, "err"));
-  }, []);
+    }).catch((e) => { toast(e.message, "err"); setErr(e.message); });
+  };
+  useEffect(() => { loadStock(); }, []);
 
   /* Оруулсан тоо бүрийг тэр дороо ноорогт бичнэ */
   useEffect(() => {
@@ -96,7 +108,11 @@ export default function Stocktake() {
     setRestored(null);
   }
 
+  if (err && !rows) return <PageError error={err} onRetry={loadStock} />;
   if (!rows) return <Spinner />;
+
+  /** 409-ийн зурвас нь ЭНЭ материалын тухай юу. */
+  const clashName = conflictMaterial(conflict);
 
   const diffOf = (r: Row) => (r.counted === "" ? 0 : parseMoney(r.counted) - r.system);
   const filled = rows.filter((r) => r.counted !== "");
@@ -104,23 +120,45 @@ export default function Stocktake() {
   const shown = rows.filter((r) =>
     (!q || r.material.toLowerCase().includes(q.toLowerCase()) || r.grade.toLowerCase().includes(q.toLowerCase()))
     && (!onlyDiff || diffOf(r) !== 0));
+  /* Зөрчсөн мөр ХАРАГДАЖ байгаа бол зурвас нь тэр мөрөн дээрээ; хайлт/шүүлтээс
+     болж нуугдсан бол хуудасны дээд талд (эс бөгөөс алдаа огт харагдахгүй). */
+  const clashShown = !!clashName && shown.some((r) => r.material === clashName);
 
   async function submit() {
     if (!filled.length) { toast("Ядаж нэг мөр тоолно уу", "err"); return; }
     setBusy(true);
+    setConflict("");
     try {
       const r = await api("/api/stock/stocktake", { method: "POST", body: JSON.stringify({
         date: today(), note,
+        /* ⚠ `system` — ХУУДАС ХАРУУЛСАН үлдэгдэл. Тооллого утсан дээр цагаар
+           үргэлжилдэг; тэр хооронд ачилт/буцаалт бүртгэгдвэл серверийн тоо
+           өөр болно. Энэ талбаргүйгээр тооллого нь ХООРОНДОХ бүх хөдөлгөөнийг
+           ЧИМЭЭГҮЙ арчина — 450ш ачилт «дутсан бараа» болж алга болно. */
         lines: filled.map((x) => ({ material_id: x.material_id, grade_id: x.grade_id,
-                                    counted: parseMoney(x.counted) })) }) });
+                                    counted: parseMoney(x.counted), system: x.system })) }) });
       try { localStorage.removeItem(draftKey); } catch { /* үл ойшоох */ }
-      toast(`Тооллого хадгалагдлаа — ${r.adjusted} мөр залруулагдав`);
-      nav("/warehouse");
-    } catch (e: any) { toast(e.message, "err"); setBusy(false); }
+      /* Дуусмагц /warehouse руу ҮСРЭХГҮЙ: 40 минутын ажлын ҮР ДҮН нь
+         3.2 секундын toast болж өнгөрдөг байв. Зурвас нь тоонуудтайгаа
+         үлдэж, дараагийн алхмаа өөрөө нэрлэнэ. */
+      setDone(stocktakeOutcome(filled.length, r.adjusted, r.diff_total ?? 0));
+      setRows((rs) => (rs ? rs.map((x) => ({ ...x, counted: "" })) : rs));
+      setNote("");
+      setRestored(null);
+      setBusy(false);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e: any) {
+      /* 409 = үлдэгдэл зөрсөн. Серверийн өгүүлбэр нь АЛЬ материал болохыг
+         хэлдэг тул түүнийг ЯГ ТЭР мөрөн дээр буулгана — хуудасны дээд
+         талын улаан тууз нь «аль мөр вэ?» гэсэн асуулт үлдээдэг. */
+      if (e?.status === 409) setConflict(e.message);
+      toast(e.message, "err");
+      setBusy(false);
+    }
   }
 
   return (
-    <div className="max-w-3xl mx-auto pb-28">
+    <div className="max-w-3xl mx-auto pb-6">
       <div className="dashboard-header">
         <div>
           <div className="dashboard-kicker">ТООЛЛОГО <span>•</span> {today()}</div>
@@ -130,6 +168,38 @@ export default function Stocktake() {
           </p>
         </div>
       </div>
+
+      {/* ҮР ДҮНГИЙН ЗУРВАС — 40 минутын ажлын хариу нь 3.2 секундын toast
+          болж өнгөрөх ёсгүй. Бүртгэлийн мөр рүү нь холбоос дагалдана
+          (менежерт — бусдад тэр хуудас хаалттай, худал холбоос гаргахгүй). */}
+      {done && (
+        <OutcomeStrip text={done} onClose={() => setDone(null)} />
+      )}
+      {done && canOpen("/audit", u?.role) && (
+        <p className="-mt-2 mb-4 text-[12.5px] text-t2">
+          <Link to="/audit?action=stocktake&entity=stock" className="text-brand-ink font-semibold hover:underline">
+            Үйлдлийн бүртгэлээс энэ тооллогыг харах →
+          </Link>
+        </p>
+      )}
+
+      {/* ЗӨРЧИЛ (409) — тооллого явж байх зуур агуулахын тоо өөрчлөгдсөн.
+          Сервер ЮУ Ч БИЧЭЭГҮЙ: хагас хийгдсэн тооллого гэж байхгүй. */}
+      {conflict && !clashShown && (
+        <div role="alert"
+             className="mb-3.5 rounded-xl bg-danger-50 border border-danger px-4 py-3
+                        flex items-start gap-2.5 flex-wrap">
+          <span className="text-[13px] font-semibold text-danger flex-1 min-w-[220px] leading-relaxed">
+            {conflict}
+            <span className="block font-normal text-t2 mt-0.5">
+              Тооллого ХАДГАЛАГДААГҮЙ — бичсэн тоо чинь хэвээр байна. Дахин
+              ачаалахад системийн үлдэгдэл шинэчлэгдэж, тоолсон тоо чинь үлдэнэ.
+            </span>
+          </span>
+          <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]"
+                  onClick={() => { setConflict(""); loadStock(); }}>Дахин ачаалах</button>
+        </div>
+      )}
 
       {restored !== null && (
         <div className="mb-3.5 rounded-xl bg-brand-50 px-4 py-3 flex items-center gap-2.5 flex-wrap">
@@ -157,8 +227,10 @@ export default function Stocktake() {
         {shown.map((r) => {
           const idx = rows.indexOf(r);
           const diff = diffOf(r);
+          const clashed = !!clashName && r.material === clashName;
           return (
-            <div key={`${r.material_id}-${r.grade_id}`} className="flex items-center gap-3 p-3.5">
+            <div key={`${r.material_id}-${r.grade_id}`}
+                 className={`flex items-center gap-3 p-3.5 flex-wrap ${clashed ? "bg-danger-50" : ""}`}>
               <div className="min-w-0 flex-1">
                 <b className="text-[14.5px] text-ink block leading-tight">{r.material}</b>
                 <span className="text-[12px] text-t3">
@@ -184,6 +256,22 @@ export default function Stocktake() {
                   </b>
                 )}
               </div>
+              {/* ЗӨРЧИЛ ЯГ ЭНЭ МӨРӨН ДЭЭР. Хуудасны дээд талын улаан тууз нь
+                  «аль мөр вэ?» гэсэн асуулт үлдээдэг — 215 мөрийн дундаас
+                  хайх ажил Отгоод үлдэнэ. Серверийн ЯГ өгүүлбэр (хуучин тоо →
+                  шинэ тоо) нь юу болсныг өөрөө хэлнэ. */}
+              {clashed && (
+                <div role="alert" className="w-full flex items-start gap-2.5 flex-wrap pt-1">
+                  <span className="text-[12.5px] font-semibold text-danger flex-1 min-w-[200px] leading-relaxed">
+                    {conflict}
+                    <span className="block font-normal text-t2">
+                      Тооллого ХАДГАЛАГДААГҮЙ — тоолсон тоо чинь хэвээр байна.
+                    </span>
+                  </span>
+                  <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[12.5px]"
+                          onClick={() => { setConflict(""); loadStock(); }}>Дахин ачаалах</button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -191,8 +279,13 @@ export default function Stocktake() {
       </div>
 
       {filled.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-line p-3.5 backdrop-blur"
-             style={{ background: "rgba(255,255,255,.94)" }}>
+        /* ⚠ `fixed bottom-0 left-0 right-0` байв — тэр нь дэлгэцийн БҮХ өргөнийг
+           эзэлж, ЗҮҮН ТАЛЫН ЦЭСИЙГ (262px navy) доод талаас нь таслан хучиж
+           байсан: «Агуулах» мөр, «Гарах» товч 52px-ийн цагаан туузан доор
+           үлдэнэ. Одоо `sticky` — тууз нь агуулгын БАГАНАД харьяалагдана
+           (`.jz-main` дотор), цэс рүү хэзээ ч гарахгүй, цэс хураагдсан үед ч
+           өөрөө тохирно. Дэлгэцийн доод ирмэгт наалдах зан ХЭВЭЭР. */
+        <div className="stocktake-bar sticky bottom-0 z-30 border-t border-line p-3.5 backdrop-blur">
           <div className="max-w-3xl mx-auto flex gap-3 items-center flex-wrap">
             <Receipt className="flex-1 min-w-[240px] !py-2.5"
               rows={[{ label: "Тоолсон мөр", value: `${filled.length} / ${rows.length}` }]}

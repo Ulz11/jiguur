@@ -3,7 +3,12 @@ import { Link } from "react-router-dom";
 import { api, fmt, money, sayaFmt, user } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt,
          FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
+import { ErrorCard, SideStrip } from "../components/SideStrip";
 import { parseMoney } from "../lib/num";
+import { exactBelow } from "../lib/credit";
+import { VALUE_IN_REQUIRED, valueInError } from "../lib/sideRows";
+import { barterSavedOutcome, barterSellOutcome, barterToStockOutcome,
+         type Outcome } from "../lib/outcomeSide";
 import { formDirty } from "../lib/dirty";
 import { clientHref } from "../lib/links";
 import { todayIso } from "../lib/schedule";
@@ -16,11 +21,19 @@ const TYPES = ["Машин", "Байр", "Материал", "Бусад"];
 export default function Barter() {
   const [d, setD] = useState<any>(null);
   const [modal, setModal] = useState<any>(null); // {kind: 'sell'|'stock'|'edit'|'add', asset?}
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [err, setErr] = useState("");
   const toast = useToast();
   const u = user();
+  const announce = (o?: Outcome | null) => { if (o) setOutcome(o.text); };
+  /** Цонх хаагдана → ЗУРВАС үлдэнэ → хуудас дахин уншина. */
+  const finish = (o?: Outcome) => { setModal(null); announce(o); load(); };
 
-  const load = () => api("/api/barter").then(setD).catch((e) => toast(e.message, "err"));
+  const load = () => api("/api/barter")
+    .then((x) => { setD(x); setErr(""); })
+    .catch((e) => { setErr(e.message); if (d) toast(e.message, "err"); });
   useEffect(() => { load(); }, []);
+  if (err && !d) return <ErrorCard message={err} onRetry={() => { setErr(""); load(); }} />;
   if (!d) return <Spinner />;
 
   const s = d.summary;
@@ -52,13 +65,21 @@ export default function Barter() {
         )}
       </div>
 
+      {outcome && <div className="mb-4"><SideStrip text={outcome} onClose={() => setOutcome(null)} /></div>}
+
       {seesMoney && (
       <div className="command-metrics mb-4">
         <div className="command-hero">
           <div className="text-white/80 text-[12.5px] font-medium mb-2">Хадгалагдаж буй хөрөнгө</div>
+          {/* ДУГУЙЛСАН тоо нь ХАРЦНЫХ, БҮТЭН тоо нь доороо. Урьд нь бүтэн
+              тоо нь ХААНА Ч байхгүй байсан: «15.2 сая₮» гэдгийг Отгоо
+              дэвтэртээ буулгаж чадахгүй. */}
           <div className="text-[28px] font-extrabold text-white tabular-nums leading-tight">
             {sayaFmt(s.held_value)} <span className="text-sm text-white/70 font-semibold">₮</span>
           </div>
+          {exactBelow(sayaFmt(s.held_value) + "₮", money(s.held_value)) && (
+            <div className="text-[12px] text-white/70 tabular-nums mt-0.5">{money(s.held_value)}</div>
+          )}
           <div className="mt-2"><span className="pill bg-white/10 text-white/80">
             {s.held_count} хөрөнгө · дунджаар {s.avg_days_held} хоног</span></div>
         </div>
@@ -68,6 +89,9 @@ export default function Barter() {
             s.stale_count ? "text-danger" : "text-money"}`}>
             {sayaFmt(s.stale_value)} <span className="text-sm text-t2 font-semibold">₮</span>
           </div>
+          {exactBelow(sayaFmt(s.stale_value) + "₮", money(s.stale_value)) && (
+            <div className="text-[12px] text-t2 tabular-nums mt-0.5">{money(s.stale_value)}</div>
+          )}
           <div className="mt-2">
             <span className={s.stale_count ? "pill-red" : "pill-green"}>
               {s.stale_count ? `${s.stale_count} хөрөнгө удаан хэвтэж байна` : "зогсонги хөрөнгө алга"}
@@ -78,6 +102,9 @@ export default function Barter() {
           <div className="text-[12.5px] text-t2 font-medium mb-2">Зарагдсан нийт</div>
           <div className="text-[28px] font-extrabold text-ink tabular-nums leading-tight">
             {sayaFmt(s.sold_value)} <span className="text-sm text-t2 font-semibold">₮</span></div>
+          {exactBelow(sayaFmt(s.sold_value) + "₮", money(s.sold_value)) && (
+            <div className="text-[12px] text-t2 tabular-nums mt-0.5">{money(s.sold_value)}</div>
+          )}
           <div className="mt-2"><span className="pill-grey">{s.sold_count} хөрөнгө</span></div>
         </div>
         <div className="command-metric">
@@ -85,6 +112,11 @@ export default function Barter() {
           <div className={`text-[28px] font-extrabold tabular-nums leading-tight ${s.realized < 0 ? "text-danger" : "text-money"}`}>
             {s.realized > 0 ? "+" : ""}{sayaFmt(s.realized)} <span className="text-sm text-t2 font-semibold">₮</span>
           </div>
+          {exactBelow(sayaFmt(s.realized) + "₮", money(s.realized)) && (
+            <div className="text-[12px] text-t2 tabular-nums mt-0.5">
+              {s.realized > 0 ? "+" : ""}{money(s.realized)}
+            </div>
+          )}
         </div>
       </div>
       )}
@@ -241,10 +273,14 @@ export default function Barter() {
         </FinanceDisclosure>
       )}
 
-      {modal?.kind === "sell" && <SellModal a={modal.asset} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
-      {modal?.kind === "stock" && <StockModal a={modal.asset} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
+      {modal?.kind === "sell" && (
+        <SellModal a={modal.asset} onClose={() => setModal(null)} onDone={finish} />
+      )}
+      {modal?.kind === "stock" && (
+        <StockModal a={modal.asset} onClose={() => setModal(null)} onDone={finish} />
+      )}
       {(modal?.kind === "add" || modal?.kind === "edit") && (
-        <AssetModal a={modal.asset} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />
+        <AssetModal a={modal.asset} onClose={() => setModal(null)} onDone={finish} />
       )}
     </div>
   );
@@ -291,7 +327,8 @@ function SellModal({ a, onClose, onDone }: any) {
             await api(`/api/barter/${a.id}/sell`, { method: "POST",
               body: JSON.stringify({ date: f.date, amount: amt, sold_to: f.sold_to, note: f.note }) });
             toast("Борлуулалт бүртгэгдлээ — ашиг/алдагдал тайланд тусав");
-            onDone();
+            onDone(barterSellOutcome({ name: a.name, amount: amt,
+                                       valueIn: a.value_in, date: f.date }));
           } catch (e: any) { toast(e.message, "err"); }
         }}>Зарах</SubmitButton>
       </div>
@@ -302,19 +339,38 @@ function SellModal({ a, onClose, onDone }: any) {
 function StockModal({ a, onClose, onDone }: any) {
   const toast = useToast();
   const [mats, setMats] = useState<any[] | null>(null);
+  /* Урьд нь `if (!mats) return null` байв: материалын жагсаалт УНАВАЛ (эсвэл
+     удаан ирвэл) цонх нь ОГТ ЗУРАГДАХГҮЙ. Отгоо «Нөөцөд» дарж, дэлгэц дээр
+     юу ч болохгүй — тэр дахин дарж, дахин дарна. Одоо цонх нь ҮРГЭЛЖ нээгдэж,
+     дотроо «ачаалж байна» эсвэл ШАЛТГААНАА хэлнэ. */
+  const [matErr, setMatErr] = useState("");
   const f0 = { material_id: 0, grade_id: 0, qty: "" };
   const [f, setF] = useState(f0);
   const uid = useId();
-  useEffect(() => { api("/api/materials").then(setMats); }, []);
-  if (!mats) return null;
-  const m = mats.find((x) => x.id === f.material_id);
+  const loadMats = () => {
+    setMatErr("");
+    api("/api/materials").then(setMats).catch((e) => setMatErr(e.message));
+  };
+  useEffect(loadMats, []);
+  const m = (mats || []).find((x) => x.id === f.material_id);
   return (
     <FormModal title={`Нөөцөд оруулах — ${a.name}`} onClose={onClose} dirty={formDirty(f0, f)}>
+      {matErr && (
+        <div role="alert" className="rounded-xl bg-danger-50 px-4 py-3 mb-3.5 flex items-center
+                                     gap-3 flex-wrap">
+          <span className="text-[13px] font-medium text-danger flex-1 min-w-[180px]">
+            Материалын жагсаалт ачаалагдсангүй — {matErr}
+          </span>
+          <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]"
+                  onClick={loadMats}>Дахин оролдох</button>
+        </div>
+      )}
+      {!mats && !matErr && <p className="text-[13px] text-t3 mb-3.5">Ачаалж байна…</p>}
       <label className="lbl" htmlFor={`${uid}-mat`}>Материал</label>
-      <select id={`${uid}-mat`} className="inp mb-3.5" value={f.material_id}
+      <select id={`${uid}-mat`} className="inp mb-3.5" value={f.material_id} disabled={!mats}
               onChange={(e) => setF({ ...f, material_id: +e.target.value, grade_id: 0 })}>
         <option value={0}>Сонгох…</option>
-        {mats.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+        {(mats || []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
       </select>
       {m && (
         <>
@@ -334,7 +390,10 @@ function StockModal({ a, onClose, onDone }: any) {
             await api(`/api/barter/${a.id}/to-stock`, { method: "POST",
               body: JSON.stringify({ material_id: f.material_id, grade_id: f.grade_id, qty: +f.qty }) });
             toast("Агуулахын нөөцөд нэмэгдлээ");
-            onDone();
+            onDone(barterToStockOutcome({
+              name: a.name, material: m?.name || "",
+              grade: (m?.prices || []).find((p: any) => p.grade_id === f.grade_id)?.grade || "",
+              qty: +f.qty }));
           } catch (e: any) { toast(e.message, "err"); }
         }}>Оруулах</SubmitButton>
       </div>
@@ -350,7 +409,17 @@ function AssetModal({ a, onClose, onDone }: any) {
     asking_price: a ? String(a.asking_price) : "", note: a?.note || "",
   };
   const [f, setF] = useState(f0);
+  /* Талбараа орхисны ДАРАА л улаан болно — бичиж эхлэнгүүт «алдаа» гэж
+     хашгирахгүй (Отгоо эхний цифрээ бичих зуур). */
+  const [touched, setTouched] = useState(false);
   const uid = useId();
+  /* СЕРВЕР `value_in <= 0`-ийг 400-аар («Орж ирсэн үнэ 0-ээс их байх ёстой»)
+     буцаадаг. Урьд нь цонх нь зөвхөн товчоо түгжиж, ЯАГААД гэдгийг ХЭЛДЭГГҮЙ
+     байв: Отгоо бүх талбараа бөглөчихөөд «Хадгалах» дарагдахгүй байхыг хараад
+     ямар талбар дутууг тааж сууна. Одоо шалтгаан нь ТАЛБАРЫНХАА доор. */
+  const valueIn = parseMoney(f.value_in);
+  const valueErr = valueInError(valueIn, f.value_in);
+  const showErr = touched && !!valueErr;
   return (
     <FormModal title={a ? "Хөрөнгө засах" : "Хөрөнгө бүртгэх"} onClose={onClose} dirty={formDirty(f0, f)}>
       <div className="lbl" id={`${uid}-type`}>Төрөл</div>
@@ -370,8 +439,17 @@ function AssetModal({ a, onClose, onDone }: any) {
         <div><label className="lbl" htmlFor={`${uid}-datein`}>Орж ирсэн огноо</label>
           <input id={`${uid}-datein`} type="date" className="inp" value={f.date_in} onChange={(e) => setF({ ...f, date_in: e.target.value })} /></div>
         <div><label className="lbl" htmlFor={`${uid}-valuein`}>Орж ирсэн үнэ ₮ *</label>
-          <input id={`${uid}-valuein`} className="inp" inputMode="numeric" value={f.value_in}
-                 onChange={(e) => setF({ ...f, value_in: e.target.value })} /></div>
+          <input id={`${uid}-valuein`} className={`inp ${showErr ? "!border-danger" : ""}`}
+                 inputMode="numeric" value={f.value_in}
+                 aria-invalid={showErr || undefined}
+                 aria-describedby={showErr ? `${uid}-valuein-err` : undefined}
+                 onBlur={() => setTouched(true)}
+                 onChange={(e) => setF({ ...f, value_in: e.target.value })} />
+          {showErr && (
+            <p id={`${uid}-valuein-err`} className="text-[12.5px] text-danger mt-1" aria-live="polite">
+              <span aria-hidden="true">⚠ </span>{VALUE_IN_REQUIRED}
+            </p>
+          )}</div>
         <div><label className="lbl" htmlFor={`${uid}-asking`}>Зарах санал үнэ ₮</label>
           <input id={`${uid}-asking`} className="inp" inputMode="numeric" value={f.asking_price}
                  onChange={(e) => setF({ ...f, asking_price: e.target.value })} /></div>
@@ -380,15 +458,20 @@ function AssetModal({ a, onClose, onDone }: any) {
       </div>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <SubmitButton disabled={!f.name.trim() || !parseMoney(f.value_in)} onSubmit={async () => {
-          const body = { ...f, value_in: parseMoney(f.value_in), asking_price: parseMoney(f.asking_price) };
-          try {
-            if (a) await api(`/api/barter/${a.id}`, { method: "PUT", body: JSON.stringify(body) });
-            else await api("/api/barter", { method: "POST", body: JSON.stringify(body) });
-            toast("Хадгалагдлаа");
-            onDone();
-          } catch (e: any) { toast(e.message, "err"); }
-        }}>Хадгалах</SubmitButton>
+        <SubmitButton disabled={!f.name.trim() || !!valueErr}
+          title={valueErr || undefined}
+          onSubmit={async () => {
+            /* ⚠ ОГНОО нь ЗАСАГДАНА: сервер `EditIn.date_in`-ыг хүлээж авдаг.
+               Бартер хөрөнгө нь ихэвчлэн БУРУУ өдрөөр (төлбөр бүртгэсэн өдрөөр)
+               орж ирдэг тул «хэдэн хоног хэвтэв» гэсэн тоо нь худал болдог. */
+            const body = { ...f, value_in: valueIn, asking_price: parseMoney(f.asking_price) };
+            try {
+              if (a) await api(`/api/barter/${a.id}`, { method: "PUT", body: JSON.stringify(body) });
+              else await api("/api/barter", { method: "POST", body: JSON.stringify(body) });
+              toast("Хадгалагдлаа");
+              onDone(barterSavedOutcome(!!a, { name: f.name, valueIn, dateIn: f.date_in }));
+            } catch (e: any) { toast(e.message, "err"); }
+          }}>Хадгалах</SubmitButton>
       </div>
     </FormModal>
   );

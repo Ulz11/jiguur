@@ -1,9 +1,10 @@
 import { useId, useState } from "react";
 import { api } from "../api";
-import { FormModal, SubmitButton, useToast } from "../ui";
+import { FormModal, Receipt, SubmitButton, useToast } from "../ui";
 import { formDirty } from "../lib/dirty";
 import { materialBase, gradePriceRows, pricesDirty, materialPayload,
          type GradePriceRow } from "../lib/catalog";
+import { gradeDiff, materialDiff } from "../lib/catalogDiff";
 
 /* ═══ КАТАЛОГИЙН ХОЁР ЦОНХ — НЭГ ХЭРЭГЖИЛТ, ХОЁР ХААЛГА ═══
  *
@@ -29,24 +30,31 @@ export function GradeModal({ g, onClose, onDone }: any) {
   const f0 = { code: g.code || "", name: g.name || "", sort: g.sort ?? 0 };
   const [f, setF] = useState(f0);
   const uid = useId();
+  const diff = g.id ? gradeDiff(f0, f) : [];
   return (
-    <FormModal title={g.id ? "Зэрэглэл засах" : "Шинэ зэрэглэл"} onClose={onClose} dirty={formDirty(f0, f)}>
+    <FormModal title={g.id ? "Зэрэглэл засах" : "Шинэ зэрэглэл"} onClose={onClose}
+               dirty={formDirty(f0, f)}
+               /* ГОЛ ТОВЧ ГҮЙЛТИЙН ГАДНА — `ui.tsx`-ийн `footer` слот. */
+               footer={
+                 <>
+                   {diff.length > 0 && <Receipt className="mb-3" rows={diff} />}
+                   <div className="flex justify-end gap-2.5">
+                     <button className="btn-secondary" onClick={onClose}>Болих</button>
+                     <SubmitButton disabled={!f.code.trim()} onSubmit={async () => {
+                       try {
+                         if (g.id) await api(`/api/grades/${g.id}`, { method: "PUT", body: JSON.stringify(f) });
+                         else await api("/api/grades", { method: "POST", body: JSON.stringify(f) });
+                         toast("Хадгалагдлаа"); onDone();
+                       } catch (e: any) { toast(e.message, "err"); }
+                     }}>Хадгалах</SubmitButton>
+                   </div>
+                 </>}>
       <label className="lbl" htmlFor={`${uid}-code`}>Код (богино)</label>
       <input id={`${uid}-code`} className="inp mb-3.5" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="ж: С" autoFocus />
       <label className="lbl" htmlFor={`${uid}-name`}>Нэр</label>
       <input id={`${uid}-name`} className="inp mb-3.5" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="ж: С зэрэглэл" />
       <label className="lbl" htmlFor={`${uid}-sort`}>Эрэмбэ</label>
-      <input id={`${uid}-sort`} type="number" className="inp mb-5" value={f.sort} onChange={(e) => setF({ ...f, sort: +e.target.value })} />
-      <div className="flex justify-end gap-2.5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <SubmitButton disabled={!f.code.trim()} onSubmit={async () => {
-          try {
-            if (g.id) await api(`/api/grades/${g.id}`, { method: "PUT", body: JSON.stringify(f) });
-            else await api("/api/grades", { method: "POST", body: JSON.stringify(f) });
-            toast("Хадгалагдлаа"); onDone();
-          } catch (e: any) { toast(e.message, "err"); }
-        }}>Хадгалах</SubmitButton>
-      </div>
+      <input id={`${uid}-sort`} type="number" className="inp" value={f.sort} onChange={(e) => setF({ ...f, sort: +e.target.value })} />
     </FormModal>
   );
 }
@@ -75,8 +83,32 @@ export function MaterialModal({ m, grades, onClose, onDone }: any) {
     || pricesDirty(prices0, f.prices);
   const setPrice = (i: number, patch: Partial<GradePriceRow>) =>
     setF({ ...f, prices: f.prices.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+  /* ХАДГАЛАХЫН ӨМНӨ ХОЁР ТОО. «Тариф 110₮ → 150₮» гэдэг мөр нь тэр агшинд
+     дэлгэц дээр гарч ирнэ: Отгоо 110-ийг 1100 болгож бичсэн бол ТЭНД харна,
+     гурван сарын дараа нэхэмжлэл дээр биш. Зөвхөн ЗАСВАР дээр — шинэ
+     материалын «0₮ → 150₮» нь өөрчлөлт биш, анхны утга. */
+  const diff = m.id ? materialDiff(base0, prices0, f) : [];
   return (
-    <FormModal title={m.id ? "Материал засах" : "Шинэ материал"} onClose={onClose} wide dirty={dirty}>
+    <FormModal title={m.id ? "Материал засах" : "Шинэ материал"} onClose={onClose} wide dirty={dirty}
+               /* ГОЛ ТОВЧ ГҮЙЛТИЙН ГАДНА (`ui.tsx`-ийн `footer`). Зургаан
+                  зэрэглэлтэй үед энэ цонх 836px өндөр болдог: 768px дэлгэц
+                  дээр «Хадгалах» нь нүднээс 68px доор үлддэг байв — Отгоо
+                  ЦОНХ ДОТОР гүйлгэх гэсэн хөдөлгөөнгүй тул ажил дуусахгүй. */
+               footer={
+                 <>
+                   {diff.length > 0 && <Receipt className="mb-3" rows={diff} />}
+                   <div className="flex justify-end gap-2.5">
+                     <button className="btn-secondary" onClick={onClose}>Болих</button>
+                     <SubmitButton disabled={!f.name.trim()} onSubmit={async () => {
+                       try {
+                         const body = materialPayload(m, f);
+                         if (m.id) await api(`/api/materials/${m.id}`, { method: "PUT", body: JSON.stringify(body) });
+                         else await api("/api/materials", { method: "POST", body: JSON.stringify(body) });
+                         toast("Хадгалагдлаа"); onDone();
+                       } catch (e: any) { toast(e.message, "err"); }
+                     }}>Хадгалах</SubmitButton>
+                   </div>
+                 </>}>
       <div className="grid grid-cols-2 gap-3.5 max-sm:grid-cols-1">
         <div><label className="lbl" htmlFor={`${uid}-name`}>Нэр *</label>
           <input id={`${uid}-name`} className="inp" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="ж: Хэв хашмал 2020" autoFocus /></div>
@@ -119,17 +151,6 @@ export function MaterialModal({ m, grades, onClose, onDone }: any) {
         {f.prices.length === 0 && (
           <p className="text-[12.5px] text-t3 py-3">Зэрэглэл бүртгэгдээгүй байна — эхлээд зэрэглэл нэмнэ.</p>
         )}
-      </div>
-      <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <SubmitButton disabled={!f.name.trim()} onSubmit={async () => {
-          try {
-            const body = materialPayload(m, f);
-            if (m.id) await api(`/api/materials/${m.id}`, { method: "PUT", body: JSON.stringify(body) });
-            else await api("/api/materials", { method: "POST", body: JSON.stringify(body) });
-            toast("Хадгалагдлаа"); onDone();
-          } catch (e: any) { toast(e.message, "err"); }
-        }}>Хадгалах</SubmitButton>
       </div>
     </FormModal>
   );

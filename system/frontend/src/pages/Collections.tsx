@@ -1,33 +1,70 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { api, money, sayaFmt, sayaFmtLike } from "../api";
-import { Spinner, useToast, Empty } from "../ui";
-import { useLive } from "../lib/live";
-import { nextSort, ariaSort, sortByNumber, type SortState } from "../lib/sort";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { api, fmt, money, sayaFmt, sayaFmtLike } from "../api";
+import { Spinner, useToast, Empty, PageError, Exact } from "../ui";
+import { dialogOpen, useLive } from "../lib/live";
+import { nextSort, ariaSort, sortByNumber } from "../lib/sort";
 import { clientHref } from "../lib/links";
+import { canClosePromise, collectionFilterFrom, collectionSortFrom, collectionsHref,
+         promiseDoneText, promiseStatusPill, sortAria,
+         type CollectionFilter, type CollectionSortKey, type PromiseStatus } from "../lib/collections";
 import { contactRolePill, preferredContact, telHref } from "../lib/contact";
 import { PromiseNoteModal, type PromiseTarget } from "../components/PromiseNote";
 import { UNCHARGED } from "../lib/penalty";
 import { uninvoicedLine } from "../lib/receivable";
 
-type SortKey = "overdue" | "oldest";
+type SortKey = CollectionSortKey;
 
 export default function Collections() {
   const [d, setD] = useState<any>(null);
   const [note, setNote] = useState<any>(null);
-  const [filter, setFilter] = useState("all");
-  /* Анхны эрэмбэ = хамгийн их хэтэрсэн нь дээрээ. Энэ жагсаалт «хэнд эхэлж
-     залгах вэ» гэсэн нэг асуултад хариулдаг тул эрэмбэ нь ХООСОН байж болохгүй. */
-  const [sort, setSort] = useState<SortState<SortKey>>({ key: "overdue", dir: "desc" });
+  const [err, setErr] = useState<string | null>(null);
+  const [busyPromise, setBusyPromise] = useState<number | null>(null);
   const toast = useToast();
+  const nav = useNavigate();
+  /* ШҮҮЛТҮҮР БА ЭРЭМБЭ НЬ ХАЯГАН ДЭЭР (`lib/collections.ts`). Урьд нь
+     `useState`-д сууж байсан: Отгоо «Амлалт зөрчсөн» гэж шүүгээд нэг
+     харилцагч руу орж, буцах товч дарахад ЖАГСААЛТ БҮГД болж эргэн ирдэг —
+     тэр дөнгөж хаана байснаа алдана. */
+  const [params] = useSearchParams();
+  const filter = collectionFilterFrom(params.get("state"));
+  const sort = collectionSortFrom(params.get("sort"));
+  const go = (state: CollectionFilter, so = sort) => nav(collectionsHref(state, so));
+  const setFilter = (state: CollectionFilter) => go(state);
+  const setSort = (so: typeof sort) => go(filter, so);
 
-  const load = () => api("/api/collections").then(setD).catch((e) => toast(e.message, "err"));
-  /** Фонд шинэчлэх — эргэлдэгч гаргахгүй, алдааг чимээгүй залгина. */
-  const refresh = () => api("/api/collections").then(setD).catch(() => {});
+  const load = () => api("/api/collections")
+    .then((v: any) => { setD(v); setErr(null); })
+    .catch((e: any) => { toast(e.message, "err"); setErr(e.message); });
+  /** Фонд шинэчлэх — эргэлдэгч гаргахгүй. Уналт нь ТОПБАРЫН заагчийг
+   *  шарлуулна (`api.ts` → `lib/live.ts`). */
+  const refresh = () => {
+    /* ⚠ ЦОНХ НЭЭЛТТЭЙ БАЙВАЛ ТАТАХГҮЙ. Отгоо «+ Тэмдэглэл» цонхонд амлалтаа
+       бичиж байхад доод давхарга нь шинэчлэгдэж `d.rows` солигдоно; цонх нь
+       мөрөө барьж байдаг тул тоо нь гэнэт өөрчлөгдөж, бичиж байсан зүйл нь
+       эргэлзээ болно. */
+    if (dialogOpen()) return Promise.resolve();
+    return api("/api/collections").then((v: any) => { setD(v); setErr(null); }).catch(() => {});
+  };
   useLive((bg) => (bg ? refresh() : load()), []);
+  if (err && !d) return <PageError error={err} onRetry={() => { setErr(null); load(); }} />;
   if (!d) return <Spinner />;
 
-  const FILTERS: [string, string, (r: any) => boolean][] = [
+  /* АМЛАЛТ ХААХ. Хаагдахгүй амлалт нь «Амлалт зөрчсөн» тоолуурыг ХЭЗЭЭ Ч
+     буулгахгүй: төлбөр орсон ч мөр нээлттэй хэвээр тоологдож, дашбоардын
+     улаан мэдэгдэл үүрд үлдэнэ. */
+  async function closePromise(r: any, status: PromiseStatus) {
+    setBusyPromise(r.promise_id);
+    try {
+      await api(`/api/collections/notes/${r.promise_id}`, {
+        method: "PATCH", body: JSON.stringify({ status }) });
+      toast(promiseDoneText(r.client, status));
+      await load();
+    } catch (e: any) { toast(e.message, "err"); }
+    finally { setBusyPromise(null); }
+  }
+
+  const FILTERS: [CollectionFilter, string, (r: any) => boolean][] = [
     ["all", "Бүгд", () => true],
     ["nocontact", "Холбогдоогүй", (r) => !r.last_contact],
     ["late", "Амлалт зөрчсөн", (r) => r.promise_late],
@@ -35,6 +72,9 @@ export default function Collections() {
     ["old", "90+ хоног", (r) => r.oldest_days >= 90],
   ];
   const test = FILTERS.find((f) => f[0] === filter)![2];
+  /** Амласан ДҮН — толгойн тоо ба доорх «яг …₮» хоёул эндээс. */
+  const promisedTotal = d.rows.reduce(
+    (s: number, r: any) => s + (r.promise_late ? 0 : r.promise_amount), 0);
   const rows = sortByNumber(
     d.rows.filter(test),
     (r: any) => (sort.key === "overdue" ? r.overdue : r.oldest_days),
@@ -56,8 +96,12 @@ export default function Collections() {
     <th className={`${TH} ${right ? "text-right" : ""}`} aria-sort={ariaSort(sort, key)}>
       {/* Сум нь ЧИМЭГ биш — энэ багана эрэмбэлэгддэг гэдгийг хэлдэг тайван дохио.
           Идэвхтэй үед брэнд өнгөөр чиглэлээ, идэвхгүй үед бүдэг ↕ хэлбэрээр. */}
+      {/* Товшилтын талбай 28px байв (12px бичиг + 2×5px дүүргэлт) — шатны доод
+          хязгаар 36px. Гараа чичирдэг 60 настай хүн эрэмбийн толгойг гурав
+          дарж байж ондог. Дүүргэлт нь СӨРӨГ захаар нөхөгдөнө: хүснэгтийн
+          толгой хэвээрээ, зөвхөн онох талбай томроно (`index.css .th-sort`). */}
       <button className="th-sort" onClick={() => setSort(nextSort(sort, key))}
-              aria-label={`${label} — эрэмбэлэх`}>
+              aria-label={sortAria(label, sort, key)}>
         {label}
         <span className={sort.key === key ? "text-brand-ink" : "text-t3"} aria-hidden="true">
           {sort.key === key ? SORT_ARROW : "↕"}
@@ -82,6 +126,9 @@ export default function Collections() {
           <div className="text-[28px] font-extrabold text-white tabular-nums leading-tight">
             {sayaFmt(d.total_overdue)} <span className="text-sm text-white/70 font-semibold">₮</span>
           </div>
+          {/* БҮТЭН дүн нь ил: утсаар нэхэх гэж байгаа хүнд «77.4 сая» биш,
+              ЯГ тэр тоо хэрэгтэй. Урьд нь энэ картад `title` ч байгаагүй. */}
+          <Exact n={d.total_overdue} className="text-white/70" />
           <div className="mt-2"><span className="pill bg-white/10 text-white/80">{d.rows.length} харилцагч</span></div>
         </div>
         <div className="command-metric">
@@ -96,10 +143,12 @@ export default function Collections() {
         </div>
         <div className="command-metric">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Амласан дүн</div>
-          <div className="text-[28px] font-extrabold text-money tabular-nums leading-tight">
-            {sayaFmt(d.rows.reduce((s: number, r: any) => s + (r.promise_late ? 0 : r.promise_amount), 0))}
+          <div className="text-[28px] font-extrabold text-money tabular-nums leading-tight"
+               title={money(promisedTotal)}>
+            {sayaFmt(promisedTotal)}
             <span className="text-sm text-t2 font-semibold"> ₮</span>
           </div>
+          <Exact n={promisedTotal} />
         </div>
       </div>
 
@@ -153,8 +202,18 @@ export default function Collections() {
                       <> <span className={contactRolePill(pick.role)}>{pick.role}</span></>
                     )}
                     {phone && (
+                      /* Утасны дугаар 15px өндөртэй холбоос байв — Отгоо
+                         эгчийн энэ хуудсан дээрх ГОЛ үйлдэл (залгах) нь
+                         шатныхаа доод хязгаараас (36px) хоёр дахин намхан.
+                         `tap-link` нь өндрийг барьж, дүүргэлт нь мөрийн зайд
+                         шингэнэ — хүснэгтийн мөр өсөхгүй. */
+                      /* ⚠ `aria-label` ӨГӨХГҮЙ: холбоосын НЭР нь дэлгэц дээрх
+                         ЯГ тэр текст («☎ 99960025») байх ёстой — уншигчаар
+                         ажилладаг хүн «☎ 99960025» гэж сонсоод дэлгэц дээрээс
+                         тэр мөрийг олно. Нэрийг нь дахин зохиовол харагдах
+                         текст ба дуудагдах нэр хоёр сална. */
                       <> · <a href={telHref(phone)} title={`${phone} руу залгах`}
-                              className="text-t2 font-semibold hover:text-brand-ink hover:underline">
+                              className="tap-link text-t2 font-semibold hover:text-brand-ink hover:underline">
                             ☎ {phone}
                           </a></>
                     )}
@@ -204,10 +263,41 @@ export default function Collections() {
                 </td>
                 <td className={TD}>
                   {r.promise_date ? (
-                    <span className={r.promise_late ? "pill-red" : "pill-green"}
-                          title={money(r.promise_amount)}>
-                      {r.promise_date} · {sayaFmt(r.promise_amount)}₮
-                    </span>
+                    <>
+                      <span className={r.promise_late ? "pill-red" : "pill-green"}
+                            title={money(r.promise_amount)}>
+                        {r.promise_date} · {sayaFmt(r.promise_amount)}₮
+                      </span>
+                      <span className="block text-[12px] text-t3 tabular-nums mt-0.5">
+                        яг {fmt(r.promise_amount)}₮
+                      </span>
+                      {/* ТӨЛӨВ нь мөрөн дээрээ: хаагдсан амлалт «биелсэн үү,
+                          зөрчсөн үү» гэдгээ өөрөө хэлнэ (тоолуурт ч,
+                          мэдэгдэлд ч ОРОХГҮЙ болсон гэдгийн шалтгаан). */}
+                      {promiseStatusPill(r.promise_status) && (
+                        <span className="block mt-1">
+                          <span className={promiseStatusPill(r.promise_status)![1]}>
+                            {promiseStatusPill(r.promise_status)![0]}
+                          </span>
+                        </span>
+                      )}
+                      {/* Хаах хоёр товч — ЗӨВХӨН нээлттэй амлалт дээр.
+                          Урьд нь амлалт хаагдах арга БАЙГААГҮЙ: харилцагч
+                          мөнгөө төлсөн ч «Амлалт зөрчсөн» тоолуур буурахгүй,
+                          дашбоардын улаан мэдэгдэл үүрд үлддэг байв. */}
+                      {canClosePromise(r) && (
+                        <span className="flex gap-1.5 mt-1.5 flex-wrap max-w-[152px]">
+                          <button className="btn-secondary !min-h-9 !py-1.5 !px-2.5 text-[12px]"
+                                  disabled={busyPromise === r.promise_id}
+                                  aria-label={`${r.client} — амлалт биелсэн гэж хаах`}
+                                  onClick={() => closePromise(r, "kept")}>Биелсэн ✓</button>
+                          <button className="btn-secondary !min-h-9 !py-1.5 !px-2.5 text-[12px]"
+                                  disabled={busyPromise === r.promise_id}
+                                  aria-label={`${r.client} — амлалт зөрчсөн гэж хаах`}
+                                  onClick={() => closePromise(r, "broken")}>Зөрчсөн</button>
+                        </span>
+                      )}
+                    </>
                   ) : <span className="text-t3 text-[12.5px]">—</span>}
                 </td>
                 <td className={TD}>

@@ -1,10 +1,13 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, fmt, money, user } from "../api";
-import { Spinner, Empty, FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
+import { Spinner, Empty, FinanceDisclosure, FinanceBlock, FinanceRow,
+         ConfirmModal, OutcomeStrip, useToast } from "../ui";
 import { rowClickProps } from "../lib/rowClick";
 import { clientHref, contractHref } from "../lib/links";
+import { dialogOpen, useLive } from "../lib/live";
 import { holdingSections, rateLabel, daysLabel } from "../lib/material";
+import { adjustmentLine, isAdjustment, signed, voidLine } from "../lib/stock";
 import { mvName } from "../lib/movement";
 
 /* Материалын дэлгэрэнгүй — «энэ хэв ХААНА байна вэ?» гэсэн ганц хариу.
@@ -24,14 +27,26 @@ export default function MaterialDetail() {
   const { id } = useParams();
   const [d, setD] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
+  /* Хүчингүй болгох гэж буй залруулга + үр дүнгийн зурвас */
+  const [voidAsk, setVoidAsk] = useState<any>(null);
+  const [reason, setReason] = useState("");
+  const [outcome, setOutcome] = useState<string | null>(null);
   const nav = useNavigate();
+  const toast = useToast();
   const u = user();
 
-  useEffect(() => {
-    setD(null);
-    setErr(null);
-    api(`/api/materials/${id}`).then(setD).catch((e) => setErr(e.message));
-  }, [id]);
+  /* Энэ хуудас нь ДАРГЫН ажлын дэлгэц: тэр нэг материалаа нээгээд орхиод
+     тоолж явдаг. Урьд нь ганц удаа ачаалагдаад ЗОГСДОГ байсан тул буцаж
+     ирэхэд гурван цагийн өмнөх тоо зогсож байна. Одоо бусад хуудастай нэг
+     журмаар өөрөө шинэчлэгдэнэ (цонх нээлттэй үед татахгүй). */
+  const load = (bg: boolean) => {
+    if (bg && dialogOpen()) return;
+    if (!bg) { setD(null); setErr(null); }
+    api(`/api/materials/${id}`)
+      .then((v: any) => { setD(v); setErr(null); })
+      .catch((e: any) => { if (!bg) setErr(e.message); });
+  };
+  useLive(load, [id]);
 
   const back = <Link to="/warehouse" className="btn-ghost mb-3 inline-flex">← Агуулах руу буцах</Link>;
 
@@ -48,16 +63,38 @@ export default function MaterialDetail() {
   );
   if (!d) return <Spinner />;
 
+  /* ЗАЛРУУЛГЫГ ХҮЧИНГҮЙ БОЛГОХ — андуурч тоолсныг буцаана. Мөр нь
+     ЖАГСААЛТААС ГАРАХГҮЙ (H1): шалтгаантайгаа үлдэж, зөвхөн тооноос гарна.
+     Сервер `require_roles("manager", "factory")` — санхүүчид товч зурахгүй. */
+  async function voidAdjustment() {
+    try {
+      await api(`/api/stock/adjustments/${voidAsk.id}/void`, {
+        method: "POST", body: JSON.stringify({ reason: reason.trim() }) });
+      setOutcome(`Залруулга хүчингүй болов — ${adjustmentLine(voidAsk)}`
+                 + (reason.trim() ? ` · шалтгаан: ${reason.trim()}` : ""));
+      toast("Залруулга хүчингүй болов — үлдэгдэл буцлаа");
+      setVoidAsk(null);
+      setReason("");
+      load(false);
+    } catch (e: any) { toast(e.message, "err"); }
+  }
+
   const sections = holdingSections(d.holdings || []);
   const t = d.totals;
   const unit = d.unit || "ш";
   const many = sections.length > 1;
   const canCount = u?.role !== "finance";
   const seesMoney = u?.role !== "factory";
+  /* Хүчингүй болгох эрх — серверийнхтэй ЯГ ижил хос. Санхүүчид товч харагдвал
+     дараад 403 авах болно: холбоосгүй байх нь худал товчноос ДЭЭР. */
+  const canVoid = u?.role === "manager" || u?.role === "factory";
 
   return (
     <div>
       {back}
+
+      {/* ҮР ДҮНГИЙН ЗУРВАС — хүчингүй болголтын дараа ЮУ БОЛСОН нь үлдэнэ */}
+      {outcome && <OutcomeStrip text={outcome} onClose={() => setOutcome(null)} />}
 
       {/* ---------- Толгой ---------- */}
       <div className="card p-6 mb-4">
@@ -283,20 +320,67 @@ export default function MaterialDetail() {
           </tr></thead>
           <tbody>
             {d.movements.map((mv: any) => {
+              /* ЗАЛРУУЛГЫН МӨР (`row: "adjustment"`). Отгоогийн асуулт нь
+                 «энэ хэвний тоо ЯАГААД өөрчлөгдөв?» — хариулт нь ачилт ч
+                 байж болно, тооллого ч. Хоёр өөр жагсаалтад хуваавал тэр
+                 хариултыг олохын тулд хоёр дэлгэц харьцуулах ёстой болно.
+                 Залруулгын мөр нь ГЭРЭЭГҮЙ тул дарагдахгүй. */
+              if (isAdjustment(mv)) return (
+                <tr key={`adj-${mv.id}`} className={mv.voided ? "opacity-60" : ""}>
+                  <td className="td whitespace-nowrap tabular-nums">{mv.date}</td>
+                  <td className="td" colSpan={3}>
+                    <b className={`text-ink ${mv.voided ? "line-through" : ""}`}>
+                      {adjustmentLine(mv)}
+                    </b>
+                    <span className="block text-[12px] text-t3 tabular-nums">
+                      {fmt(mv.before)} → {fmt(mv.after)}{unit}
+                      {mv.batch && <> · багц {mv.batch}</>}
+                    </span>
+                    {mv.voided && (
+                      <span className="block text-[12px] text-danger font-semibold mt-0.5">
+                        {voidLine(mv)}
+                      </span>
+                    )}
+                  </td>
+                  <td className={`td text-right tabular-nums font-bold ${
+                        mv.voided ? "text-t3 line-through" : mv.delta > 0 ? "text-money" : "text-danger"}`}>
+                    {signed(mv.delta)}
+                  </td>
+                  <td className="td text-right">
+                    {/* Андуурч тоолсныг БУЦААХ зам. Мөр нь ЖАГСААЛТААС
+                        ГАРАХГҮЙ — шалтгаантайгаа үлдэж, зөвхөн тооноос гарна. */}
+                    {canVoid && !mv.voided && (
+                      <button className="btn-ghost btn-row text-danger"
+                              aria-label={`${adjustmentLine(mv)} — хүчингүй болгох`}
+                              onClick={() => { setVoidAsk(mv); setReason(""); }}>Хүчингүй</button>
+                    )}
+                  </td>
+                </tr>
+              );
+
               const issue = mv.type === "ISSUE";
-              const name = mvName(mv.type);
+              const name = mv.kind || mvName(mv.type);
+              /* ХҮЧИНГҮЙ болсон падан нь ЖАГСААЛТААС ГАРАХГҮЙ (H1) — гэхдээ
+                 тооцоонд ОРООГҮЙ гэдгээ ил хэлэх ёстой. Урьд нь тэр мөр
+                 хүчинтэйтэй ЯГ ижил харагдаж, «нийлбэр таарахгүй байна»
+                 гэсэн асуулт төрүүлдэг байв. */
+              const voided = !!mv.voided;
               return (
-                <tr key={`${mv.movement_id}-${mv.id}`} className="cursor-pointer hover:bg-canvas transition group"
+                <tr key={`${mv.movement_id}-${mv.id}`}
+                    className={`cursor-pointer hover:bg-canvas transition group ${voided ? "opacity-60" : ""}`}
                     {...rowClickProps(() => nav(contractHref(mv.contract_id)),
-                      `${mv.date} · ${name} ${fmt(mv.qty)}${unit} · гэрээ №${mv.contract_no} — нээх`,
+                      `${mv.date} · ${name} ${fmt(mv.qty)}${unit}${voided ? " · ХҮЧИНГҮЙ" : ""} · гэрээ №${mv.contract_no} — нээх`,
                       "row")}>
                   <td className="td whitespace-nowrap tabular-nums">{mv.date}</td>
                   <td className="td">
-                    <b className="text-ink">{name}</b>
+                    <b className={`text-ink ${voided ? "line-through" : ""}`}>{name}</b>
                     {/* Баталгаажаагүй ачилт үлдэгдэлд ОРООГҮЙ — мөр дээрээ хэлнэ */}
                     {mv.status === "pending" && <span className="pill-amber ml-1.5">хүлээгдэж буй</span>}
                     {!!mv.return_grade && mv.return_grade !== mv.grade && (
                       <span className="text-t3"> → {mv.return_grade}</span>
+                    )}
+                    {voided && (
+                      <span className="block text-[12px] text-danger font-semibold">{voidLine(mv)}</span>
                     )}
                     {(mv.repair_qty > 0 || mv.writeoff_qty > 0) && (
                       <span className="block text-[12px] text-t3">
@@ -315,7 +399,8 @@ export default function MaterialDetail() {
                     </span>
                   </td>
                   <td className="td"><span className="pill-blue">{mv.grade}</span></td>
-                  <td className={`td text-right tabular-nums font-bold ${issue ? "text-ink" : "text-warn"}`}>
+                  <td className={`td text-right tabular-nums font-bold ${
+                        voided ? "text-t3 line-through" : issue ? "text-ink" : "text-warn"}`}>
                     {issue ? "+" : "−"}{fmt(mv.qty)}
                   </td>
                   <td className="td text-t3 group-hover:text-ink transition" aria-hidden="true">→</td>
@@ -364,6 +449,27 @@ export default function MaterialDetail() {
             </FinanceBlock>
           )}
         </FinanceDisclosure>
+      )}
+
+      {/* ХҮЧИНГҮЙ БОЛГОХ — тоо буцна, МӨР нь үлдэнэ (H1). Шалтгаан нь заавал:
+          «яагаад буцаав?» гэсэн асуулт мөрөндөө хариултаа авч явна. */}
+      {voidAsk && (
+        <ConfirmModal
+          title="Залруулгыг хүчингүй болгох"
+          intro={<><b className="text-ink">{d.name}</b> — {adjustmentLine(voidAsk)}</>}
+          rows={[{ label: "Үлдэгдэл буцна", value: `${fmt(voidAsk.after)} → ${fmt(voidAsk.before)}${unit}` }]}
+          note="Мөр нь жагсаалтад шалтгаантайгаа ҮЛДЭНЭ — зөвхөн тооноос гарна."
+          confirmLabel="Хүчингүй болгох"
+          confirmDisabled={!reason.trim()}
+          dirty={!!reason.trim()}
+          danger
+          onClose={() => { setVoidAsk(null); setReason(""); }}
+          onConfirm={voidAdjustment}>
+          <label className="lbl mt-4" htmlFor="void-adj-reason">Шалтгаан (заавал)</label>
+          <input id="void-adj-reason" className="inp"
+                 placeholder="ж: буруу зэрэглэл дээр тоолсон"
+                 value={reason} onChange={(e) => setReason(e.target.value)} />
+        </ConfirmModal>
       )}
     </div>
   );

@@ -4,6 +4,9 @@ import { disclosureProps, panelId } from "./lib/disclosure";
 import { editKeyAction } from "./lib/edit";
 import { saysIrreversible } from "./lib/danger";
 import { inlineErrorText, saveErrorOf, unsavedToast } from "./lib/saveError";
+import { clearDialogDirty, markDialogDirty } from "./lib/dirty";
+import { fmt, sayaFmt } from "./lib/num";
+import { takeDraft } from "./lib/session";
 
 /* ---------- Toast ---------- */
 const ToastCtx = createContext<(msg: string, kind?: "ok" | "err") => void>(() => {});
@@ -60,13 +63,26 @@ export function ToastProvider({ children }: { children: ReactNode }) {
    Одоо: биет нь дэлгэцийн 85%-д багтаж, АГУУЛГА нь дотроо гүйнэ; гарчиг
    (× товчтойгоо) ба `footer` (Болих + гол товч) нь гүйлтийн ГАДНА, үргэлж
    нүдний өмнө үлдэнэ. Escape, `dirty` хамгаалалт ЯГ хэвээр. */
-export function Modal({ title, onClose, children, footer, wide, dirty }: {
+export function Modal({ title, onClose, children, footer, wide, dirty, rescue }: {
   title: string; onClose: () => void; children: ReactNode;
   /** Гүйлтийн ГАДНА үлдэх мөр — «Болих» ба гол товч (заримдаа баримт). */
   footer?: ReactNode;
   wide?: boolean; dirty?: boolean;
+  /** 401 нь бөглөж байгаа хүнийг АСУУЛГҮЙ шиднэ (`api.ts`). Тэр агшинд
+   *  бичсэн зүйл нь React-ийн санах ойтой хамт алга болно. `rescue` өгсөн
+   *  цонхны утгууд шидэгдэхийн ӨМНӨ `sessionStorage`-д үлдэж, дахин
+   *  нэвтрээд ЯГ тэр зам дээр буцахад сэргэнэ (`lib/session.ts`). */
+  rescue?: { name: string; values: Record<string, unknown> };
 }) {
   const [askClose, setAskClose] = useState(false);
+  /* Бохир цонхны бүртгэл (`lib/dirty.ts`) — «Гарах» товч ба 401 хоёул
+     ЦОНХНООС ГАДНА байдаг тул React-ийн төлөвийг гаднаас нь уншиж чадахгүй. */
+  const dirtyKey = useRef({}).current;
+  useEffect(() => {
+    if (dirty) markDialogDirty(dirtyKey, { name: rescue?.name ?? title, values: rescue?.values ?? {} });
+    else clearDialogDirty(dirtyKey);
+  });
+  useEffect(() => () => clearDialogDirty(dirtyKey), [dirtyKey]);
   const guardRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -178,6 +194,8 @@ export function FormModal(p: {
   /** Гүйлтийн ГАДНА үлдэх мөр — «Болих» ба гол товч (`Modal`-ийн тайлбарыг үз). */
   footer?: ReactNode;
   wide?: boolean; dirty: boolean;
+  /** 401-ийн цаана бөглөсөн зүйлээ авардаг цонхнууд (`Modal.rescue`). */
+  rescue?: { name: string; values: Record<string, unknown> };
 }) {
   return <Modal {...p} />;
 }
@@ -772,6 +790,102 @@ export function Prog({ pct, color, label }: { pct: number; color?: string; label
          {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true as const })}>
       <div className="h-full rounded-full transition-all duration-700"
            style={{ width: `${Math.min(Math.max(pct, 0), 100)}%`, background: color || "var(--color-brand)" }} />
+    </div>
+  );
+}
+
+/* ---------- ҮР ДҮНГИЙН ЗУРВАС ----------
+   Гэрээний ба харилцагчийн хуудсан дээр ЯГ ижил зурвас хоёр удаа гараар
+   бичигдсэн байв. Гурав дахийг нь бичихийн оронд НЭГ биет: үг нь
+   `lib/outcome.ts`-д, ХЭЛБЭР нь энд. Хоёр дэлгэц нэг өнгө, нэг байрлал,
+   нэг «Хаах» товчтой байх нь Отгоод «энэ бол ижил зүйл» гэдгийг заана.
+
+   ЗУРВАС ӨӨРӨӨ АРИЛАХГҮЙ: `ToastProvider`-ийн амжилтын мэдэгдэл 3.2 секундын
+   дараа алга болдог — Отгоо тэр агшинд цаас руугаа харж, утсаа авч байна. */
+export function OutcomeStrip({ text, onClose }: { text: string; onClose: () => void }) {
+  return (
+    <div role="status"
+         className="mb-4 rounded-2xl border border-money bg-money-50 px-4 py-3
+                    flex items-start gap-3 flex-wrap">
+      <span aria-hidden="true" className="text-money font-bold leading-6">✓</span>
+      <span className="flex-1 min-w-[200px] text-[13.5px] font-semibold text-ink
+                       leading-6 tabular-nums break-words">{text}</span>
+      <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]"
+              onClick={onClose}>Хаах</button>
+    </div>
+  );
+}
+
+/* ---------- ХУУДАС АЧААЛАГДСАНГҮЙ ----------
+   `api(...).then(setD)` гэсэн `.catch`-гүй мөр нь хамгийн чимээгүй эвдрэл:
+   сервер 500 буцаасан ч, сүлжээ тасарсан ч `d` нь `null` хэвээр үлдэж,
+   хуудас нь `<Spinner />` дээр ҮҮРД зогсоно. Отгоо «Ачаалж байна…» гэсэн
+   бичгийг 20 минут ширтэж, дараа нь утас руу гүйнэ.
+
+   Одоо: серверийн ЯГ өгүүлбэр (эсвэл сүлжээний алдаа) + ГАРАХ ЗАМ. */
+export function PageError({ error, onRetry, hint }: {
+  error: string;
+  onRetry: () => void;
+  /** Нэмэлт мөр — ж: «Тайлан зөвхөн менежер, санхүүчид нээгддэг». */
+  hint?: string;
+}) {
+  return (
+    <div className="card p-8 max-w-lg mx-auto mt-6 text-center" role="alert">
+      <div className="text-3xl mb-2.5" aria-hidden="true">⚠</div>
+      <h2 className="font-bold text-ink text-[15.5px] mb-1.5">Мэдээлэл ачаалагдсангүй</h2>
+      {/* Серверийн ӨӨРИЙН үг — «Алдаа гарлаа» гэж дарвал шалтгаан алдагдана */}
+      <p className="text-t2 text-[13.5px] leading-relaxed mb-1 break-words">{error}</p>
+      {hint && <p className="text-t3 text-[12.5px] mb-1">{hint}</p>}
+      <button className="btn-primary mt-4" onClick={onRetry}>Дахин оролдох</button>
+    </div>
+  );
+}
+
+/* ---------- ЯГ ХЭДЭН ТӨГРӨГ ----------
+   `sayaFmt` нь «77.4 сая₮» гэж бичээд БҮТЭН дүнг `title`-д нуудаг. Отгоо
+   эгч хулгана хөвүүлж тайлбар унших зуршилгүй (планшет дээр огт боломжгүй)
+   тул тэр тоо түүний хувьд ОРШИН БАЙДАГГҮЙ — атал банкны хуулгатай тулгах
+   гэж байгаа хүнд яг тэр тоо л хэрэгтэй.
+
+   Одоо БҮТЭН дүн нь ИЛ дэд мөр болж зогсоно. «яг» гэсэн угтвар нь чухал:
+   нэг нүдэнд хоёр тоо зэрэгцвэл аль нь юу болохыг үг л хэлнэ (эс бөгөөс
+   «1.2 сая₮ / 1,229,460₮» нь хоёр ӨӨР хэмжигдэхүүн мэт уншигдана). */
+export function Exact({ n, className = "text-t3" }: { n: number; className?: string }) {
+  /* ⚠ ЗӨВХӨН ДУГУЙЛАГДСАН тоон дээр. `sayaFmt` нь 1 саяас доош тоог БҮТНЭЭР
+     нь бичдэг (213 → «213») — тэнд «яг 213₮» гэсэн хоёр дахь мөр нь юу ч
+     нэмэхгүй, зөвхөн нүд сарниулна. Дүрэм нь ӨӨРӨӨ шийднэ: толгой ба бүтэн
+     дүн ялгаатай байвал л дэд мөр гарна. */
+  if (sayaFmt(n) === fmt(n)) return null;
+  return (
+    <div className={`text-[12px] tabular-nums font-normal ${className}`}>
+      яг {fmt(n)}₮
+    </div>
+  );
+}
+
+/* ---------- 401-ИЙН ЦААНА ҮЛДСЭН НООРОГ ----------
+   Токен хүчингүй болмогц `api.ts` нь Отгоог АСУУЛГҮЙ нэвтрэх хуудас руу
+   шиднэ. Тэр агшинд гарын доор 45 минутын ажил байж болно: төлбөрийн дүн,
+   буцаалтын мөр, залгасны дараах амлалт. Шидэгдэхийн ӨМНӨ тэдгээр нь
+   `sessionStorage`-д үлдэж (`lib/dirty.ts` → `lib/session.ts`), дахин
+   нэвтрээд ЯГ ТЭР зам дээр тэр цонхыг нээхэд эргэж ирнэ.
+
+   НЭГ Л УДАА: `takeDraft` нь АВЧ, устгадаг — «яагаад энэ тоо энд байна»
+   гэсэн асуулт хоёр дахь удаа төрөхгүй. */
+export function useRescued(name: string): Record<string, any> | null {
+  const [v] = useState(() =>
+    (typeof location === "undefined" ? null : takeDraft(name, location.pathname)));
+  return (v as Record<string, any> | null) ?? null;
+}
+
+/** Сэргээсэн гэдгээ ХЭЛНЭ — эс бөгөөс Отгоо цонхыг өөрөө бөглөсөн гэж бодоод
+ *  хуучин тоог дахин илгээнэ. */
+export function RescueNote({ shown }: { shown: boolean }) {
+  if (!shown) return null;
+  return (
+    <div className="mb-3.5 rounded-xl bg-brand-50 px-3.5 py-2.5 text-[12.5px] text-t1"
+         role="status">
+      Нэвтрэлт тасрахын өмнө бичсэн зүйл сэргээгдлээ — шалгаад үргэлжлүүлнэ үү.
     </div>
   );
 }

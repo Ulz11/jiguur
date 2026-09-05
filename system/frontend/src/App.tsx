@@ -1,11 +1,16 @@
 import { RouterProvider, createBrowserRouter, createRoutesFromElements,
          Route, NavLink, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { ReactNode, createContext, useContext, useState, useEffect } from "react";
-import { user, clearAuth } from "./api";
-import { ToastProvider } from "./ui";
+import { ReactNode, createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { api, user, setAuth, clearAuth } from "./api";
+import { ToastProvider, ConfirmModal } from "./ui";
 import ErrorBoundary from "./components/ErrorBoundary";
-import { pageTitle } from "./lib/titles";
+import { pageTitle, shellTitle } from "./lib/titles";
 import { scopeFrom, scopeHref, type Scope } from "./lib/links";
+import { canOpen, deniedMessage } from "./lib/guard";
+import { anyDialogDirty, resetDirtyDialogs } from "./lib/dirty";
+import { live, liveText, liveTitle, liveTone, useLiveState, useMinuteTick } from "./lib/live";
+import { expiryWarning, parseExpiry, readSessionInfo, saveSessionInfo,
+         shouldRefresh } from "./lib/session";
 import { todayIso } from "./lib/schedule";
 import ChangePassword from "./components/ChangePassword";
 import brandLogo from "./assets/jiguur-logo.png";
@@ -81,6 +86,140 @@ const NAV = [
 /** Эхний хэсэг = өдөр тутмын ажил, дараах нь = байгууллагын удирдлага */
 const WORK_COUNT = 7;
 
+/* ══════════════════════════════════════════════════════════════════════════
+   ТОПБАРЫН АМЬД ЗААГЧ — «ЭНЭ ТОО ХЭР ШИНЭ ВЭ?»
+
+   Өмнө нь энд `<span className="top-pulse" title="Систем хэвийн ажиллаж
+   байна" />` гэсэн НОГООН ЦЭГ 24 цаг зогсдог байв. Тэр өгүүлбэр нь HTML-д
+   ХАТУУ бичигдсэн: сүлжээ тасарсан ч, сервер унасан ч, дэлгэц дээрх тоо
+   гурван цагийн өмнөх байсан ч ЯГ ижилхэн гэрэлтэнэ. Отгоо эгч хуучирсан
+   тоог хараад хэнд залгахаа шийдэж болно.
+
+   Одоо цэг нь `lib/live.ts`-ийн үнэнийг зурна, дарахад дахин татна.
+   ══════════════════════════════════════════════════════════════════════════ */
+function LiveDot() {
+  const s = useLiveState();
+  const now = useMinuteTick();
+  const tone = liveTone(s);
+  return (
+    <button type="button"
+            className={`top-live ${tone === "warn" ? "is-warn" : tone === "down" ? "is-down"
+                                  : tone === "idle" ? "is-idle" : ""}`}
+            title={liveTitle(s, now)} aria-label={liveTitle(s, now)}
+            /* Уншигчид: төлөв өөрчлөгдөхөд өөрөө уншина (хүн товч рүү
+               явахгүйгээр «холболт тасарсан» гэдгийг мэднэ). */
+            aria-live="polite"
+            onClick={() => {
+              /* Бүртгэгдсэн хуудас байвал ӨӨРИЙГӨӨ дахин татна; эс бөгөөс
+                 зөвхөн холболтоо шалгана — Отгоогийн бөглөж байгаа зүйлийг
+                 бүтэн дахин ачаалалт устгах ёсгүй. */
+              if (!live.retry()) api("/api/auth/me").catch(() => {});
+            }}>
+      <span className="top-pulse" aria-hidden="true" />
+      <span className="top-live-text">{liveText(s, now)}</span>
+    </button>
+  );
+}
+
+/* ---------- ТОГТМОЛ ЗУРВАС ----------
+   Toast нь 3.2 секундын дараа арилдаг. Эрх хаагдсан, нэвтрэлт дуусах гэж
+   байгаа, нууц үг анхныхаараа байгаа гурав нь ӨӨРӨӨ АРИЛАХ ЁСГҮЙ. */
+function Strip({ tone, text, action, onDismiss }: {
+  tone: "warn" | "danger"; text: string;
+  action?: { label: string; onClick: () => void };
+  onDismiss?: () => void;
+}) {
+  return (
+    <div className={`jz-strip ${tone === "danger" ? "jz-strip-danger" : "jz-strip-warn"}`}
+         role="status">
+      <span className="jz-strip-text">{text}</span>
+      {action && (
+        <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]"
+                onClick={action.onClick}>{action.label}</button>
+      )}
+      {onDismiss && (
+        <button className="btn-ghost !min-h-9 !py-1.5 !px-2 text-[13px]"
+                aria-label="Мэдэгдлийг хаах" onClick={onDismiss}>✕</button>
+      )}
+    </div>
+  );
+}
+
+/* ---------- СЕССИ ----------
+   12 цагийн токен нь өглөө 9-д нэвтэрсэн Отгоог орой 9-д ГЭРЭЭ БӨГЛӨЖ
+   БАЙХАД нь шиднэ. Сервер `POST /api/auth/refresh` гэсэн ГУЛСДАГ хугацаа
+   өгсөн: хэрэглэж байгаа хүн дундуур нь гарахгүй, хэрэглээгүй сесси 12
+   цагийн дараа өөрөө унтарна. Дэлгэцийн ажил нь гурав:
+     1. хөдөлгөөн бүр дээр (токен 1 цагаас хөгширсөн бол) сунгах;
+     2. 10 минут үлдэхэд САНУУЛАХ — «Үргэлжлүүлэх» товчтой;
+     3. нууц үг нь «1234» хэвээр бол ил хэлэх (/audit-ийн «Хэн» багана
+        утгагүй болдог: гурван хүн бүгд ижил нууц үгтэй). */
+function useSession(active: boolean) {
+  /* Нэвтрэх хариу нь хоёуланг нь аль хэдийн авч ирсэн (`lib/session.ts`) —
+     хуудас ачаалах бүрд серверээс дахин асуухгүй. */
+  const cached = useRef(readSessionInfo()).current;
+  const [expiresAt, setExpiresAt] = useState<number | null>(
+    () => parseExpiry(cached?.token_expires_at));
+  const [mustChange, setMustChange] = useState(!!cached?.must_change_password);
+  const expRef = useRef<number | null>(parseExpiry(cached?.token_expires_at));
+  const busy = useRef(false);
+  const now = useMinuteTick();
+
+  const apply = useCallback((d: any) => {
+    if (!d) return;
+    /* Шинэ токен ирвэл ХУУЧНЫГ нь тэр дороо солино — эс бөгөөс дараагийн
+       хүсэлт хугацаа нь дууссан токеноор явна. */
+    const u = user();
+    if (d.token && u) setAuth(d.token, u);
+    if (d.token_expires_at) {
+      const t = parseExpiry(d.token_expires_at);
+      expRef.current = t;
+      setExpiresAt(t);
+    }
+    if (typeof d.must_change_password === "boolean") setMustChange(d.must_change_password);
+    saveSessionInfo({ token_expires_at: d.token_expires_at,
+                      must_change_password: d.must_change_password });
+  }, []);
+
+  const renew = useCallback(async () => {
+    if (busy.current) return;
+    busy.current = true;
+    try { apply(await api("/api/auth/refresh", { method: "POST" })); }
+    catch { /* сүлжээ тасарсан — дараагийн хөдөлгөөнд дахин оролдоно */ }
+    finally { busy.current = false; }
+  }, [apply]);
+
+  useEffect(() => {
+    if (!active) return;
+    /* ⚠ ЗӨВХӨН санамж ХООСОН үед. `GET /api/auth/me` нь «нууц үг анхныхаараа
+       юу» гэдгийг шалгахдаа PBKDF2-ыг 100,000 давталтаар гүйлгэдэг
+       (`auth.is_seed_password`) — хуудас ачаалах бүрд дуудвал сервер өдөрт
+       хэдэн зуун нууц үг задлана. Нэвтрэх хариу тэр хоёр талбарыг аль хэдийн
+       өгсөн; санамж алдагдсан (хуучин сесси, хувийн горим) үед л асууна. */
+    if (cached?.token_expires_at) return;
+    api("/api/auth/me").then(apply).catch(() => {});
+  }, [active, apply, cached]);
+
+  useEffect(() => {
+    if (!active) return;
+    /* ХӨДӨЛГӨӨН — товшилт, товчлуур. Рендер төрүүлэхгүй (ref унших):
+       минут тутмын цохилт нь зурвасын тоог өөрөө шинэчилнэ. */
+    const onAct = () => { if (shouldRefresh(expRef.current, Date.now())) renew(); };
+    window.addEventListener("pointerdown", onAct, { passive: true });
+    window.addEventListener("keydown", onAct);
+    return () => {
+      window.removeEventListener("pointerdown", onAct);
+      window.removeEventListener("keydown", onAct);
+    };
+  }, [active, renew]);
+
+  return { warning: expiryWarning(expiresAt, now), mustChange, renew,
+           clearMustChange: () => {
+             setMustChange(false);
+             saveSessionInfo({ must_change_password: false });
+           } };
+}
+
 function Shell({ children }: { children: ReactNode }) {
   const u = user();
   const nav = useNavigate();
@@ -91,12 +230,25 @@ function Shell({ children }: { children: ReactNode }) {
   const setScope = (s: Scope) => nav(scopeHref(loc.pathname, loc.search, s));
   const [pw, setPw] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [askLogout, setAskLogout] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("jz_nav") === "min");
+  const session = useSession(!!u);
+  /* Хаалттай хуудсыг НЭЭХГҮЙ. Шалтгаан нь Удирдлагын төв рүү ЗУРВАС болж
+     дагана (`Navigate ... state`) — эс бөгөөс дарга хавчуургаа дараад
+     тайлбаргүй самбар дээр буугаад «яагаад тайлан алга болов» гэж үлдэнэ. */
+  const denied = canOpen(loc.pathname, u?.role) ? "" : deniedMessage(loc.pathname);
+  const strip = (loc.state as any)?.denied as string | undefined;
 
   useEffect(() => {
-    document.title = `${pageTitle(loc.pathname) || "Жигүүр Зам"} · Жигүүр Зам`;
+    /* 404 дээр таб нь «Жигүүр Зам · Жигүүр Зам» болдог байв — `shellTitle`
+       танихгүй замд «Хуудас олдсонгүй» гэсэн нэр өгнө. */
+    document.title = `${shellTitle(loc.pathname)} · Жигүүр Зам`;
     setMenu(false);
   }, [loc.pathname]);
+
+  /* Хуудас солигдлоо — амьд заагч ШИНЭ хуудасны тухай шинээр ярина
+     (өмнөх хуудасны «Шинэчилсэн: 14:03» энд утгагүй). */
+  useEffect(() => { live.reset(); }, [loc.pathname]);
 
   const toggleCollapse = () => {
     setCollapsed((c) => {
@@ -105,7 +257,22 @@ function Shell({ children }: { children: ReactNode }) {
     });
   };
 
+  /** Гарах — /audit-д мөр үлдээгээд явна. Сервер хариулаагүй ч гарна:
+   *  «гарч чадахгүй» гэдэг нь хамгийн муу хариулт. */
+  const doLogout = () => {
+    setAskLogout(false);
+    api("/api/auth/logout", { method: "POST" }).catch(() => {});
+    resetDirtyDialogs();
+    clearAuth();
+    nav("/login");
+  };
+  /** Бөглөж байгаа зүйл байвал АСУУНА — гарах нь буцаагдахгүй (бичсэн зүйл
+   *  React-ийн санах ойд, хадгалагдаагүй). */
+  const onLogout = () => (anyDialogDirty() ? setAskLogout(true) : doLogout());
+
   if (!u) return <Navigate to="/login" replace />;
+  /* Хаалттай зам → Удирдлагын төв (тэнд ажил бий), зурвасаа авч. */
+  if (denied) return <Navigate to="/" replace state={{ denied }} />;
   const availableNav = NAV.filter((n: any) => (!n.role || n.role === u.role) && n.hide !== u.role);
   const workNav = availableNav.slice(0, WORK_COUNT);
   const orgNav = availableNav.slice(WORK_COUNT);
@@ -154,7 +321,7 @@ function Shell({ children }: { children: ReactNode }) {
             <button className="side-foot-btn" title="Нууц үг солих" aria-label="Нууц үг солих"
                     onClick={() => setPw(true)}>🔑</button>
             <button className="side-foot-btn" title="Гарах" aria-label="Гарах"
-                    onClick={() => { clearAuth(); nav("/login"); }}>⎋</button>
+                    onClick={onLogout}>⎋</button>
           </div>
         </div>
       </aside>
@@ -173,22 +340,50 @@ function Shell({ children }: { children: ReactNode }) {
             {/* `toISOString()` нь UTC — Улаанбаатар (UTC+8) дээр орой 8 цагаас
                 хойш МАРГААШИЙН огноог бичдэг байв. Топбарын огноо бол «өнөөдөр
                 хэд вэ» гэсэн ганц хариу тул ЛОКАЛ хуанлигаар унших ёстой. */}
-            ЖИГҮҮР ЗАМ ХХК <i /> {pageTitle(loc.pathname).toUpperCase()} <i /> {todayIso()}
+            ЖИГҮҮР ЗАМ ХХК <i /> {shellTitle(loc.pathname).toUpperCase()} <i /> {todayIso()}
           </span>
           {/* Түрээс/Худалдаа энд байсан: топбарын баруун дээд буланд, 36px
               саарал сегмент болж — Отгоо түүнийг ХЭЗЭЭ Ч анзаараагүй, атал тэр
               нь доорх бүх KPI-г сольж байв. Одоо хоёр хуудас дээрээ, KPI-н яг
               дээр, 44px улбар шар товч болж зогсоно (ScopeSwitch). */}
           <div className="jz-topbar-actions">
-            <span className="top-pulse" title="Систем хэвийн ажиллаж байна" />
+            <LiveDot />
           </div>
         </div>
+
+        {/* ═══ ТОГТМОЛ ЗУРВАСУУД — топбарын доор, агуулгын дээр ═══ */}
+        {/* 1. Хаалттай хуудсаас буцаагдсан (`Navigate ... state`) */}
+        {strip && (
+          <Strip tone="warn" text={strip}
+                 onDismiss={() => nav(loc.pathname + loc.search, { replace: true, state: null })} />
+        )}
+        {/* 2. Нууц үг АНХНЫХААРАА («1234») — /audit-ийн «Хэн» багана утгагүй */}
+        {session.mustChange && (
+          <Strip tone="danger" text="Нууц үгээ солино уу — анхны нууц үг хэвээр байна"
+                 action={{ label: "Нууц үг солих", onClick: () => setPw(true) }} />
+        )}
+        {/* 3. Нэвтрэлт дуусах гэж байна — «Үргэлжлүүлэх» нь сунгана */}
+        {session.warning && (
+          <Strip tone="warn" text={`${session.warning} — хийж байгаа ажлаа хадгална уу`}
+                 action={{ label: "Үргэлжлүүлэх", onClick: session.renew }} />
+        )}
+
         <div className="jz-content">
           <ErrorBoundary key={loc.pathname}>{children}</ErrorBoundary>
         </div>
       </main>
 
-      {pw && <ChangePassword onClose={() => setPw(false)} />}
+      {pw && <ChangePassword onClose={() => { setPw(false); session.clearMustChange(); }} />}
+      {askLogout && (
+        <ConfirmModal
+          title="Гарах уу?"
+          intro="Нээлттэй цонхонд бөглөсөн зүйл хадгалагдаагүй байна."
+          note="Гарвал бөглөсөн мэдээлэл устана. Энэ үйлдлийг буцаах боломжгүй."
+          confirmLabel="Гарах"
+          danger
+          onClose={() => setAskLogout(false)}
+          onConfirm={doLogout} />
+      )}
     </div>
     </ScopeCtx.Provider>
   );

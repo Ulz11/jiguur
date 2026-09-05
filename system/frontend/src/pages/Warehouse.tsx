@@ -2,10 +2,11 @@ import { useEffect, useId, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, fmt, money, user } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Prog, Receipt, Empty,
-         FinanceDisclosure, FinanceBlock } from "../ui";
+         FinanceDisclosure, FinanceBlock, OutcomeStrip, PageError } from "../ui";
 import { parseMoney } from "../lib/num";
 import { rowClickProps } from "../lib/rowClick";
 import { materialHref } from "../lib/links";
+import { adjustEffect, adjustReasonError, adjustReceipt, signed } from "../lib/stock";
 import { GradeModal, MaterialModal } from "../components/CatalogModals";
 
 export default function Warehouse() {
@@ -16,6 +17,12 @@ export default function Warehouse() {
   const [matModal, setMatModal] = useState<any>(null);   // {} = шинэ, {id..} = засах
   const [gradeModal, setGradeModal] = useState<any>(null);
   const [q, setQ] = useState("");
+  /* ҮР ДҮНГИЙН ЗУРВАС — залруулга, засвар, каталогийн хадгалалт бүрийн дараа
+     ЮУ БОЛСОН нь дэлгэц дээр ҮЛДЭНЭ (toast 3.2 секундын дараа арилдаг). */
+  const [outcome, setOutcome] = useState<string | null>(null);
+  /* Хуудас АЧААЛАГДСАНГҮЙ — урьд нь `.catch` огт байхгүй тул сервер 500
+     буцаахад «Ачаалж байна…» ҮҮРД зогсдог байв. */
+  const [err, setErr] = useState<string | null>(null);
   const toast = useToast();
   const nav = useNavigate();
   const u = user();
@@ -28,13 +35,17 @@ export default function Warehouse() {
   const isManager = u?.role === "manager";
 
   const load = () => {
-    api("/api/stock").then(setD);
+    api("/api/stock").then((v: any) => { setD(v); setErr(null); })
+      .catch((e: any) => setErr(e.message));
     /* Зэрэглэлийн жагсаалт нь ЗӨВХӨН каталогийн цонхонд хэрэгтэй (үнийн мөр
        бүр нэг зэрэглэл). Тиймээс дарга/санхүүчийн хуудас нэмэлт хүсэлт
-       илгээхгүй — тэдэнд тэр цонх нээгддэггүй. */
-    if (isManager) api("/api/grades").then(setGrades);
+       илгээхгүй — тэдэнд тэр цонх нээгддэггүй.
+       Зэрэглэл татагдаагүй нь агуулахын ажлыг зогсоох ЁСГҮЙ: хоосон
+       жагсаалттай ч хуудас нээгдэнэ, зөвхөн каталогийн цонх л дутуу болно. */
+    if (isManager) api("/api/grades").then(setGrades).catch(() => setGrades([]));
   };
   useEffect(() => { load(); }, []);
+  if (err && !d) return <PageError error={err} onRetry={() => { setErr(null); load(); }} />;
   if (!d || (isManager && !grades)) return <Spinner />;
 
   /* Санхүүч тооллого залруулж чадахгүй. Гэсэн ч зэрэглэлийн үлдэгдэл нь бүх
@@ -76,6 +87,8 @@ export default function Warehouse() {
           </div>
         )}
       </div>
+
+      {outcome && <OutcomeStrip text={outcome} onClose={() => setOutcome(null)} />}
 
       <div className="grid grid-cols-3 gap-4 mb-4 max-sm:grid-cols-1">
         <Kpi label="Агуулахад" val={fmt(d.totals.on_hand) + " ш"} />
@@ -214,22 +227,32 @@ export default function Warehouse() {
 
       {adjust && (
         <AdjustModal m={adjust.m} s={adjust.s} onClose={() => setAdjust(null)}
-                     onDone={() => { setAdjust(null); load(); }} />
+                     onDone={(text: string) => { setAdjust(null); setOutcome(text); load(); }} />
       )}
       {repair && (
         <RepairModal m={repair.m} s={repair.s} onClose={() => setRepair(null)}
-                     onDone={() => { setRepair(null); load(); }} />
+                     onDone={(text: string) => { setRepair(null); setOutcome(text); load(); }} />
       )}
       {/* Хадгалсны дараа ЭНЭ хуудас өөрөө шинэчлэгдэнэ — Отгоо шинэ материалаа
           жагсаалтад ХАРНА, дахин ачаалах гэж бодохгүй. `load()` нь нөөцийг ба
           (шинэ зэрэглэл нэмэгдсэн бол) зэрэглэлийн жагсаалтыг хоёуланг татна. */}
       {isManager && matModal !== null && (
         <MaterialModal m={matModal} grades={grades} onClose={() => setMatModal(null)}
-                       onDone={() => { setMatModal(null); load(); }} />
+                       onDone={() => {
+                         /* Каталог хадгалагдсаны дараа Отгоо шинэ материалаа
+                            жагсаалтаас ХАЙЖ эхэлдэг байв — зурвас нь юу
+                            хадгалагдсаныг нэрлэж, тэр хайлтыг хэрэггүй болгоно. */
+                         setOutcome(`${matModal.id ? "Материал засагдлаа" : "Материал бүртгэгдлээ"}`
+                           + (matModal.name ? ` — ${matModal.name}` : ""));
+                         setMatModal(null); load();
+                       }} />
       )}
       {isManager && gradeModal !== null && (
         <GradeModal g={gradeModal} onClose={() => setGradeModal(null)}
-                    onDone={() => { setGradeModal(null); load(); }} />
+                    onDone={() => {
+                      setOutcome(gradeModal.id ? "Зэрэглэл засагдлаа" : "Зэрэглэл нэмэгдлээ");
+                      setGradeModal(null); load();
+                    }} />
       )}
     </div>
   );
@@ -266,7 +289,8 @@ function RepairModal({ m, s, onClose, onDone }: any) {
             await api("/api/stock/repair-done", { method: "POST",
               body: JSON.stringify({ material_id: m.id, grade_id: s.grade_id, qty }) });
             toast("Засвар дууслаа — агуулахад орлоо");
-            onDone();
+            onDone(`Засвар дууслаа — ${m.name} · ${s.grade} · +${fmt(qty)}ш агуулахад орлоо`
+                   + ` · засварт ${fmt(Math.max(s.in_repair - qty, 0))}ш үлдэв`);
           } catch (e: any) { toast(e.message, "err"); }
         }}>Оруулах</SubmitButton>
       </div>
@@ -286,19 +310,28 @@ function Kpi({ label, val, pill, warn }: any) {
 }
 
 /* Залруулга нь нөөцийг шууд хөдөлгөдөг тул 2 алхамтай: эхний дарахад
-   `одоо → шинэ` зөрүүг харуулж, дараа нь баталгаажуулна. */
+   `одоо → шинэ` зөрүүг харуулж, дараа нь баталгаажуулна.
+
+   ШАЛТГААН НЬ ЗААВАЛ (2026-09). Урьд нь энэ цонх тайлбаргүй илгээдэг байсан:
+   бичилт нь `stock_adjustments`-д мөр болж үлддэг ч тэр мөрөнд «−27ш» гэснээс
+   өөр юу ч байхгүй. Сар хагасын дараа «144ш хаачив?» гэсэн асуулт гарахад
+   бүртгэл нь хариулж чаддаггүй — тоо нь хөдөлсөн, шалтгаан нь алга. */
 function AdjustModal({ m, s, onClose, onDone }: any) {
   const toast = useToast();
   const [val, setVal] = useState(String(s.on_hand));
+  const [reason, setReason] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const uid = useId();
   const blank = val.trim() === "";
   const next = parseMoney(val);
   const diff = next - s.on_hand;
+  const reasonErr = adjustReasonError(reason);
+  const label = `${m.name} · ${s.grade}`;
 
   return (
-    <FormModal title="Тооллогын залруулга" onClose={onClose} dirty={!blank && diff !== 0}>
+    <FormModal title="Тооллогын залруулга" onClose={onClose}
+               dirty={(!blank && diff !== 0) || reason.trim() !== ""}>
       <p className="text-[13.5px] text-t2 mb-4">
         <b className="text-ink">{m.name}</b> ({s.grade}) — бодит тоолсон агуулахын үлдэгдлийг оруулна уу.
         Одоо системд: <b className="tabular-nums">{fmt(s.on_hand)}ш</b>
@@ -307,13 +340,28 @@ function AdjustModal({ m, s, onClose, onDone }: any) {
       <label className="lbl" htmlFor={`${uid}-onhand`}>Бодит тоолсон үлдэгдэл (ш)</label>
       <input id={`${uid}-onhand`} type="number" className="inp" value={val} autoFocus
              onChange={(e) => { setVal(e.target.value); setConfirming(false); }} />
+
+      <label className="lbl mt-3.5" htmlFor={`${uid}-reason`}>Шалтгаан (заавал)</label>
+      <input id={`${uid}-reason`} className={`inp ${confirming && reasonErr ? "!border-danger" : ""}`}
+             placeholder="ж: эвдэрсэн хэв актлав, өмнөх тооллого дутуу"
+             value={reason} onChange={(e) => setReason(e.target.value)} />
+      <p className="text-[12px] text-t3 mt-1.5">
+        Энэ өгүүлбэр бичилтийн мөрөнд үлдэж, материалын түүх дээр харагдана.
+      </p>
+      {confirming && reasonErr && (
+        <p className="text-danger text-[12px] mt-1.5">{reasonErr}</p>
+      )}
+
+      {/* БАРИМТ — «34 → 7 · −27ш». Ганц тоо («одоо 7ш») нь өөрчлөлтийг
+          хэлдэггүй: Отгоо өмнөх тоог санахгүй тул зөрүүг өөрөө бодохгүй. */}
       {confirming && (
         <Receipt className="mt-4"
-          rows={[{ label: `${m.name} · ${s.grade}`, value: `${fmt(s.on_hand)}ш → ${fmt(next)}ш`,
-                   accent: diff > 0 ? "money" : diff < 0 ? "danger" : undefined }]}
-          total={{ label: diff === 0 ? "Зөрүүгүй — юу ч өөрчлөгдөхгүй"
-                        : diff > 0 ? "Агуулахад нэмэгдэнэ" : "Агуулахаас хасагдана",
-                   value: `${diff > 0 ? "+" : ""}${fmt(diff)} ш`,
+          rows={[{ label, value: adjustReceipt(s.on_hand, next),
+                   accent: diff > 0 ? "money" : diff < 0 ? "danger" : undefined },
+                 ...(reason.trim() ? [{ label: "Шалтгаан", value: reason.trim(),
+                                        accent: "dim" as const }] : [])]}
+          total={{ label: adjustEffect(diff),
+                   value: `${signed(diff)} ш`,
                    accent: diff > 0 ? "money" : diff < 0 ? "danger" : "dim" }} />
       )}
       <div className="flex justify-end gap-2.5 mt-5">
@@ -321,14 +369,16 @@ function AdjustModal({ m, s, onClose, onDone }: any) {
                 onClick={() => (confirming ? setConfirming(false) : onClose())}>
           {confirming ? "Буцах" : "Болих"}
         </button>
-        <button className="btn-primary" disabled={busy || blank} onClick={async () => {
+        <button className="btn-primary" disabled={busy || blank || !!reasonErr} onClick={async () => {
           if (!confirming) { setConfirming(true); return; }
           setBusy(true);
           try {
             await api("/api/stock/adjust", { method: "POST",
-              body: JSON.stringify({ material_id: m.id, grade_id: s.grade_id, on_hand: next }) });
+              body: JSON.stringify({ material_id: m.id, grade_id: s.grade_id,
+                                     on_hand: next, note: reason.trim() }) });
             toast("Үлдэгдэл залруулагдлаа");
-            onDone();
+            onDone(`Үлдэгдэл залруулагдлаа — ${label} · ${adjustReceipt(s.on_hand, next)}`
+                   + ` — ${reason.trim()}`);
           } catch (e: any) { toast(e.message, "err"); setBusy(false); }
         }}>{busy ? "…" : confirming ? "Баталгаажуулах" : "Хадгалах"}</button>
       </div>

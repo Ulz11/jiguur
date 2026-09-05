@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   clientHref, contractHref, materialHref, invoiceAnchorId, invoiceHref,
   contractsHref, contractFilterFrom, auditHref, notificationHref,
-  scopeFrom, scopeHref, flaggedHref,
+  scopeFrom, scopeHref, flaggedHref, notificationKey,
 } from "./links";
 
 /* Дэлгэц бүр дээр НЭГ объект НЭГ хаягтай байх ёстой. Хаягийг мөрөөр нь
@@ -191,5 +191,43 @@ describe("flaggedHref — ШАР НҮД өөрийн мөр рүүгээ буу�
     expect(flaggedHref({ entity_type: "movement", entity_id: 88 })).toBeNull();
     expect(flaggedHref({ entity_type: "invoice", entity_id: 41, contract_id: null })).toBeNull();
     expect(flaggedHref({ entity_type: "хачин", entity_id: 1 })).toBeNull();
+  });
+});
+
+/* ХОЦОРСОН ЗЭЭЛ (2026-09) — сервер `loan_overdue` төрлийн УЛААН мөр илгээж
+   эхэлсэн. Тэр нь `loan_id` авч явдаг ч зээлд өөрийн хуудас байхгүй тул
+   маршрут нь /loans. Маршрутгүй үлдвэл дашбоардын хамгийн улаан мөр нь
+   дарагддаггүй болно. */
+describe("хоцорсон зээлийн мэдэгдэл", () => {
+  it("зээлийн жагсаалт руу аваачна", () => {
+    expect(notificationHref({ kind: "loan_overdue", loan_id: 3 }, "manager")).toBe("/loans");
+    expect(notificationHref({ kind: "loan_overdue", loan_id: 3 }, "finance")).toBe("/loans");
+  });
+
+  it("үйлдвэрийн даргад ХААЛТТАЙ — холбоос үүсэхгүй", () => {
+    expect(notificationHref({ kind: "loan_overdue", loan_id: 3 }, "factory")).toBeNull();
+  });
+});
+
+/* НУУЛТЫН ТҮЛХҮҮР — серверийн `billing.notification_key`-ийн ЯГ тэр дараалал.
+   Хоёр тал өөр түлхүүр сонговол «Түр нуух» дарсан мөр ХЭВЭЭР үлдэнэ, эсвэл
+   нэг мөр нуухад бүхэл төрөл алга болно. */
+describe("notificationKey", () => {
+  it("хамгийн НАРИЙН заагчийг сонгоно: нэхэмжлэл → хөдөлгөөн → гэрээ → зээл", () => {
+    expect(notificationKey({ kind: "overdue", contract_id: 5, invoice_id: 41 }))
+      .toEqual({ kind: "overdue", entity_id: 41 });
+    expect(notificationKey({ kind: "shipment", contract_id: 5, movement_id: 88 }))
+      .toEqual({ kind: "shipment", entity_id: 88 });
+    expect(notificationKey({ kind: "ending", contract_id: 5 }))
+      .toEqual({ kind: "ending", entity_id: 5 });
+    expect(notificationKey({ kind: "loan_overdue", loan_id: 3 }))
+      .toEqual({ kind: "loan_overdue", entity_id: 3 });
+  });
+
+  it("заагчгүй мөр нь БҮХ ТӨРЛӨӨРӨӨ нуугдана", () => {
+    expect(notificationKey({ kind: "promise_late" }))
+      .toEqual({ kind: "promise_late", entity_id: null });
+    expect(notificationKey({ kind: "barter_stale", contract_id: null }))
+      .toEqual({ kind: "barter_stale", entity_id: null });
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { Poller, dialogOpen } from "./live";
+import { Poller, dialogOpen, live, liveText, liveTitle, liveTone,
+         clockLabel, minutesSince, DOWN_AFTER } from "./live";
 
 // Тайлангууд өөрсдөө шинэчлэгдэнэ (X3). Poller нь ХЭЗЭЭ дахин татахыг шийддэг
 // цэвэр логик: интервал бүрэн өнгөрсөн үед, эсвэл цонх руу буцаж ирэхэд —
@@ -58,5 +59,81 @@ describe("Poller", () => {
 describe("dialogOpen", () => {
   it("DOM байхгүй орчинд УНАХГҮЙ, зүгээр л худал", () => {
     expect(dialogOpen()).toBe(false);
+  });
+});
+
+/* ══ ТОПБАРЫН ТӨЛӨВ ══
+   Ногоон цэг нь HTML-д ХАТУУ бичигдсэн байв: сүлжээ тасарсан ч, тоо гурван
+   цагийн өмнөх байсан ч яг ижилхэн гэрэлтэнэ. Одоо үг нь төлөвөөс гарна. */
+describe("амьд төлөвийн үг", () => {
+  const at = (h: number, m: number) => new Date(2026, 8, 6, h, m).getTime();
+
+  it("амжилттай татсан бол ЦАГАА хэлнэ", () => {
+    const s = { okAt: at(14, 3), fails: 0 };
+    expect(liveTone(s)).toBe("ok");
+    expect(liveText(s, at(14, 5))).toBe("Шинэчилсэн: 14:03");
+  });
+
+  it("нэг удаа унавал ШАР — хэдэн минут хуучирснаа хэлнэ", () => {
+    const s = { okAt: at(14, 3), fails: 1 };
+    expect(liveTone(s)).toBe("warn");
+    expect(liveText(s, at(14, 7))).toBe("Шинэчлэгдээгүй — 4 мин");
+  });
+
+  it("гурав дараалан унавал УЛААН — цаг биш, холболтын тухай", () => {
+    const s = { okAt: at(14, 3), fails: DOWN_AFTER };
+    expect(liveTone(s)).toBe("down");
+    expect(liveText(s, at(15, 0))).toBe("Холболт тасарсан");
+  });
+
+  it("хараахан юу ч татаагүй үед «0 мин» гэж ХУДАЛ хэлэхгүй", () => {
+    expect(liveText({ okAt: null, fails: 0 }, at(14, 0))).toBe("Шинэчилж байна…");
+    expect(liveText({ okAt: null, fails: 1 }, at(14, 0))).toBe("Шинэчлэгдээгүй");
+  });
+
+  it("цаг нь хоёр оронтой — «9:5» гэж бичихгүй", () => {
+    expect(clockLabel(at(9, 5))).toBe("09:05");
+  });
+
+  it("минутын тоо доош бүхэлчилнэ, ирээдүйн цаг сөрөг болохгүй", () => {
+    expect(minutesSince(at(14, 0), at(14, 59))).toBe(59);
+    expect(minutesSince(at(14, 0), at(13, 0))).toBe(0);
+  });
+
+  it("тайлбар нь ДАРВАЛ ЮУ БОЛОХЫГ хэлнэ — заагч бол товч", () => {
+    expect(liveTitle({ okAt: at(14, 3), fails: 0 }, at(14, 5))).toMatch(/Дарж дахин/);
+    expect(liveTitle({ okAt: at(14, 3), fails: 3 }, at(14, 5))).toMatch(/хуучирсан байж магадгүй/);
+  });
+});
+
+describe("амьд төлөвийн дэлгүүр", () => {
+  it("уналт нь СҮҮЛИЙН амжилтын цагийг УСТГАХГҮЙ — тэр нь хэмжих цэг", () => {
+    live.reset();
+    live.ok(1_000);
+    live.fail();
+    expect(live.get()).toEqual({ okAt: 1_000, fails: 1 });
+    live.fail();
+    expect(liveTone(live.get())).toBe("warn");
+    live.fail();
+    expect(liveTone(live.get())).toBe("down");
+    live.ok(9_000);
+    expect(live.get()).toEqual({ okAt: 9_000, fails: 0 });
+    live.reset();
+  });
+
+  it("хуудас солиход тэглэгдэнэ — шинэ хуудасны тухай шинээр ярина", () => {
+    live.ok(5_000);
+    live.reset();
+    expect(live.get()).toEqual({ okAt: null, fails: 0 });
+  });
+
+  it("«дахин татах» бүртгэгдээгүй бол ХУДАЛ амжилт мэдээлэхгүй", () => {
+    live.setRetry(null);
+    expect(live.retry()).toBe(false);
+    let called = 0;
+    live.setRetry(() => { called++; });
+    expect(live.retry()).toBe(true);
+    expect(called).toBe(1);
+    live.setRetry(null);
   });
 });

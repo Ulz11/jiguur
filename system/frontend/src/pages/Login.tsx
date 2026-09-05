@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, setAuth } from "../api";
-import { takeSessionExpired } from "../lib/session";
+import { saveSessionInfo, takeSessionExpired } from "../lib/session";
 import brandLogo from "../assets/jiguur-logo.png";
 
 export default function Login() {
@@ -27,6 +27,11 @@ export default function Login() {
         body: JSON.stringify({ username: username.trim(), password }),
       });
       setAuth(r.token, r.user);
+      /* Нэвтрэх хариу нь сессийн хугацаа ба «нууц үг анхныхаараа юу» гэдгийг
+         аль хэдийн авч ирдэг — түүнийг хадгалснаар дэлгэц хуудас ачаалах
+         бүрд `GET /api/auth/me` (100,000 давталттай PBKDF2) дуудахаа болино. */
+      saveSessionInfo({ token_expires_at: r.expires_at,
+                        must_change_password: r.must_change_password });
       nav("/", { replace: true });
     } catch (e: any) {
       setErr(e.message);

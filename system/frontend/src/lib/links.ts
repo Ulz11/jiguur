@@ -104,6 +104,11 @@ export function auditHref(entity: string, entityId: number | null | undefined): 
 /** Гэрээгүй мэдэгдлүүд өөрсдийн хуудастай */
 const NOTE_ROUTE: Record<string, string> = {
   loan: "/loans",
+  /* ХОЦОРСОН зээлийн төлөлт (сервер `loan_overdue`, улаан). Мөр нь `loan_id`
+     авч явдаг ч зээлд өөрийн хуудас БАЙХГҮЙ — жагсаалт нь /loans дээр.
+     Энэ мөрийг маршрутгүй үлдээвэл дашбоардын хамгийн улаан мэдэгдэл нь
+     ганц дарагддаггүй мөр болно. */
+  loan_overdue: "/loans",
   promise_late: "/collections",
   barter_stale: "/barter",
 };
@@ -118,13 +123,32 @@ const FACTORY_BLOCKED = new Set(["/loans", "/collections", "/salary", "/reports"
  *  `invoice_id` явуулдаг) тэр мөр дээрээ буулгана — «R-26/07-4 12 хоног
  *  хэтэрлээ» гэж уншсан хүн гэрээний толгойд бууж, мөрөө дахин хайх ёсгүй. */
 export function notificationHref(
-  n: { kind: string; contract_id?: number | null; invoice_id?: number | null },
+  n: { kind: string; contract_id?: number | null; invoice_id?: number | null;
+       loan_id?: number | null },
   role: string | undefined,
 ): string | null {
   if (n.contract_id) return invoiceHref(n.contract_id, n.invoice_id);
   const to = NOTE_ROUTE[n.kind];
   if (!to) return null;
   return role === "factory" && FACTORY_BLOCKED.has(to) ? null : to;
+}
+
+/* ---------- Мэдэгдлийг ТҮР НУУХ ---------- */
+
+/** Мэдэгдлийн ӨВӨРМӨЦ хаяг — `POST /api/notifications/snooze`-д явна.
+ *
+ *  Серверийн `billing.notification_key`-тэй ЯГ ижил дараалал: нэхэмжлэл →
+ *  хөдөлгөөн → гэрээ → зээл, эс бөгөөс `entity_id` алга. Хоёр тал өөр
+ *  түлхүүр сонговол Отгоо «Түр нуух» дараад мөр нь ХЭВЭЭР үлдэнэ (эсвэл
+ *  нэг мөр нуухад гурав алга болно). Тиймээс дүрэм НЭГ л газар. */
+export const SNOOZE_KEYS = ["invoice_id", "movement_id", "contract_id", "loan_id"] as const;
+
+export function notificationKey(n: Record<string, any>): { kind: string; entity_id: number | null } {
+  for (const k of SNOOZE_KEYS) {
+    const v = n?.[k];
+    if (v !== null && v !== undefined) return { kind: n.kind ?? "", entity_id: Number(v) };
+  }
+  return { kind: n?.kind ?? "", entity_id: null };
 }
 
 /* ---------- Дашбоардын «Анхаарах» самбар (P1-22) ---------- */

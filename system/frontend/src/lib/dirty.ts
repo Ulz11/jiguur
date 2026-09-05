@@ -43,3 +43,54 @@ export function contractDraftDirty(d: {
   if (Object.values(d.newClient).some((v) => v.trim() !== "")) return true;
   return formDirty(d.condInitial, d.cond);           // нөхцөлийн аль нэг талбар
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   НЭЭЛТТЭЙ БОХИР ЦОНХНУУДЫН БҮРТГЭЛ
+
+   Хоёр зүйл үүнийг мэдэх ёстой, хоёул ЦОНХНООС ГАДНА амьдардаг:
+     · «Гарах» товч (App.tsx) — бөглөж байгаа хүнийг АСУУЛГҮЙ гаргах ёсгүй;
+     · 401 (api.ts) — шидэгдэхийн ӨМНӨ бичсэн зүйлийг `sessionStorage`-д
+       үлдээж, дахин нэвтрээд буцахад нь сэргээнэ.
+
+   React-ийн төлөв нь бүрэлдэхүүн доторх тул гаднаас уншигдахгүй — тиймээс
+   `Modal` өөрөө энд бүртгүүлнэ. Бүртгэл нь ЦЭВЭР (React-гүй): түлхүүр,
+   нэр, утга гурав.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export type DirtyEntry = {
+  /** Цонхны нэр — «pay», «return», «promise». Ноорог үүгээр сэргэнэ. */
+  name: string;
+  /** Одоогийн бөглөсөн утгууд (хавтгай объект). */
+  values: Record<string, unknown>;
+};
+
+const openDirty = new Map<object, DirtyEntry>();
+
+/** Цонх БОХИРДЛОО (эсвэл утга нь солигдлоо). */
+export function markDialogDirty(key: object, entry: DirtyEntry): void {
+  openDirty.set(key, entry);
+}
+
+/** Цонх хаагдлаа / цэвэрлэгдлээ. */
+export function clearDialogDirty(key: object): void {
+  openDirty.delete(key);
+}
+
+/** Одоо бөглөж байгаа зүйл БАЙНА УУ. */
+export function anyDialogDirty(): boolean {
+  return openDirty.size > 0;
+}
+
+/** Хамгийн СҮҮЛД бохирдсон цонхны агшин зураг (эсвэл `null`).
+ *  Нэг агшинд хоёр цонх бөглөгдөх нь бодит хэрэглээнд байхгүй тул нэгийг л
+ *  аварна — хоёрыг «аварсан» гэж амлаад нэгийг нь алдахаас дээр. */
+export function dirtySnapshot(): DirtyEntry | null {
+  let last: DirtyEntry | null = null;
+  for (const v of openDirty.values()) last = v;
+  return last;
+}
+
+/** Тестийн ба гарах урсгалын цэвэрлэгээ. */
+export function resetDirtyDialogs(): void {
+  openDirty.clear();
+}

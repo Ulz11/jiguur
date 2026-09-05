@@ -29,7 +29,11 @@ export default defineConfig({
   /* CI дээр `test.only` үлдсэн бол бүх suite чимээгүй хумигдана — тэрийг унагана. */
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  /* Локал дээр 4 ажилчин: 760 тест ГАНЦ uvicorn ажилчинтай серверийг
+     цөмийн тоогоор (6–8 хөтөч зэрэг) хөөхөд WebKit/планшет проектууд
+     `page.goto` дээр 45–60с-оор унадаг байв — аппын алдаа биш, дараалал.
+     Дангаараа тэр 10 тест 16 секундэд ногоон. 4-өөр бүтэн матриц тогтвортой. */
+  workers: process.env.CI ? 1 : 4,
 
   /* Гурван репорт: хүн уншихад html, CI уншихад junit, машин уншихад json. */
   reporter: [

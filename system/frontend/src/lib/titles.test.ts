@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pageTitle } from "./titles";
+import { pageTitle, shellTitle, NOT_FOUND_TITLE } from "./titles";
 
 // Гарчиг нь табын нэр БОЛОН дээд мөрийн байршлыг хоёуланг нь тэжээдэг.
 // Динамик зам (/contracts/42) таарахгүй байвал хамгийн гүн дэлгэц дээр
@@ -32,5 +32,19 @@ describe("pageTitle", () => {
 
   it("танихгүй зам хоосон буцаана (дуудагч тал нөөц нэрээ тавина)", () => {
     expect(pageTitle("/hongololt")).toBe("");
+  });
+});
+
+/* 404 нь ГАРЧИГГҮЙ хуудас байв: таб нь «Жигүүр Зам · Жигүүр Зам», дээд
+   мөрийн байршил хоосон. Отгоо буруу хаяг дээр зогсож байгаагаа мэдэхгүй. */
+describe("shellTitle", () => {
+  it("танигдсан зам дээр pageTitle-тэй ижил", () => {
+    expect(shellTitle("/reports")).toBe("Тайлан");
+    expect(shellTitle("/contracts/42")).toBe("Гэрээний дэлгэрэнгүй");
+  });
+
+  it("танихгүй зам дээр НЭРТЭЙ — дээд мөр, таб хоосорохгүй", () => {
+    expect(shellTitle("/hongololt")).toBe(NOT_FOUND_TITLE);
+    expect(NOT_FOUND_TITLE).toBe("Хуудас олдсонгүй");
   });
 });

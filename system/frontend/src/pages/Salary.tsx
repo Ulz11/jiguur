@@ -2,11 +2,16 @@ import { Fragment, useEffect, useId, useState } from "react";
 import { api, money, sayaFmt } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt, ConfirmModal, InlineEdit,
          DisclosureCell, DisclosureHead } from "../ui";
+import { ErrorCard, SideStrip } from "../components/SideStrip";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { empBody, type EmployeeBody } from "../lib/employee";
 import { rowClickProps } from "../lib/rowClick";
 import { panelId, disclosureProps } from "../lib/disclosure";
+import { exactBelow } from "../lib/credit";
+import { PAID_RUN_LOCKED, ndshLabel, runDeletable, trimPct } from "../lib/sideRows";
+import { employeeOutcome, salaryPaidOutcome, salaryRunDeletedOutcome, salaryRunOutcome,
+         type Outcome } from "../lib/outcomeSide";
 import { todayIso } from "../lib/schedule";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -22,11 +27,26 @@ export default function Salary() {
   const [open, setOpen] = useState<number | null>(null);
   const [payRun, setPayRun] = useState<any>(null); // олгохоор баталгаажуулж буй бодолт
   const [drop, setDrop] = useState<any>(null);     // жагсаалтаас хасахаар баталгаажуулж буй ажилтан
+  const [delRun, setDelRun] = useState<any>(null); // буруу бодсоныг устгах (ЗӨВХӨН олгоогүй)
+  /* Цалингийн сан нь СЕРВЕРИЙН нэг эх сурвалжаас (`/api/salary/summary`) —
+     хуудас өөрөө «өдрийнхийг 22 хоногоор» гэж дахин боддог байсан нь
+     Аналитик хуудсын тоотой зөрөх бүрэн боломжтой байв. */
+  const [sum, setSum] = useState<any>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  /** Дөнгөж хасагдсан ажилтан — зурвас дээрх «Идэвхжүүлэх»-ийн бай. */
+  const [backIn, setBackIn] = useState<any>(null);
+  const [err, setErr] = useState("");
   const toast = useToast();
+  const announce = (o?: Outcome | null) => { if (o) { setOutcome(o.text); setBackIn(null); } };
 
+  /* Гурван хүсэлтийн ХОЁР нь баригчгүй байв (`runs`, `summary`): сервер
+     унасан үед хуудас «Ачаалж байна…» дээрээ мөнхөд зогсоно. Одоо аль нэг нь
+     унавал ШАЛТГААН ба «Дахин оролдох» гарна. */
   const load = () => {
-    api("/api/salary/employees").then(setEmps).catch((e) => toast(e.message, "err"));
-    api("/api/salary/runs").then(setRuns);
+    const fail = (e: any) => { setErr(e.message); toast(e.message, "err"); };
+    api("/api/salary/employees").then((x) => { setEmps(x); setErr(""); }).catch(fail);
+    api("/api/salary/runs").then(setRuns).catch(fail);
+    api("/api/salary/summary").then(setSum).catch(fail);
   };
   useEffect(load, []);
 
@@ -39,9 +59,18 @@ export default function Salary() {
       toast(msg); load();
     } catch (er: any) { toast(er.message, "err"); throw er; }
   };
+  if (err && (!emps || !runs)) {
+    return <ErrorCard message={err} onRetry={() => { setErr(""); load(); }} />;
+  }
   if (!emps || !runs) return <Spinner />;
 
-  const monthlyFund = emps.reduce((s, e) => s + (e.type === "daily" ? e.daily_rate * 22 : e.monthly_salary), 0);
+  /* Сан нь СЕРВЕРИЙНХЭЭР. Хариу ирээгүй үед л хуудас өөрөө бодно (22 хоног) —
+     тэр нь ЗӨВХӨН нөөц зам, гол тоо биш. */
+  const monthlyFund = Number(sum?.payroll_monthly
+    ?? emps.reduce((s, e) => s + (e.type === "daily" ? e.daily_rate * 22 : e.monthly_salary), 0));
+  const netFund = Number(sum?.payroll_net ?? 0);
+  const dailyDays = Number(sum?.daily_days ?? 22);
+  const ndshPct = Number(sum?.ndsh_percent ?? 0);
 
   return (
     <div>
@@ -57,15 +86,46 @@ export default function Salary() {
         </div>
       </div>
 
+      {outcome && (
+        <div className="mb-4">
+          <SideStrip text={outcome}
+                     onClose={() => { setOutcome(null); setBackIn(null); }}
+                     action={backIn ? {
+                       label: "Идэвхжүүлэх",
+                       onClick: async () => {
+                         const who = backIn;
+                         try {
+                           await api(`/api/salary/employees/${who.id}/reactivate`, { method: "POST" });
+                           toast(`${who.name} жагсаалтад буцлаа`);
+                           announce(employeeOutcome("on", { name: who.name,
+                                                            roleTitle: who.role_title }));
+                           load();
+                         } catch (e: any) { toast(e.message, "err"); }
+                       },
+                     } : undefined} />
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-4 mb-4 max-sm:grid-cols-1">
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Идэвхтэй ажилтан</div>
-          <div className="text-[26px] font-extrabold text-ink tabular-nums">{emps.length}</div>
+          <div className="text-[26px] font-extrabold text-ink tabular-nums">{sum?.active_count ?? emps.length}</div>
         </div>
         <div className="card p-5">
-          <div className="text-[12.5px] text-t2 font-medium mb-2">Сарын цалингийн сан (ойролцоо)</div>
+          <div className="text-[12.5px] text-t2 font-medium mb-2">Сарын цалингийн сан</div>
           <div className="text-[26px] font-extrabold text-ink tabular-nums" title={money(monthlyFund)}>{sayaFmt(monthlyFund)}₮</div>
-          <span className="block text-[12px] text-t3 mt-1">өдрийнхийг 22 хоногоор тооцов</span>
+          {exactBelow(sayaFmt(monthlyFund) + "₮", money(monthlyFund)) && (
+            <div className="text-[12px] text-t2 tabular-nums mt-0.5">{money(monthlyFund)}</div>
+          )}
+          {/* БРУТТО сан ба ГАРТ олгох дүн хоёр ӨӨР тоо. Урьд нь зөвхөн
+              бруттог зурдаг байсан тул мөнгөн урсгал төлөвлөхөд Отгоо
+              НДШ-ээ өөрөө хасах ёстой болдог. */}
+          {netFund > 0 && (
+            <span className="block text-[12px] text-t3 tabular-nums mt-0.5">
+              гарт олгох {money(netFund)}
+            </span>
+          )}
+          <span className="block text-[12px] text-t3 mt-0.5">өдрийнхийг {dailyDays} хоногоор тооцов</span>
         </div>
         <div className="card p-5">
           <div className="text-[12.5px] text-t2 font-medium mb-2">Сүүлийн бодолт</div>
@@ -175,19 +235,40 @@ export default function Salary() {
                     <td className="td"><b className="text-ink">{r.period}</b>
                       <span className="block text-xs text-t3">{r.half}-р хагас · {r.items.length} хүн</span></td>
                     <td className="td text-right tabular-nums">{money(r.total_base)}</td>
-                    <td className="td text-right tabular-nums text-t2">{r.total_ndsh ? money(r.total_ndsh) : "—"}</td>
+                    {/* Бодолт нь ХЭДЭН ХУВИАР суутгасныг ӨӨРӨӨ үүрнэ: тохиргоо
+                        хожим өөрчлөгдвөл хуучин мөрийн шошго худал болохгүй. */}
+                    <td className="td text-right tabular-nums text-t2">
+                      {r.total_ndsh ? money(r.total_ndsh) : "—"}
+                      {r.total_ndsh > 0 && r.ndsh_percent > 0 && (
+                        <span className="block text-[11.5px] text-t3">{trimPct(r.ndsh_percent)}%</span>
+                      )}
+                    </td>
                     <td className="td text-right tabular-nums font-bold text-ink">{money(r.total_net)}</td>
                     <td className="td">{r.paid ? <span className="pill-green">Олгосон</span> : <span className="pill-amber">Олгоогүй</span>}</td>
                     {/* Бодолт бүр дээр «Олгох ✓» гэсэн ЯГ ижил нэртэй товч
                         зогсдог байв — уншигчаар ажилладаг хүн АЛЬ үеийн цалинг
                         олгож байгаагаа мэдэхгүй (дээрх «Хасах»-ын журам). ✓ нь
                         чимэг тул нуугдана: «шалгагдсан» гэж уншигдах ёсгүй. */}
-                    <td className="td">
-                      {!r.paid && (
-                        <button className="btn-ghost btn-row text-money"
-                          aria-label={`${r.period} · ${r.half}-р хагас — цалин олгох`}
-                          onClick={(ev) => { ev.stopPropagation(); setPayRun(r); }}>
-                          Олгох <span aria-hidden="true">✓</span></button>
+                    <td className="td whitespace-nowrap text-right">
+                      {runDeletable(r) && (
+                        <>
+                          <button className="btn-ghost btn-row text-money"
+                            aria-label={`${r.period} · ${r.half}-р хагас — цалин олгох`}
+                            onClick={(ev) => { ev.stopPropagation(); setPayRun(r); }}>
+                            Олгох <span aria-hidden="true">✓</span></button>
+                          {/* БУРУУ БОДСОНЫГ УСТГАХ зам огт байгаагүй: Отгоо
+                              өдрийн ажилчдын хоногийг андуурч бөглөвөл тэр
+                              бодолт үүрд жагсаалтад үлдэж, зөв нь дэргэд нь
+                              хоёр дахь мөр болдог байв. Сервер зөвхөн
+                              ОЛГООГҮЙ бодолтыг устгана — товч ч ялгаагүй. */}
+                          <button className="btn-ghost btn-row !text-danger ml-1"
+                            aria-label={`${r.period} · ${r.half}-р хагас — бодолт устгах`}
+                            onClick={(ev) => { ev.stopPropagation(); setDelRun(r); }}>
+                            Бодолт устгах</button>
+                        </>
+                      )}
+                      {r.paid && (
+                        <span className="text-[12px] text-t3">{PAID_RUN_LOCKED}</span>
                       )}
                     </td>
                   </tr>
@@ -213,8 +294,14 @@ export default function Salary() {
         </div>
       </div>
 
-      {modal?.kind === "emp" && <EmpModal onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
-      {modal?.kind === "run" && <RunModal emps={emps} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
+      {modal?.kind === "emp" && (
+        <EmpModal ndshPct={ndshPct} onClose={() => setModal(null)}
+                  onDone={(o?: Outcome) => { setModal(null); announce(o); load(); }} />
+      )}
+      {modal?.kind === "run" && (
+        <RunModal emps={emps} ndshPct={ndshPct} onClose={() => setModal(null)}
+                  onDone={(o?: Outcome) => { setModal(null); announce(o); load(); }} />
+      )}
       {drop && (
         <ConfirmModal
           title="Ажилтныг жагсаалтаас хасах"
@@ -227,14 +314,24 @@ export default function Salary() {
               value: drop.type === "daily" ? `${money(drop.daily_rate)}/өдөр` : money(drop.monthly_salary) },
           ]}
           total={{ label: "Сарын сангаас хасагдана",
-                   value: "−" + money(drop.type === "daily" ? drop.daily_rate * 22 : drop.monthly_salary),
+                   value: "−" + money(drop.type === "daily" ? drop.daily_rate * dailyDays : drop.monthly_salary),
                    accent: "money" }}
           confirmLabel="Хасах" danger
           onClose={() => setDrop(null)}
           onConfirm={async () => {
+            const gone = drop;
             try {
-              await api(`/api/salary/employees/${drop.id}`, { method: "DELETE" });
-              toast(`${drop.name} жагсаалтаас хасагдлаа`);
+              await api(`/api/salary/employees/${gone.id}`, { method: "DELETE" });
+              toast(`${gone.name} жагсаалтаас хасагдлаа`);
+              /* БУЦАХ ЗАМ. Хасагдсан ажилтан жагсаалтаас гардаг (сервер зөвхөн
+                 идэвхтэйг буцаана) тул андуурч дарсан бол түүнийг ДАХИН
+                 үүсгэхээс өөр аргагүй болж, нэг хүн хоёр мөр болно — хуучин
+                 бодолтууд нь нөгөө мөрөн дээр үлдэнэ. Зурвас дээрх
+                 «Идэвхжүүлэх» нь `POST …/reactivate` рүү очиж ЯГ тэр мөрийг
+                 эргүүлж авчирна. */
+              setOutcome(employeeOutcome("off", { name: gone.name,
+                                                  roleTitle: gone.role_title }).text);
+              setBackIn(gone);
               setDrop(null); load();
             } catch (e: any) { toast(e.message, "err"); setDrop(null); }
           }} />
@@ -258,12 +355,44 @@ export default function Salary() {
           confirmLabel="Олгох ✓" danger
           onClose={() => setPayRun(null)}
           onConfirm={async () => {
+            const r = payRun;
             try {
-              await api(`/api/salary/runs/${payRun.id}/pay`, { method: "POST",
+              await api(`/api/salary/runs/${r.id}/pay`, { method: "POST",
                 body: JSON.stringify({ date: today() }) });
               toast("Олгосон гэж тэмдэглэгдлээ — зардалд тусна");
+              announce(salaryPaidOutcome({ period: r.period, half: r.half,
+                                           net: r.total_net, date: today() }));
               setPayRun(null); load();
             } catch (e: any) { toast(e.message, "err"); }
+          }} />
+      )}
+
+      {/* БУРУУ БОДСОНЫГ УСТГАХ — зөвхөн ОЛГООГҮЙ бодолт (сервер 400-аар
+          хаана). Олгосон бодолт нь мөнгө гарсны баримт: түүн дээр тайлангийн
+          цалингийн зардал ба мөнгөн урсгал сууна. */}
+      {delRun && (
+        <ConfirmModal
+          title="Бодолт устгах"
+          intro={<><b className="text-ink">{delRun.period} · {delRun.half}-р хагас</b> — устгасан
+                  бодолт сэргэхгүй. Ажилчид, цалингийн хэмжээ хэвээр: ЭНЭ ҮЕИЙГ дахин бодож болно.</>}
+          rows={[
+            { label: "Ажилтан", value: `${delRun.items.length} хүн` },
+            { label: "Нийт цалин", value: money(delRun.total_base) },
+            ...(delRun.total_ndsh > 0
+              ? [{ label: "НДШ суутгал", value: "−" + money(delRun.total_ndsh), accent: "dim" as const }] : []),
+          ]}
+          total={{ label: "Гарт олгох байсан", value: money(delRun.total_net), accent: "danger" }}
+          confirmLabel="Устгах" danger
+          onClose={() => setDelRun(null)}
+          onConfirm={async () => {
+            const r = delRun;
+            try {
+              await api(`/api/salary/runs/${r.id}`, { method: "DELETE" });
+              toast("Бодолт устгагдлаа");
+              announce(salaryRunDeletedOutcome({ period: r.period, half: r.half,
+                                                 people: r.items.length, net: r.total_net }));
+              setDelRun(null); load();
+            } catch (e: any) { toast(e.message, "err"); setDelRun(null); }
           }} />
       )}
     </div>
@@ -271,7 +400,7 @@ export default function Salary() {
 }
 
 /** ШИНЭ ажилтан бүртгэх. Байгаа ажилтныг мөр дээр нь шууд заснаа (InlineEdit). */
-function EmpModal({ onClose, onDone }: any) {
+function EmpModal({ ndshPct, onClose, onDone }: any) {
   const toast = useToast();
   const f0 = { name: "", role_title: "", type: "main", monthly_salary: "", daily_rate: "", ndsh: false };
   const [f, setF] = useState(f0);
@@ -304,7 +433,10 @@ function EmpModal({ onClose, onDone }: any) {
       <label className="mt-4 flex items-center gap-2.5 cursor-pointer">
         <input type="checkbox" className="w-4.5 h-4.5" checked={f.ndsh}
                onChange={(ev) => setF({ ...f, ndsh: ev.target.checked })} />
-        <span className="text-[13.5px] font-medium">НДШ суутгана (11.5%)</span>
+        {/* Хувь нь ТОХИРГООНООС (`/api/salary/summary`). Урьд нь «11.5%» гэж
+            хатуу бичигдсэн байв: Отгоо Тохиргоо дээр 13% болгосон ч энэ мөр
+            11.5 гэж хэлсээр байсан тул аль нь үнэн болох нь мэдэгдэхгүй. */}
+        <span className="text-[13.5px] font-medium">{ndshLabel(ndshPct)}</span>
       </label>
       <div className="flex justify-end gap-2.5 mt-5">
         <button className="btn-secondary" onClick={onClose}>Болих</button>
@@ -314,7 +446,10 @@ function EmpModal({ onClose, onDone }: any) {
           try {
             await api("/api/salary/employees", { method: "POST", body: JSON.stringify(body) });
             toast("Ажилтан бүртгэгдлээ");
-            onDone();
+            onDone(employeeOutcome("add", {
+              name: f.name, roleTitle: f.role_title,
+              pay: f.type === "daily" ? `${money(parseMoney(f.daily_rate))}/өдөр`
+                                      : money(parseMoney(f.monthly_salary)) }));
           } catch (er: any) { toast(er.message, "err"); }
         }}>Хадгалах</SubmitButton>
       </div>
@@ -322,13 +457,21 @@ function EmpModal({ onClose, onDone }: any) {
   );
 }
 
-function RunModal({ emps, onClose, onDone }: any) {
+function RunModal({ emps, ndshPct, onClose, onDone }: any) {
   const toast = useToast();
   const now = new Date();
   const [period, setPeriod] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [half, setHalf] = useState(now.getDate() <= 15 ? 1 : 2);
-  const [pct, setPct] = useState(11.5);
-  useEffect(() => { api("/api/settings").then((s) => setPct(parseMoney(s.ndsh_percent) || 11.5)); }, []);
+  /* Хувь нь ХУУДСААС (`/api/salary/summary`) ирнэ — цонх нь өөрөө
+     `/api/settings` рүү явдаг байсан ба тэр хүсэлт БАРИГЧГҮЙ: сервер унавал
+     `pct` нь 11.5 дээрээ үлдэж, баримт нь ХУДАЛ суутгал зурна. */
+  const [pct, setPct] = useState(ndshPct > 0 ? ndshPct : 11.5);
+  useEffect(() => {
+    if (ndshPct > 0) { setPct(ndshPct); return; }
+    api("/api/settings")
+      .then((s) => setPct(parseMoney(s.ndsh_percent) || 11.5))
+      .catch(() => { /* уншигдаагүй — анхдагчаараа үлдэнэ, баримт нь хувиа нэрлэнэ */ });
+  }, [ndshPct]);
   const dailies = emps.filter((e: any) => e.type === "daily");
   const days0 = Object.fromEntries(dailies.map((e: any) => [String(e.id), ""])) as Record<string, string>;
   const [days, setDays] = useState<Record<string, string>>(days0);
@@ -377,7 +520,7 @@ function RunModal({ emps, onClose, onDone }: any) {
         rows={[
           { label: `Үндсэн ба гэрээт (${fixed.length} хүн × цалингийн тал)`, value: money(fixedBase) },
           ...(dailyBase > 0 ? [{ label: "Өдрийн ажилчид", value: money(dailyBase) }] : []),
-          { label: `НДШ суутгал (${pct}%)`, value: "−" + money(ndshAmt), accent: "danger" as const },
+          { label: `НДШ суутгал (${trimPct(pct)}%)`, value: "−" + money(ndshAmt), accent: "danger" as const },
         ]}
         total={{ label: "Гарт олгох нийт (урьдчилсан)", value: money(fixedBase + dailyBase - ndshAmt) }} />
       <div className="flex justify-end gap-2.5 mt-5">
@@ -389,7 +532,8 @@ function RunModal({ emps, onClose, onDone }: any) {
             const r = await api("/api/salary/runs", { method: "POST",
               body: JSON.stringify({ period, half, daily_days: dd }) });
             toast(`Бодолт үүслээ — гарт олгох нийт ${money(r.total_net)}`);
-            onDone();
+            onDone(salaryRunOutcome({ period: r.period ?? period, half: r.half ?? half,
+                                      people: (r.items || []).length, net: r.total_net }));
           } catch (e: any) { toast(e.message, "err"); }
         }}>Бодох</SubmitButton>
       </div>

@@ -1,11 +1,16 @@
 import { useEffect, useId, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, money, sayaFmt, user } from "../api";
-import { Spinner, Spin, FormModal, SubmitButton, useToast, Empty, InlineEdit, ConfirmModal, Receipt,
-         FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
+import { Spinner, Spin, Modal, FormModal, SubmitButton, useToast, Empty, InlineEdit,
+         ConfirmModal, Receipt, FinanceDisclosure, FinanceBlock, FinanceRow } from "../ui";
+import { ErrorCard, SideStrip } from "../components/SideStrip";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
-import { billableJobs, invoiceTotals, type MachineLogRow } from "../lib/machine";
+import { billableJobs, type MachineLogRow } from "../lib/machine";
+import { methodMn, previewBlocked, previewRows, previewTotal, trimPct,
+         type InvoicePreview } from "../lib/sideRows";
+import { invoiceCreatedOutcome, type Outcome } from "../lib/outcomeSide";
 import { todayIso } from "../lib/schedule";
 
 // Огноо ЛОКАЛ хуанлигаар — `toISOString()` нь UTC тул UTC+8-д орой 8 цагаас
@@ -20,7 +25,7 @@ const methodLabel = (m: string) => METHODS.find(([v]) => v === m)?.[1] || "—";
 
 export default function Machines() {
   const [d, setD] = useState<any>(null);
-  const [sel, setSel] = useState<any>(null);         // сонгосон машины logs + нэхэмжлэхүүд
+  const [sel, setSel] = useState<any>(null);         // сонгосон машины logs + нэхэмжлэлүүд
   const [modal, setModal] = useState<any>(null);     // {kind:'job'|'expense'|'add'|'invoice', machine}
   // Уугуул confirm() биш — системийн бусад устгал/төлөв солихтой ижил Modal
   const [ask, setAsk] = useState<any>(null);         // {kind:'delLog'|'retire'|'delInv', …}
@@ -29,7 +34,12 @@ export default function Machines() {
      ТҮЛХҮҮР нь МАШИНЫ ID: ганц `number | null` байхад нэг машины хүлээлт БҮХ
      машины товчийг унтраадаг байв — зургаан краны жагсаалт бүхэлдээ хөшинө. */
   const [invBusy, setInvBusy] = useState<Record<number, boolean>>({});
+  /** Нээгдсэн БАРИМТ — серверийн ХӨЛДӨӨСӨН мөрүүдтэй (`/api/machine-invoices/{id}`). */
+  const [openInv, setOpenInv] = useState<any>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [err, setErr] = useState("");
   const toast = useToast();
+  const announce = (o?: Outcome | null) => { if (o) setOutcome(o.text); };
   const pdf = usePdf();
   const u = user();
   const isManager = u?.role === "manager";
@@ -47,12 +57,21 @@ export default function Machines() {
      харуулах нь худал амлалт. */
   const seesMoney = u?.role !== "factory";
 
+  /* Урьд нь `load()` нь БАРИГЧГҮЙ `async` байв: сервер унавал татгалзал
+     Promise дотор чимээгүй үхэж, `d` нь `null` хэвээр — хуудас «Ачаалж
+     байна…» дээрээ МӨНХӨД зогсоно. Одоо шалтгаан ба «Дахин оролдох». */
   const load = async () => {
-    const lst = await api("/api/machines");
-    setD(lst);
-    if (lst.machines.length) {
-      const mid = sel?.id && lst.machines.some((m: any) => m.id === sel.id) ? sel.id : lst.machines[0].id;
-      setSel(await api(`/api/machines/${mid}/logs`));
+    try {
+      const lst = await api("/api/machines");
+      setD(lst);
+      setErr("");
+      if (lst.machines.length) {
+        const mid = sel?.id && lst.machines.some((m: any) => m.id === sel.id) ? sel.id : lst.machines[0].id;
+        setSel(await api(`/api/machines/${mid}/logs`));
+      }
+    } catch (e: any) {
+      setErr(e.message);
+      if (d) toast(e.message, "err");
     }
   };
   useEffect(() => { load(); }, []);
@@ -85,6 +104,7 @@ export default function Machines() {
     } catch (e: any) { toast(e.message, "err"); }
   };
 
+  if (err && !d) return <ErrorCard message={err} onRetry={() => { setErr(""); load(); }} />;
   if (!d) return <Spinner />;
 
   return (
@@ -104,6 +124,8 @@ export default function Machines() {
                   onClick={() => setModal({ kind: "add" })}>+ Машин нэмэх</button>
         )}
       </div>
+
+      {outcome && <div className="mb-4"><SideStrip text={outcome} onClose={() => setOutcome(null)} /></div>}
 
       {/* Планшет (дарга талбай дээр 768px-ээр орно): гурав нь 233px болж
           «1.4 сая₮» гэсэн тоонууд нугалдаг байв. Хоёр багана = 358px. */}
@@ -135,7 +157,7 @@ export default function Machines() {
               <div className="flex items-center gap-1.5 flex-wrap">
                 {/* Нэхэмжлэл гаргах зам нүд дотроо ч бий — доод «Нэхэмжлэлүүд»
                     хэсэг рүү гүйлгэлгүйгээр шууд. Зогссон машины өнгөрсөн ажлыг
-                    нэхэмжлэх нь хэвийн тул идэвхгүй үед ч харагдана. */}
+                    нэхэмжлэл гаргах нь хэвийн тул идэвхгүй үед ч харагдана. */}
                 {/* Хоёр оролт НЭГ үйлдэл — тул НЭГ жинтэй (btn-secondary) ба НЭГ
                     нэртэй. Картын оролт нь ХАРАГДАЖ буй бичилтийн самбарыг
                     хөдөлгөхгүй: В машины нэхэмжлэлийг гаргахын тулд А машины
@@ -352,9 +374,16 @@ export default function Machines() {
                       <td className="td text-right tabular-nums font-bold text-ink"
                           title={money(inv.grand_total)}>{money(inv.grand_total)}</td>
                       <td className="td text-right whitespace-nowrap">
-                        {/* Шошго нь «…» болдог байв — уншигчаар ажилладаг хүн
-                            30 мөрийн аль баримтын товчийг дарснаа алддаг. Нэр
-                            байрандаа, тэмдэг нь дэргэд нь. */}
+                        {/* БАРИМТ бол ГЭРЭЛ ЗУРАГ: түүн дээр ЯГ ямар мөр
+                            хэвлэгдэхийг сервер ХӨЛДӨӨЖ хадгалдаг
+                            (`detail_json`). Урьд нь тэр мөрүүдийг харах ганц
+                            зам нь PDF нээх байсан — Отгоо «энэ 4.6 сая юунаас
+                            бүрдэв» гэж асуухдаа файл татаж, нээж, хаадаг. */}
+                        <button className="btn-ghost btn-row"
+                                aria-label={`№${inv.no} — нэхэмжлэлийн мөрүүдийг харах`}
+                                onClick={() => setOpenInv({ id: inv.id, no: inv.no })}>
+                          Мөрүүд
+                        </button>
                         <button className="btn-ghost btn-row" disabled={pdf.busy}
                                 aria-busy={pdf.busyPath === path || undefined}
                                 aria-label={`№${inv.no} — хэвлэх`}
@@ -439,8 +468,17 @@ export default function Machines() {
       )}
       {modal?.kind === "add" && <AddMachineModal onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
       {modal?.kind === "invoice" && (
-        <InvoiceModal m={modal.machine} onClose={() => setModal(null)}
-                      onDone={() => { setModal(null); load(); }} />
+        /* НӨАТ% нь МАШИНЫ хариунаас (`/api/machines`) — цонх нь өөрөө
+           `/api/settings` рүү явж компанийн ЕРӨНХИЙ хувийг уншдаг байсан ба
+           механизмынх нь ӨӨР түлхүүр (`machine_vat_percent`). Тэр зөрүү нь
+           «1,800,000₮» гэж амлаад баримт дээр өөр тоо хэвлэдэг байлаа. */
+        <InvoiceModal m={modal.machine} vat={Number(d.vat_percent ?? 0)}
+                      onClose={() => setModal(null)}
+                      onDone={(o?: Outcome) => { setModal(null); announce(o); load(); }} />
+      )}
+      {openInv && (
+        <InvoiceDetailModal iid={openInv.id} no={openInv.no} pdf={pdf}
+                            onClose={() => setOpenInv(null)} />
       )}
 
       {ask?.kind === "delLog" && (
@@ -559,18 +597,27 @@ function LogModal({ kind, m, onClose, onDone }: any) {
 }
 
 /* ---------- Механизмын нэхэмжлэл ----------
-   «Үүсгэх» дарахаас ӨМНӨ ЯГ ЮУ орохыг харуулна: сонгогдсон мөрүүд, тэдгээрийн
-   нийт дүн. Сонголтын дүрэм нь серверийнхтэй нэг эх сурвалжаас (lib/machine.ts,
-   machine.test.ts-ээр барьцаалагдсан) — дэлгэц дээрх амлалт баримт дээр эвдэрэхгүй. */
-function InvoiceModal({ m, onClose, onDone }: any) {
+   «Үүсгэх» дарахаас ӨМНӨ ЯГ ЮУ орохыг СЕРВЕР өөрөө хэлнэ.
+
+   Урьд нь цонх нь мөрүүдээ ӨӨРӨӨ шүүж (`lib/machine.ts`), НӨАТ-аа ӨӨРӨӨ
+   бодож харуулдаг байв. Хоёр асуудал:
+     · НӨАТ% нь компанийн ерөнхий `vat_percent`-аас уншигдаж байсан бол
+       сервер механизмын ӨӨРИЙН түлхүүрээр (`machine_vat_percent`) боддог —
+       цонх «1,800,000₮» гэж амлаад баримт дээр өөр тоо гарна;
+     · ДАВХАРДАЛ нь зөвхөн «Үүсгэх» дарсны ДАРАА, 409 алдаа болж мэдэгддэг:
+       Отгоо огноогоо гурав дахин сонгож байж тааруулна.
+
+   Одоо `dry_run: true` нь ЮУ Ч БИЧИХГҮЙГЭЭР баримтын ЯГ тэр агуулгыг
+   (дугаар, мөрүүд, НӨАТ, нийт дүн, давхардлын сануулга) буцаана. Отгоо
+   түүнийг хараад л баталгаажуулна. */
+function InvoiceModal({ m, vat, onClose, onDone }: any) {
   const toast = useToast();
   const f0 = { client: "", from: monthStart(), to: today() };
   const [f, setF] = useState(f0);
   const [names, setNames] = useState<string[]>([]);
-  /* НӨАТ% нь СЕРВЕРИЙН тооцоонд ордог (`create_invoice`) тул урьдчилсан
-     харагдац түүнийг мэдэхгүй бол «1,800,000₮» гэж амлаад баримт дээр өөр тоо
-     хэвлэнэ. Компанийн тохиргоо ГАНЦ эх сурвалж — сервер ч эндээс уншина. */
-  const [vat, setVat] = useState(0);
+  /** Серверийн урьдчилсан харагдац. Маягт хөдлөх бүрд ХАЯГДАНА — хуучин
+   *  тоо шинэ огнооны дэргэд зогсох нь ХУДАЛ амлалт. */
+  const [pre, setPre] = useState<InvoicePreview | null>(null);
   const uid = useId();
 
   // Харилцагчийн санал: бүртгэлтэй харилцагчид + краны бичилтэд бичигдсэн
@@ -581,82 +628,196 @@ function InvoiceModal({ m, onClose, onDone }: any) {
     api("/api/clients")
       .then((rows: any[]) => { if (alive) setNames(rows.map((c) => c.name)); })
       .catch(() => { /* санал байхгүй ч гараар бичих зам нээлттэй */ });
-    api("/api/settings")
-      .then((s: any) => { if (alive) setVat(parseMoney(s.vat_percent)); })
-      .catch(() => { /* уншигдаагүй бол 0 — өнөөдрийн бодит утга */ });
     return () => { alive = false; };
   }, []);
 
+  const edit = (patch: Partial<typeof f0>) => { setPre(null); setF({ ...f, ...patch }); };
+
   const logs: MachineLogRow[] = m.logs || [];
-  const rows = billableJobs(logs, f.client, f.from, f.to);
-  const sum = invoiceTotals(rows, vat);
-  const suggestions = Array.from(new Set([...(m.clients || []), ...names]));
+  /* Мөрийн ТООГ шууд хэлнэ (мөнгө БИШ): огноогоо тааруулах зуур Отгоо
+     «энэ цонхонд ажил байна уу» гэдгийг мэдэж байх ёстой. Мөнгө нь зөвхөн
+     серверийн урьдчилсан харагдац дээр гарна — нэг тоо, нэг эх сурвалж. */
+  const willInclude = billableJobs(logs, f.client, f.from, f.to).length;
+  const canPreview = !!f.client.trim() && f.from <= f.to;
+
+  const runPreview = async () => {
+    try {
+      const p = await api(`/api/machines/${m.id}/invoices`, { method: "POST",
+        body: JSON.stringify({ client: f.client.trim(), d_from: f.from, d_to: f.to,
+                               dry_run: true }) });
+      setPre(p);
+    } catch (e: any) { toast(e.message, "err"); }
+  };
 
   return (
-    <FormModal title={`Нэхэмжлэл үүсгэх — ${m.name}`} onClose={onClose} dirty={formDirty(f0, f)}>
+    <FormModal title={`Нэхэмжлэл үүсгэх — ${m.name}`} onClose={onClose} dirty={formDirty(f0, f)}
+               /* Гол товч ГҮЙЛТИЙН ГАДНА: урьдчилсан харагдац 12 мөртэй үед
+                  цонх дотроо гүйдэг ч «Үүсгэх» нүдний өмнө зогсоно. */
+               footer={
+                 <div className="flex justify-end gap-2.5 flex-wrap">
+                   <button className="btn-secondary" onClick={onClose}>Болих</button>
+                   {/* ⚠ ХОЁР ТУСДАА ТОВЧ (`key`). Ижил байрлалд ижил төрлийн
+                       бүрэлдэхүүн солигдвол React түүнийг ДАХИН АШИГЛАДАГ:
+                       «Урьдчилж харах» дарсны `busy` төлөв нь дөнгөж төрсөн
+                       «Үүсгэх» дээр үлдэж, тэр товч агшин зуур ТҮГЖЭЭТЭЙ
+                       («Үүсгэж байна…») харагдана. `key` нь шинээр суулгана. */}
+                   {!pre ? (
+                     <SubmitButton key="preview" disabled={!canPreview} busyLabel="Шалгаж байна…"
+                       title={canPreview ? undefined : "Харилцагч ба хугацаагаа эхлээд сонгоно уу"}
+                       onSubmit={runPreview}>Урьдчилж харах</SubmitButton>
+                   ) : (
+                     <SubmitButton key="create" disabled={previewBlocked(pre)} busyLabel="Үүсгэж байна…"
+                       title={previewBlocked(pre) ? (pre.warning || undefined) : undefined}
+                       onSubmit={async () => {
+                         try {
+                           const inv = await api(`/api/machines/${m.id}/invoices`, { method: "POST",
+                             body: JSON.stringify({ client: f.client.trim(), d_from: f.from, d_to: f.to }) });
+                           toast(`№${inv.no} үүслээ — ${inv.rows} мөр`);
+                           onDone(invoiceCreatedOutcome({ no: inv.no, client: f.client,
+                                                          rows: inv.rows,
+                                                          grandTotal: inv.grand_total }));
+                         } catch (e: any) { toast(e.message, "err"); }
+                       }}>Үүсгэх</SubmitButton>
+                   )}
+                 </div>}>
       <label className="lbl" htmlFor={`${uid}-client`}>Харилцагч *</label>
       <input id={`${uid}-client`} className="inp" list={`${uid}-clients`} autoFocus
              placeholder="Бичилт дээрх нэртэй ЯГ ижил байх ёстой" value={f.client}
-             onChange={(e) => setF({ ...f, client: e.target.value })} />
+             onChange={(e) => edit({ client: e.target.value })} />
       <datalist id={`${uid}-clients`}>
-        {suggestions.map((c) => <option key={c} value={c} />)}
+        {Array.from(new Set([...(m.clients || []), ...names]))
+          .map((c) => <option key={c} value={c} />)}
       </datalist>
 
       <div className="grid grid-cols-2 gap-3.5 mt-3.5">
         <div><label className="lbl" htmlFor={`${uid}-from`}>Эхлэх огноо</label>
           <input id={`${uid}-from`} type="date" className="inp" value={f.from}
-                 onChange={(e) => setF({ ...f, from: e.target.value })} /></div>
+                 onChange={(e) => edit({ from: e.target.value })} /></div>
         <div><label className="lbl" htmlFor={`${uid}-to`}>Дуусах огноо</label>
           <input id={`${uid}-to`} type="date" className="inp" value={f.to}
-                 onChange={(e) => setF({ ...f, to: e.target.value })} /></div>
+                 onChange={(e) => edit({ to: e.target.value })} /></div>
       </div>
       <p className="text-[12.5px] text-t3 mt-2">
         Хоёр огноо хоёулаа ОРНО. Дотоод ажил, зарлага нэхэмжлэлд орохгүй.
       </p>
 
+      {/* НӨАТ нь ХААНААС ирснийг цонх өөрөө хэлж, засах ЗАМАА зааж өгнө —
+          «яагаад 0% байна» гэсэн асуулт Тохиргоо хуудсан дээр хариулагдана. */}
+      <p className="text-[12.5px] text-t3 mt-1">
+        Механизмын НӨАТ: <b className="text-ink tabular-nums">{trimPct(Number(vat) || 0)}%</b>
+        {" — "}
+        <Link to="/settings" className="text-brand-ink hover:underline">Тохиргоо</Link> дээрээс солино.
+      </p>
+
       <div className="mt-4">
-        {rows.length === 0 ? (
+        {!pre ? (
           <div className="rounded-xl bg-sunken px-4 py-3 text-[13px] text-t2">
-            {f.client.trim()
-              ? "Энэ хугацаанд тухайн харилцагчийн нэхэмжлэх ажил алга."
-              : "Харилцагчаа сонгоно уу — сонгосны дараа орох мөрүүд энд харагдана."}
+            {!f.client.trim()
+              ? "Харилцагчаа сонгоно уу — сонгосны дараа «Урьдчилж харах» дарж баримтын мөрүүдийг харна."
+              : willInclude === 0
+                ? "Энэ хугацаанд тухайн харилцагчийн нэхэмжлэлд орох ажил алга."
+                : `Энэ хугацаанд ${willInclude} мөр байна — «Урьдчилж харах» дарж дүнг нь харна уу.`}
           </div>
         ) : (
-          <Receipt
-            rows={[
-              ...rows.slice(0, 6).map((r) => ({
-                label: `${r.date} · ${r.label || "Ажил"}`,
-                sub: methodLabel(r.method),
-                value: money(r.amount),
-              })),
-              ...(rows.length > 6
-                ? [{ label: `… бас ${rows.length - 6} мөр`, value: money(invoiceTotals(rows.slice(6)).total), accent: "dim" as const }]
-                : []),
-              // НӨАТ 0 бол мөр нэмэхгүй — байхгүй татварыг «0₮» гэж зарлах нь
-              // уншигчийг зогсоох чимээ (өнөөдрийн Жигүүр Зам).
-              ...(sum.vat > 0
-                ? [{ label: `Мөрүүдийн дүн`, value: money(sum.total), accent: "dim" as const },
-                   { label: `НӨАТ ${vat}%`, value: money(sum.vat), accent: "dim" as const }]
-                : []),
-            ]}
-            total={{ label: `${rows.length} мөр · Нийт`, value: money(sum.grand), accent: "money" }} />
+          <>
+            {/* ДАВХАРДАЛ, эсвэл «мөр алга» — сануулгын ӨНГӨӨР, үгтэйгээ.
+                Урьд нь энэ өгүүлбэр зөвхөн «Үүсгэх» дарсны дараа, 409 болж
+                гардаг байв. */}
+            {pre.warning && (
+              <div role="alert"
+                   className="rounded-xl bg-warn-50 text-warn px-4 py-3 mb-3 text-[13px] font-medium">
+                <span aria-hidden="true">⚠ </span>{pre.warning}
+              </div>
+            )}
+            <div className="text-[12.5px] text-t3 mb-2">
+              Баримтын дугаар: <b className="text-ink tabular-nums">№{pre.no}</b>
+              {" · "}{pre.d_from} – {pre.d_to}
+            </div>
+            {(pre.lines || []).length > 0 && (
+              <Receipt rows={previewRows(pre)} total={previewTotal(pre)} />
+            )}
+          </>
         )}
       </div>
-
-      <div className="flex justify-end gap-2.5 mt-5">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
-        <SubmitButton disabled={rows.length === 0} busyLabel="Үүсгэж байна…"
-          title={rows.length === 0 ? "Орох мөр байхгүй тул нэхэмжлэл үүсгэхгүй" : undefined}
-          onSubmit={async () => {
-            try {
-              const inv = await api(`/api/machines/${m.id}/invoices`, { method: "POST",
-                body: JSON.stringify({ client: f.client.trim(), d_from: f.from, d_to: f.to }) });
-              toast(`№${inv.no} үүслээ — ${inv.rows} мөр`);
-              onDone();
-            } catch (e: any) { toast(e.message, "err"); }
-          }}>Үүсгэх</SubmitButton>
-      </div>
     </FormModal>
+  );
+}
+
+/* ---------- Баримтын ХӨЛДӨӨСӨН агуулга ----------
+   Нэхэмжлэл бол ГЭРЭЛ ЗУРАГ: үүсгэх агшинд мөрүүд нь `detail_json` дотор
+   хөлдөнө. Бичилт нь хожим засагдсан ч ЭНЭ мөрүүд ХӨДӨЛӨХГҮЙ — цаасан дээр
+   юу хэвлэгдсэн, дэлгэц дээр ЯГ тэр. */
+function InvoiceDetailModal({ iid, no, pdf, onClose }: any) {
+  const [inv, setInv] = useState<any>(null);
+  const [err, setErr] = useState("");
+  const path = `/api/machine-invoices/${iid}/pdf`;
+  const load = () => {
+    setErr("");
+    api(`/api/machine-invoices/${iid}`).then(setInv).catch((e) => setErr(e.message));
+  };
+  useEffect(load, [iid]);
+  return (
+    <Modal title={`Нэхэмжлэл №${no}`} onClose={onClose} wide
+           footer={
+             <div className="flex justify-end gap-2.5">
+               <button className="btn-secondary" onClick={onClose}>Хаах</button>
+               <button className="btn-primary" disabled={pdf.busy || !inv}
+                       aria-busy={pdf.busyPath === path || undefined}
+                       onClick={() => pdf.open(path)}>
+                 Хэвлэх{pdf.busyPath === path && <Spin />}
+               </button>
+             </div>}>
+      {err ? (
+        <div role="alert" className="rounded-xl bg-danger-50 px-4 py-3 flex items-center gap-3 flex-wrap">
+          <span className="text-[13px] font-medium text-danger flex-1 min-w-[180px]">{err}</span>
+          <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]"
+                  onClick={load}>Дахин оролдох</button>
+        </div>
+      ) : !inv ? (
+        <p className="text-[13px] text-t3">Ачаалж байна…</p>
+      ) : (
+        <>
+          <div className="flex gap-x-6 gap-y-1 flex-wrap text-[13px] mb-3.5">
+            <span><span className="text-t3">Харилцагч:</span>{" "}
+              <b className="text-ink">{inv.client}</b></span>
+            <span><span className="text-t3">Хугацаа:</span>{" "}
+              <b className="text-ink tabular-nums">{inv.d_from} – {inv.d_to}</b></span>
+            <span><span className="text-t3">Механизм:</span>{" "}
+              <b className="text-ink">{inv.machine}</b></span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[420px]">
+              <thead><tr>
+                <th className="th">Огноо</th><th className="th">Юу</th>
+                <th className="th">Хэлбэр</th><th className="th text-right">Дүн</th>
+              </tr></thead>
+              <tbody>
+                {(inv.lines || []).map((l: any, i: number) => (
+                  <tr key={i}>
+                    <td className="td tabular-nums whitespace-nowrap">{l.date}</td>
+                    <td className="td">{l.label || "Ажил"}</td>
+                    <td className="td text-t2">{methodMn(l.method)}</td>
+                    <td className="td text-right tabular-nums">{money(l.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {(inv.lines || []).length === 0 && (
+              <p className="text-[12.5px] text-t3 py-3">
+                Энэ баримт хөлдөөсөн мөргүй (хуучин баримт) — хэвлэхэд бичилтээс дахин цуглуулна.
+              </p>
+            )}
+          </div>
+          <Receipt className="mt-4"
+            rows={[
+              { label: "Мөрүүдийн дүн", value: money(inv.total), accent: "dim" },
+              ...(inv.vat > 0 ? [{ label: "НӨАТ", value: money(inv.vat), accent: "dim" as const }] : []),
+            ]}
+            total={{ label: `${(inv.lines || []).length} мөр · Нийт`,
+                     value: money(inv.grand_total), accent: "money" }} />
+        </>
+      )}
+    </Modal>
   );
 }
 

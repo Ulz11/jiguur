@@ -1,16 +1,22 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, fmt, money, sayaFmt, sayaFmtLike, user } from "../api";
-import { Spinner, Prog, useToast, ConfirmModal, Refreshing, Empty, Chevron } from "../ui";
+import { Spinner, Prog, useToast, ConfirmModal, Refreshing, Empty, Chevron,
+         OutcomeStrip, PageError, Exact } from "../ui";
 import { disclosureProps } from "../lib/disclosure";
 import { useScope, ScopeSwitch } from "../App";
 import { useLive } from "../lib/live";
 import { rowClickProps } from "../lib/rowClick";
-import { clientHref, contractHref, contractsHref, flaggedHref, invoiceHref, notificationHref } from "../lib/links";
+import { clientHref, contractHref, contractsHref, flaggedHref, invoiceHref,
+         notificationHref, notificationKey } from "../lib/links";
+import { shipmentOutcome } from "../lib/outcome";
+import { agingColor, agingFootnote, agingRows, overdueTile, snoozedLabel } from "../lib/dashboard";
+import { elsewhereLine, forgetSnooze, rememberSnooze, snoozedNotes } from "../lib/snooze";
 import { invoiceLabel } from "../lib/invoice";
 import { FLAGGED_CAP, capRows, showAllLabel } from "../lib/note";
 import { contractNoLabel, contractTitle } from "../lib/opening";
 import { dueLabel, todayIso } from "../lib/schedule";
+import { cycleLabel } from "../lib/cycle";
 import { UNCHARGED } from "../lib/penalty";
 import { uninvoicedLine } from "../lib/receivable";
 import RevChart from "../components/RevChart";
@@ -20,6 +26,8 @@ import RevChart from "../components/RevChart";
 const FACTORY_NOTE_KINDS = new Set(["shipment", "ending", "expired"]);
 /** Шүүлтүүрийн нэр — хоосон төлөв ЯМАР хүрээнээс болж хоосорсныг хэлнэ */
 const SCOPE_LABEL: Record<string, string> = { rent: "Түрээс", sale: "Худалдаа" };
+/** «Түр нуух» нь ХЭДЭН хоног вэ — товчны нэр дээр ил бичигдэнэ. */
+const SNOOZE_DAYS = 7;
 
 export default function Dashboard() {
   const { scope, setScope } = useScope();
@@ -33,6 +41,17 @@ export default function Dashboard() {
   const [allFlagged, setAllFlagged] = useState(false);
   const [ask, setAsk] = useState<any>(null);          // баталгаажуулах гэж буй ачилт
   const [lines, setLines] = useState<any[] | null>(null); // тухайн ачилтын мөрүүд
+  /* ҮР ДҮНГИЙН ЗУРВАС (`lib/outcome.ts`) — «Ачсан ✓» дарсны дараа ЮУ БОЛСОН
+     нь дэлгэц дээр ҮЛДЭНЭ. Toast нь 3.2 секундын дараа арилдаг: дарга
+     планшетаа буулгаад бараагаа тоолж, буцаж ирэхэд дэлгэц юу ч болоогүй
+     мэт зогсдог байв. */
+  const [outcome, setOutcome] = useState<string | null>(null);
+  /* Хуудас АЧААЛАГДСАНГҮЙ. Урьд нь `.catch` байхгүй тул сервер 500 буцаахад
+     `d` нь null хэвээр үлдэж, «Ачаалж байна…» ҮҮРД зогсдог байв. */
+  const [err, setErr] = useState<string | null>(null);
+  /* Түр нуусан мөрүүдийг НЭЭЖ харах — «5 нуугдсан · харах». */
+  const [showSnoozed, setShowSnoozed] = useState(false);
+  const [snoozing, setSnoozing] = useState<string | null>(null);
   const toast = useToast();
   const nav = useNavigate();
   const u = user();
@@ -54,21 +73,36 @@ export default function Dashboard() {
   const load = () => {
     loadQueue();
     setBusyScope(true);
-    return api(`/api/dashboard?scope=${scope}`).then(setD)
-      .catch((e) => toast(e.message, "err"))
+    return api(`/api/dashboard?scope=${scope}`)
+      .then((v: any) => { setD(v); setErr(null); })
+      /* Алдааг ХОЁУЛАНГ нь: toast (тоо дэлгэц дээр байвал) ба карт (байхгүй
+         бол). Аль нэгийг нь орхивол нэг тохиолдол чимээгүй үлдэнэ. */
+      .catch((e: any) => { toast(e.message, "err"); setErr(e.message); })
       .finally(() => setBusyScope(false));
   };
-  /** Фонд шинэчлэх — бүдгэрүүлэг ч гаргахгүй, алдааг чимээгүй залгина. */
+  /** Фонд шинэчлэх — бүдгэрүүлэг ч гаргахгүй. Уналт нь ТОПБАРЫН заагчийг
+   *  шарлуулна (`api.ts` → `lib/live.ts`) — өмнө нь мөр мөрөөрөө залгигдаж,
+   *  дэлгэц дээрх тоо чимээгүй хуучирдаг байв. */
   const refresh = () => {
     loadQueue();
-    return api(`/api/dashboard?scope=${scope}`).then(setD).catch(() => {});
+    return api(`/api/dashboard?scope=${scope}`)
+      .then((v: any) => { setD(v); setErr(null); })
+      .catch(() => {});
   };
   useLive((bg) => (bg ? refresh() : load()), [scope]);
 
+  /* Эргэлдэгч нь ЗӨВХӨН хараахан юу ч ирээгүй үед. Алдаа гарсан бол
+     серверийн ЯГ өгүүлбэр ба гарах зам. */
+  if (err && !d) return <PageError error={err} onRetry={() => { setErr(null); load(); }} />;
   if (!d) return <Spinner />;   // ЗӨВХӨН анхны ачаалал
   const k = d.kpi;
-  const agingMax = Math.max(...d.aging.map((a: any) => a.amount), 1);
-  const agingColors = ["#1F8B69", "#253886", "#F88712", "#C9363B"];
+  /* Насжилтын хувингууд нь ДУГААРААР биш ТҮЛХҮҮРЭЭР («90+» нь `aging[3]`
+     байсан — сервер «Хугацаа болоогүй» хувинг эхэнд нэмэхэд тэр индекс
+     «61–90» руу гулсаж, доод мөр нь ХУДАЛ тоо зурж эхэлсэн). */
+  const aging = agingRows(d.aging);
+  const agingMax = Math.max(...aging.map((a) => a.amount), 1);
+  /** Хувинг ТҮЛХҮҮРЭЭР — байхгүй бол 0 (хуучин серверийн хариу). */
+  const agingOf = (key: string) => aging.find((a) => a.key === key)?.amount ?? 0;
   /* Хуучин сервер (кэшлэгдсэн хуудас) эдгээр талбаргүй хариу буцаавал самбар
      нурах ёсгүй — хоосон жагсаалт руу унана. */
   const overdueList = d.overdue_list || [];
@@ -94,11 +128,57 @@ export default function Dashboard() {
     setBusy(id);
     try {
       await api(`/api/movements/${id}/confirm`, { method: "POST" });
+      /* ЗУРВАС нь toast-ыг СОЛИХГҮЙ, ХАЖУУД нь зогсоно: toast 3.2 секундын
+         дараа арилдаг, зурвас нь «Хаах» дартал үлдэнэ. Дашбоард дээр зургаан
+         гэрээний ачилт зэрэгцэж байдаг тул зурвас нь АЛЬ нэгийг нь нэрлэнэ. */
+      const qty = lines?.reduce((sum: number, l: any) => sum + l.qty, 0) ?? null;
+      setOutcome(shipmentOutcome({
+        who: `${ask.client} — ${contractTitle(ask.contract_no)}`,
+        qty, date: ask.date, movementId: id }).text);
       toast("Ачилт баталгаажлаа — нөөц хөдөлж, тооцоо эхэллээ");
       setAsk(null);
       load();
     } catch (e: any) { toast(e.message, "err"); }
     finally { setBusy(null); }
+  }
+
+  /* ---------- МЭДЭГДЛИЙГ ТҮР НУУХ ----------
+     «12 нэхэмжлэл хэтэрлээ» гэсэн мөр өдөр бүр гарч ирдэг. Отгоо тэр
+     харилцагчтай яриад «сарын 15-нд төлнө» гэж тохирсон бол мөр нь долоо
+     хоног шаардлагагүй — атал ЖАГСААЛТААС гарах арга байхгүй тул түүний
+     доорх БОДИТ шинэ мэдэгдэл нүднээс гардаг.
+     Нуулт нь ХҮНИЙХ (сервер `user_id`-аар хадгална) ба ЭРГЭЖ БОЛНО. */
+  async function snooze(n: any) {
+    const key = notificationKey(n);
+    setSnoozing(`${key.kind}-${key.entity_id}`);
+    try {
+      const r = await api("/api/notifications/snooze", { method: "POST",
+        body: JSON.stringify({ ...key, days: SNOOZE_DAYS }) });
+      /* Сервер нуусан мөрөө хариунаасаа ХАСДАГ — «юуг нуусан бэ?» гэсэн
+         асуултын хариу зөвхөн ЭНД үлдэнэ (`lib/snooze.ts`). */
+      rememberSnooze({ ...key, title: n.title, sub: n.sub,
+                       until: r?.snooze_until || "" }, today);
+      toast(`Мэдэгдэл ${SNOOZE_DAYS} хоног нуугдлаа — «нуугдсан · харах» дээрээс буцаана`);
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+    finally { setSnoozing(null); }
+  }
+
+  /** ⚠ Нуугдсан мөр нь МЭДЭГДЭЛ БИШ, САНАМЖИЙН бичлэг (`lib/snooze.ts`):
+   *  түүн дээр `invoice_id`/`contract_id` байхгүй, харин `kind`/`entity_id`
+   *  нь АЛЬ ХЭДИЙН тооцоологдсон хаяг. `notificationKey`-г дахин гүйлгэвэл
+   *  `entity_id: null` болж, сервер БҮХЭЛ ТӨРЛИЙН нуулт хайгаад олохгүй —
+   *  «Буцаах» дарсан мөр эргэж ирэхгүй. */
+  async function unsnooze(n: { kind: string; entity_id: number | null }) {
+    const key = { kind: n.kind, entity_id: n.entity_id ?? null };
+    setSnoozing(`${key.kind}-${key.entity_id}`);
+    try {
+      await api("/api/notifications/snooze", { method: "DELETE", body: JSON.stringify(key) });
+      forgetSnooze(key, today);
+      toast("Нуулт цуцлагдлаа — мөр дахин жагсаалтад орлоо");
+      await refresh();
+    } catch (e: any) { toast(e.message, "err"); }
+    finally { setSnoozing(null); }
   }
 
   const notes = isFactory
@@ -220,30 +300,88 @@ export default function Dashboard() {
     </div>
   );
 
+  /* НУУСАН МӨРҮҮД — «алга болсон» БИШ, «хойшлуулсан». Сервер тэднийг
+     хариунаасаа хасаад зөвхөн ТООГ нь буцаадаг тул «юуг нуусан бэ?» гэсэн
+     хариу энэ төхөөрөмжийн санамжид үлдэнэ (`lib/snooze.ts`). */
+  const hidden = snoozedNotes(today);
   const notificationsCard = (
     <div className="card p-5">
-      <h2 className="font-bold text-ink text-[15.5px] mb-3">Мэдэгдэл</h2>
+      <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+        <h2 className="font-bold text-ink text-[15.5px]">Мэдэгдэл</h2>
+        {snoozedLabel(d.snoozed_count) && (
+          <button type="button" className="pill-grey hover:bg-brand-50 hover:text-brand-ink transition"
+                  aria-expanded={showSnoozed}
+                  onClick={() => setShowSnoozed(!showSnoozed)}>
+            {showSnoozed ? "Нуугдсаныг хаах" : snoozedLabel(d.snoozed_count)}
+          </button>
+        )}
+      </div>
+
+      {/* Нуугдсан мөрүүд — буцаах товчтойгоо */}
+      {showSnoozed && (
+        <div className="mb-3 rounded-xl bg-sunken px-3.5 py-3">
+          {hidden.length === 0 && (
+            <p className="text-[12.5px] text-t2">Энэ төхөөрөмжөөс нуусан мөр алга.</p>
+          )}
+          {hidden.map((h) => (
+            <div key={`${h.kind}-${h.entity_id}`}
+                 className="flex items-start gap-2.5 py-1.5 flex-wrap">
+              <span className="text-[12.5px] text-t2 flex-1 min-w-[180px] leading-snug">
+                {h.title}
+                {h.until && <span className="block text-[12px] text-t3">{h.until} хүртэл нуугдсан</span>}
+              </span>
+              <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[12.5px]"
+                      disabled={snoozing === `${h.kind}-${h.entity_id}`}
+                      onClick={() => unsnooze(h)}>Буцаах</button>
+            </div>
+          ))}
+          {elsewhereLine(d.snoozed_count, hidden.length) && (
+            <p className="text-[12px] text-t3 mt-1.5">
+              {elsewhereLine(d.snoozed_count, hidden.length)}
+            </p>
+          )}
+        </div>
+      )}
+
       {notes.length === 0 && <p className="text-t3 text-sm py-4">Одоогоор мэдэгдэл алга. 🙌</p>}
       {notes.map((n: any, i: number) => {
         /* Мэдэгдэл бүр ХААШАА аваачихаа мэднэ: гэрээтэй бол гэрээ рүү, эс
-           бөгөөс төрлийнхөө хуудас руу (зээл → Зээл, амлалт → Авлага
-           цуглуулах, бартер → Бартер). Даргад хаалттай хуудас руу холбоос
-           үүсэхгүй — тэр мөр зүгээр л уншигдана. */
+           бөгөөс төрлийнхөө хуудас руу (зээл → Зээл, хоцорсон зээл → Зээл,
+           амлалт → Авлага цуглуулах, бартер → Бартер). Даргад хаалттай
+           хуудас руу холбоос үүсэхгүй — тэр мөр зүгээр л уншигдана. */
         const to = notificationHref(n, u?.role);
+        const key = notificationKey(n);
+        const id = `${key.kind}-${key.entity_id}`;
         return (
         <div key={i}
-             {...(to ? rowClickProps(() => nav(to), `${n.title} — нээх`, "link") : {})}
-             className={`flex gap-3 py-3 border-b border-sunken last:border-0 items-start -mx-2 px-2 rounded-lg transition ${
-               to ? "cursor-pointer hover:bg-canvas" : ""}`}>
+             /* `flex-wrap` — дашбоардын мэдэгдлийн багана 1366px дээр ~190px:
+                товч мөрөн дээр зэрэгцвэл гарчиг нь дөрвөн мөр болж эвхэгдэнэ.
+                Нарийн газар товч нь ДООШОО буух ба текст бүтэн өргөнөө авна. */
+             className={`flex gap-3 gap-y-1.5 py-3 border-b border-sunken last:border-0 items-start flex-wrap -mx-2 px-2 rounded-lg transition ${
+               to ? "hover:bg-canvas" : ""}`}>
           <div className={`w-8 h-8 rounded-[10px] grid place-items-center shrink-0 text-sm ${
             n.level === "danger" ? "bg-danger-50 text-danger" :
             n.level === "warn" ? "bg-warn-50 text-warn" : "bg-brand-50 text-brand-ink"}`}>
             {n.level === "danger" ? "!" : n.level === "warn" ? "◷" : "▤"}
           </div>
-          <div className="min-w-0">
+          {/* Мөрийн ТЕКСТ нь холбоос; «Түр нуух» нь ӨӨРИЙН товч. Урьд нь БҮХЭЛ
+              мөр дарагддаг байсныг хэвээр үлдээвэл нуух гэж дарсан товшилт
+              гэрээ рүү үсрэх байв. */}
+          <div className="min-w-[150px] flex-1"
+               {...(to ? rowClickProps(() => nav(to), `${n.title} — нээх`, "link") : {})}
+               style={to ? { cursor: "pointer" } : undefined}>
             <b className="text-[13.5px] text-ink font-semibold block leading-snug">{n.title}</b>
             <span className="text-[12.5px] text-t2">{n.sub}</span>
           </div>
+          {/* ХОЙШЛУУЛАХ. Мөр өдөр бүр гарч ирдэг тул түүний доорх БОДИТ шинэ
+              мэдэгдэл нүднээс гардаг байв. Нуулт нь ХҮНИЙХ ба эргэж болно —
+              товчны нэр дээр ХЭДЭН хоног болохыг ил хэлнэ. */}
+          <button className="btn-ghost !min-h-9 !py-1.5 !px-2.5 text-[12.5px] shrink-0 ml-auto"
+                  disabled={snoozing === id}
+                  aria-label={`${n.title} — ${SNOOZE_DAYS} хоног түр нуух`}
+                  onClick={() => snooze(n)}>
+            {snoozing === id ? "…" : `Түр нуух (${SNOOZE_DAYS} хоног)`}
+          </button>
         </div>
         );
       })}
@@ -289,6 +427,7 @@ export default function Dashboard() {
           <p className="dashboard-subtitle">Ачилтаа баталгаажуулж, түрээсэнд байгаа материалаа хараарай.</p>
         </div>
       </div>
+      {outcome && <OutcomeStrip text={outcome} onClose={() => setOutcome(null)} />}
       <div className="work-queue">
         {shipmentsCard(true)}
         {returnQueueCard}
@@ -320,6 +459,9 @@ export default function Dashboard() {
           дээр, хуудасны дотор зогсоно (Гэрээнүүд хуудастай нэг байрлал). */}
       <ScopeSwitch />
 
+      {/* ҮР ДҮНГИЙН ЗУРВАС — «Ачсан ✓» дарсны дараа ЮУ БОЛСОН нь үлдэнэ */}
+      {outcome && <OutcomeStrip text={outcome} onClose={() => setOutcome(null)} />}
+
       {/* KPI */}
       <div className="command-metrics">
         <div className="command-hero relative overflow-hidden">
@@ -329,6 +471,10 @@ export default function Dashboard() {
                title={money(k.receivable)}>
             {sayaFmt(k.receivable)} <span className="text-sm text-white/70 font-semibold">₮</span>
           </div>
+          {/* БҮТЭН дүн нь `title`-д нуугдаж байв: Отгоо хулгана хөвүүлдэггүй,
+              планшет дээр огт боломжгүй. Банкны хуулгатай тулгах гэж байгаа
+              хүнд ЯГ энэ тоо хэрэгтэй. */}
+          <Exact n={k.receivable} className="text-white/70" />
           {/* НЭГ АВЛАГА (H9b): энэ тоо = нэхэмжилсэн + одоогийн циклийн
               хуримтлал, харилцагчийн жагсаалт/профайл/Авлага цуглуулах дээрхтэй
               ЯГ ИЖИЛ. Дундах хуримтлалыг доор нь нэрлэнэ — «яагаад тэр
@@ -362,6 +508,14 @@ export default function Dashboard() {
               </span>
             )}
           </div>
+          {/* Алдангийн ХОЁР тэмдэг ч дугуйлагдсан — бүтэн дүн нь мөрөндөө */}
+          {(k.penalty_booked > 0 || k.penalty_unbooked > 0) && (
+            <div className="text-[12px] text-white/70 tabular-nums mt-1.5">
+              {k.penalty_booked > 0 && `яг ${fmt(k.penalty_booked)}₮ нэхэгдсэн`}
+              {k.penalty_booked > 0 && k.penalty_unbooked > 0 && " · "}
+              {k.penalty_unbooked > 0 && `яг ${fmt(k.penalty_unbooked)}₮ ${UNCHARGED}`}
+            </div>
+          )}
         </div>
         {/* «3 нэхэмжлэл хэтэрсэн» гэдэг тоо нь ЯМАР нэхэмжлэлүүд болохыг
             хэлдэггүй байв — Отгоо тоог хараад хэнд залгахаа мэдэхгүй үлддэг.
@@ -377,8 +531,12 @@ export default function Dashboard() {
                title={money(k.overdue)}>
             {sayaFmt(k.overdue)} <span className="text-sm text-t2 font-semibold">₮</span>
           </div>
+          <Exact n={k.overdue} />
           <div className="mt-2 flex items-center gap-2 flex-wrap">
-            <span className="pill-red">{k.overdue_count} нэхэмжлэл</span>
+            {/* «12 нэхэмжлэл» гэдэг нь ХЭДЭН ХҮН гэдгийг хэлдэггүй — атал
+                залгах ажил нь ХҮНЭЭР хэмжигддэг (нэг харилцагчийн зургаан
+                нэхэмжлэл = НЭГ утас). */}
+            <span className="pill-red">{overdueTile(k.overdue_count, k.overdue_clients)}</span>
             {/* 12.5px биш 13px — картын бусад шошгыг ЗОРИУДААР том үсэг, mono
                 болгодог дүрэм (index.css `.command-metric`) энэ дээр унахгүй:
                 энэ бол шошго биш, ҮЙЛДЭЛ. */}
@@ -411,6 +569,7 @@ export default function Dashboard() {
                  title={money(k.month_sale)}>
               {sayaFmt(k.month_sale)} <span className="text-sm text-t2 font-semibold">₮</span>
             </div>
+            <Exact n={k.month_sale} />
           </div>
         ) : (
           <div className="card p-5">
@@ -434,7 +593,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
             <h2 className="font-bold text-ink text-[15.5px]">Хугацаа хэтэрсэн нэхэмжлэлүүд</h2>
             <span className="pill-red" title={money(k.overdue)}>
-              {overdueList.length} нэхэмжлэл · {sayaFmt(k.overdue)}₮
+              {overdueList.length} нэхэмжлэл · {money(k.overdue)}
             </span>
           </div>
           {overdueList.length === 0 ? (
@@ -527,7 +686,16 @@ export default function Dashboard() {
                         `${s.client} — ${s.expected_date}-нд ойролцоогоор ${money(s.projected_amount)}, ${contractTitle(s.contract_no)} нээх`,
                         "row")}>
                     <td className="td"><b className="text-ink tabular-nums">{s.expected_date}</b>
-                      <span className="block text-xs text-t3">{dueLabel(s.expected_date, today)} · {s.cycle_label}</span></td>
+                      {/* Циклийн шошго нь СЕРВЕРЭЭС «3.15 – 4.13» гэсэн ЦЭГТЭЙ
+                          хэлбэрээр ирдэг байв — хажуугийн нүд бүр ISO («2026-03-15»)
+                          байхад ганц энэ нь өөр хэлээр ярьж, «3.15» нь 3-р сарын
+                          15 уу, 15-р сарын 3 уу гэсэн эргэлзээ төрүүлнэ.
+                          Мөр нь ISO огноогоо (`cycle_start`/`cycle_end`) авч
+                          явдаг тул шошгыг ЭНД, бүх дэлгэцтэй нэг дүрмээр
+                          (`lib/cycle.ts`) угсарна. */}
+                      <span className="block text-xs text-t3 tabular-nums">
+                        {dueLabel(s.expected_date, today)} · {cycleLabel(s.cycle_start, s.cycle_end)}
+                      </span></td>
                     <td className="td" onClick={(e) => e.stopPropagation()}>
                       <Link to={clientHref(s.client_id)} className="text-ink hover:underline">{s.client}</Link>
                     </td>
@@ -552,9 +720,12 @@ export default function Dashboard() {
                 ))}
               </tbody>
             </table>
-            <div className="mt-3 pt-3 border-t border-sunken flex justify-between items-center">
+            <div className="mt-3 pt-3 border-t border-sunken flex justify-between items-start gap-3">
               <span className="text-[12.5px] text-t2">Энэ циклийн нийт төсөөлөл</span>
-              <b className="tabular-nums text-ink" title={money(scheduleTotal)}>≈{sayaFmt(scheduleTotal)}₮</b>
+              <span className="text-right">
+                <b className="tabular-nums text-ink block" title={money(scheduleTotal)}>≈{sayaFmt(scheduleTotal)}₮</b>
+                <Exact n={scheduleTotal} />
+              </span>
             </div>
           </div>
         )}
@@ -564,7 +735,18 @@ export default function Dashboard() {
       <div className="dashboard-analysis">
         <div className="card p-5">
           <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-            <h2 className="font-bold text-ink text-[15.5px] flex items-center gap-2"><span className="cdot" />Орлого — Түрээс · Худалдаа · Бартер</h2>
+            {/* «ОРЛОГО» гэдэг үг нь Тайлангийн P&L-ийн «Түрээсийн орлого»-той
+                нэг зүйл мэт уншигддаг байв — үнэндээ ХОЁР ӨӨР тоо: тэр нь
+                НЭХЭМЖИЛСЭН дүн, энэ нь ОРСОН МӨНГӨ (`Payment`-ээс). Нэг өдөр
+                хоёр дэлгэц дээр «орлого» гэсэн хоёр өөр тоо харсан хүн
+                хоёуланд нь итгэхээ болино. Тиймээс энэ график юунаас
+                бодогдсоноо нэрэндээ авч явна.
+                ⚠ Гурван шугам нь ГЭРЭЭНИЙ ТӨРӨЛ (түрээс/худалдаа) + бартер
+                гэсэн ТӨЛБӨРИЙН ХЭЛБЭР — `RevChart`-ийн домог, `dashboard.py`-
+                ийн `series` хоёулаа тэгж хуваадаг. Тайлангийн мөнгөн урсгал
+                нь ӨӨР хуваалттай (бэлэн/данс/бартер) — тэр гарчгийг энд
+                хуулбал шугамууд нэрээ алдана. */}
+            <h2 className="font-bold text-ink text-[15.5px] flex items-center gap-2"><span className="cdot" />Орсон мөнгө — Түрээс · Худалдаа · Бартер (төлбөрөөр)</h2>
             <div className="flex items-center gap-1.5 flex-wrap">
               {/* Төлбөр нь гэрээгүй байж болдог тул түрээс/худалдаагаар шүүх
                   нь ЗОХИОМОЛ хариу төрүүлнэ. Тиймээс энэ график шүүлтүүрийг
@@ -582,21 +764,45 @@ export default function Dashboard() {
           <RevChart months={d.revenue.months} rent={d.revenue.rent} sale={d.revenue.sale} barter={d.revenue.barter} />
         </div>
         <div className="card p-5">
-          <h2 className="font-bold text-ink text-[15.5px] mb-4">Авлага насжилтаар</h2>
-          {d.aging.map((a: any, i: number) => (
-            <div key={a.label} className="flex items-center gap-3 mb-3">
-              <span className="w-[84px] text-[12.5px] text-t2 font-medium">{a.label}</span>
+          <h2 className="font-bold text-ink text-[15.5px] mb-1">Авлага насжилтаар</h2>
+          {/* ХҮЛЭЭЛТ ба ХОЦРОЛТ хоёр өөр зүйл: өнөөдөр гарсан, маргааш төлөгдөх
+              нэхэмжлэл нь «0–30 хоног» хувинд суудаг байсан тул Отгоо хараахан
+              хугацаа нь болоогүй мөнгийг хойшилсон гэж уншдаг байв. */}
+          <p className="text-[12px] text-t3 mb-3.5">Нэхэмжилсэн үлдэгдэл — төлөх хугацаагаараа.</p>
+          {aging.map((a) => (
+            <div key={a.key} className="flex items-center gap-3 mb-3">
+              <span className="w-[92px] text-[12.5px] text-t2 font-medium leading-tight">{a.label}</span>
               {/* Зураасны урт нь хамгийн том хувингийн ХЭД дүйцэхийг хэлдэг —
                   тэр харьцаа хаана ч бичээстэй байгаагүй. */}
-              <div className="flex-1"><Prog pct={(a.amount / agingMax) * 100} color={agingColors[i]}
-                     label={`${a.label} — ${sayaFmt(a.amount)}₮, хамгийн том хувингийн ${Math.round((a.amount / agingMax) * 100)}%`} /></div>
-              <b className="w-[80px] text-right tabular-nums text-[13px]" title={money(a.amount)}>{sayaFmt(a.amount)}</b>
+              <div className="flex-1"><Prog pct={(a.amount / agingMax) * 100} color={agingColor(a.key)}
+                     label={`${a.label} — ${money(a.amount)}, хамгийн том хувингийн ${Math.round((a.amount / agingMax) * 100)}%`} /></div>
+              <span className="w-[104px] text-right shrink-0">
+                <b className="tabular-nums text-[13px] block" title={money(a.amount)}>{sayaFmt(a.amount)}</b>
+                <Exact n={a.amount} />
+              </span>
             </div>
           ))}
-          <div className="mt-4 pt-3.5 border-t border-sunken flex justify-between items-center">
+          <div className="mt-4 pt-3.5 border-t border-sunken flex justify-between items-start gap-3">
             <span className="text-[12.5px] text-t2">90+ хоног хэтэрсэн</span>
-            <b className="text-danger tabular-nums" title={money(d.aging[3].amount)}>{sayaFmt(d.aging[3].amount)}₮</b>
+            {/* ⚠ Урьд нь `d.aging[3]` гэж ДУГААРААР уншдаг байв. Сервер
+                «Хугацаа болоогүй» хувинг ЭХЭНД нэмэхэд тэр индекс «61–90» руу
+                гулсаж, энэ шошгын доор ОГТ ӨӨР тоо зогссон. Одоо ТҮЛХҮҮРЭЭР
+                (`lib/dashboard.ts`) — хувин нэмэгдэхэд хөдлөхгүй. */}
+            <span className="text-right">
+              <b className="text-danger tabular-nums block" title={money(agingOf("90_plus"))}>
+                {sayaFmt(agingOf("90_plus"))}₮
+              </b>
+              <Exact n={agingOf("90_plus")} />
+            </span>
           </div>
+          {/* Хувингуудын нийлбэр нь авлагын НИЙТ дүнтэй ТЭНЦДЭГГҮЙ: одоогийн
+              циклийн хуримтлал хараахан нэхэмжлэл болоогүй тул ямар ч хувинд
+              суудаггүй. Тайлбаргүй зөрүү нь «энэ график буруу» гэж уншигдана. */}
+          {agingFootnote(k.receivable_invoiced, d.receivable_uninvoiced) && (
+            <p className="text-[12px] text-t3 mt-2.5 tabular-nums leading-relaxed">
+              {agingFootnote(k.receivable_invoiced, d.receivable_uninvoiced)}
+            </p>
+          )}
         </div>
       </div>
 
@@ -617,15 +823,19 @@ export default function Dashboard() {
                 <span className="text-[12px] text-t2">Сарын хүү {l.rate}%</span>
               </div>
               <div className="ml-auto text-right shrink-0">
-                <b className="tabular-nums text-[13.5px]" title={money(l.amount)}>{sayaFmt(l.amount)}₮</b>
+                <b className="tabular-nums text-[13.5px] block" title={money(l.amount)}>{sayaFmt(l.amount)}₮</b>
+                <Exact n={l.amount} />
                 <span className="block text-[12px] text-t3">{l.due}</span>
               </div>
             </div>
           ))}
           {(d.loans_total || 0) > 0 && (
-            <div className="mt-3 pt-3 border-t border-sunken flex justify-between items-center">
+            <div className="mt-3 pt-3 border-t border-sunken flex justify-between items-start gap-3">
               <span className="text-[12.5px] text-t2">Нийт өглөг</span>
-              <b className="tabular-nums text-danger" title={money(d.loans_total)}>{sayaFmt(d.loans_total)}₮</b>
+              <span className="text-right">
+                <b className="tabular-nums text-danger block" title={money(d.loans_total)}>{sayaFmt(d.loans_total)}₮</b>
+                <Exact n={d.loans_total} />
+              </span>
             </div>
           )}
         </div>

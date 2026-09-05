@@ -21,3 +21,13 @@ const DYNAMIC: [RegExp, string][] = [
 export function pageTitle(path: string): string {
   return TITLES[path] ?? DYNAMIC.find(([re]) => re.test(path))?.[1] ?? "";
 }
+
+/** Танихгүй зам = 404. Энэ нь ЧУХАЛ нэр: тэр хуудсан дээр таб нь «Жигүүр Зам ·
+ *  Жигүүр Зам» болж, дээд мөрийн байршил ХООСОРДОГ байв — Отгоо буруу хаяг
+ *  дээр зогсож байгаагаа мэдэхгүй, зөвхөн «юу ч байхгүй» гэдгийг хардаг. */
+export const NOT_FOUND_TITLE = "Хуудас олдсонгүй";
+
+/** Дээд мөр ба табын гарчиг — 404 дээр ч НЭРТЭЙ. */
+export function shellTitle(path: string): string {
+  return pageTitle(path) || NOT_FOUND_TITLE;
+}
