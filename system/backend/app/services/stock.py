@@ -18,6 +18,7 @@ from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
+from .. import clock
 from .. import models
 from . import audit as audit_svc
 
@@ -100,7 +101,7 @@ def adjust(db: Session, material, grade, counted: float, *, user,
     if abs(diff) < EPS:
         return None                       # ЗӨРҮҮГҮЙ — дарж бичих зүйл алга
     adj = models.StockAdjustment(
-        material_id=m.id, grade_id=g.id, date=day or date.today(),
+        material_id=m.id, grade_id=g.id, date=day or clock.today(),
         before=before, after=counted, diff=diff, note=note or "",
         source=source, stocktake_batch=batch,
         user_name=getattr(user, "name", "") or "")

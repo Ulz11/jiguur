@@ -16,6 +16,7 @@
 Иймд: `DepositEvent` дэвтэр; `Contract.deposit` нь тэдгээрийн НИЙЛБЭР
 (багана нь кэш болж үлдэнэ — бүх хуучин уншигч хэвээр ажиллана).
 """
+import pytest
 from datetime import date, timedelta
 
 from tests.test_features import iso, mk_contract
@@ -230,6 +231,7 @@ def test_finance_may_write_the_deposit_ledger(client, as_role):
 
 # ---------- 7. Хуучин DB-ийн нөхөлт ----------
 
+@pytest.mark.sqlite_only
 def test_backfill_gives_a_legacy_deposit_its_lodge_event(tmp_path):
     """Хуучин `deposit` багана нь дэвтэргүй үлдэх ёсгүй — түүх тасрана."""
     import os
@@ -237,7 +239,7 @@ def test_backfill_gives_a_legacy_deposit_its_lodge_event(tmp_path):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from sqlalchemy import create_engine
     from app.db import Base
-    from app.schema import migrate_schema
+    from app.schema_backfills import run_all as run_backfills
 
     path = tmp_path / "legacy.db"
     engine = create_engine(f"sqlite:///{path}")
@@ -261,7 +263,7 @@ def test_backfill_gives_a_legacy_deposit_its_lodge_event(tmp_path):
             "(2, '25/09', 1, 'rent', '2026-01-10', 30, 'days', 0, 5000000, 'settled', "
             f"2000000, 3000000, '{settled}', 0, 'active', '', '2026-01-10 00:00:00')")
 
-    migrate_schema(engine)
+    run_backfills(engine)
     with engine.begin() as conn:
         rows = conn.exec_driver_sql(
             "SELECT contract_id, kind, amount, date, note FROM deposit_events "
@@ -275,7 +277,7 @@ def test_backfill_gives_a_legacy_deposit_its_lodge_event(tmp_path):
     assert sum(a if k in ("lodge", "topup") else -a for k, a, *_ in by_c[2]) == 0
 
     # ДАХИН ажиллуулахад давхардуулахгүй
-    migrate_schema(engine)
+    run_backfills(engine)
     with engine.begin() as conn:
         again = conn.exec_driver_sql("SELECT COUNT(*) FROM deposit_events").fetchone()[0]
     assert again == len(rows)

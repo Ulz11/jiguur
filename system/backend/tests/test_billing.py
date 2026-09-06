@@ -10,6 +10,7 @@ os.environ["DATABASE_URL"] = "sqlite://"  # in-memory
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from . import dbutil
 from app.db import Base
 from app import models
 from app.services import billing
@@ -17,7 +18,7 @@ from app.services import billing
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    engine = dbutil.test_engine()
     Base.metadata.create_all(engine)
     s = sessionmaker(bind=engine, expire_on_commit=False)()
     yield s
@@ -691,9 +692,9 @@ def test_two_stale_sessions_do_not_duplicate_invoices(tmp_path):
     гэрээгээ (ба хоосон нэхэмжлэлийн цуглуулгыг нь) НЭГ нь бичихээс ӨМНӨ
     уншсан байна.
     """
-    path = tmp_path / "race.db"
-    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine)
+    engine = dbutil.test_engine(tmp_path / "race.db")
+    if not dbutil.TEST_DATABASE_URL:
+        Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
 
     with Session() as s0:

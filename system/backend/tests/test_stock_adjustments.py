@@ -254,6 +254,7 @@ def test_a_voided_shipment_stays_in_the_history_marked_as_void(client, as_role):
 
 # ---------- 5. Схем ----------
 
+@pytest.mark.sqlite_only
 def test_the_migrator_fills_a_missing_column_on_an_old_adjustments_table(tmp_path):
     """Хүснэгт нь `create_all`-аар төрнө; ДУТУУ багана нь ALTER-аар нөхөгдөнө."""
     engine = create_engine("sqlite:///" + str(tmp_path / "old.db"))

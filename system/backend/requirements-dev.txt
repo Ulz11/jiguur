@@ -1,0 +1,5 @@
+# Хөгжүүлэлт, тест. `pip install -r requirements-dev.txt` нь ажиллах
+# багцыг ч татна.
+-r requirements.txt
+pytest>=8.0
+httpx>=0.27

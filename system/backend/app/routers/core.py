@@ -3,6 +3,8 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from .. import ordering
+from .. import clock
 from ..db import get_db
 from .. import models, schemas, serializers, auth
 from ..services import audit as audit_svc
@@ -36,7 +38,8 @@ def change_password(body: schemas.ChangePasswordIn, db: Session = Depends(get_db
 # ---------- ЗЭРЭГЛЭЛ (динамик) ----------
 @router.get("/grades")
 def grades(db: Session = Depends(get_db), user=Depends(auth.current_user)):
-    return [serializers.grade(g) for g in db.query(models.Grade).order_by(models.Grade.sort).all()]
+    return [serializers.grade(g) for g in db.query(models.Grade)
+            .order_by(models.Grade.sort, models.Grade.id).all()]
 
 
 @router.post("/grades")
@@ -75,7 +78,8 @@ def edit_grade(gid: int, body: schemas.GradeIn, db: Session = Depends(get_db),
 def materials(db: Session = Depends(get_db), user=Depends(auth.current_user)):
     stocks = db.query(models.Stock).all()
     return [serializers.material(m, stocks)
-            for m in db.query(models.Material).filter_by(active=1).order_by(models.Material.category, models.Material.name).all()]
+            for m in ordering.by_fields(
+                db.query(models.Material).filter_by(active=1).all(), "category", "name")]
 
 
 @router.get("/materials/{mid}")
@@ -96,12 +100,13 @@ def material_page(mid: int, db: Session = Depends(get_db), user=Depends(auth.cur
             .join(models.MovementLine, models.MovementLine.movement_id == models.Movement.id)
             .filter(models.MovementLine.material_id == mid).distinct().all()}
     contracts = (db.query(models.Contract).filter(models.Contract.id.in_(cids))
-                 .order_by(models.Contract.start_date).all() if cids else [])
+                 .order_by(models.Contract.start_date, models.Contract.id).all()
+                 if cids else [])
     return serializers.material_detail(
         m, contracts,
         db.query(models.Stock).filter_by(material_id=mid).all(),
-        db.query(models.Grade).order_by(models.Grade.sort).all(),
-        date.today(),
+        db.query(models.Grade).order_by(models.Grade.sort, models.Grade.id).all(),
+        clock.today(),
         # Тооллого/залруулга нь ХӨДӨЛГӨӨНТЭЙ нэг түүхэнд: «тоо яагаад
         # өөрчлөгдөв» гэсэн асуулт нэг жагсаалтаас хариултаа авна.
         adjustments=stock_svc.adjustments_of(db, mid))
@@ -175,7 +180,8 @@ def stock(db: Session = Depends(get_db), user=Depends(auth.current_user)):
     ГАНЦ томьёогоор — дашбоард, аналитиктай нэг тоо (H9).
     """
     stocks = db.query(models.Stock).all()
-    mats = db.query(models.Material).filter_by(active=1).order_by(models.Material.category, models.Material.name).all()
+    mats = ordering.by_fields(db.query(models.Material).filter_by(active=1).all(),
+                              "category", "name")
     rows = [serializers.material(m, stocks) for m in mats]
     return {"rows": rows, "totals": stock_svc.totals(db, active_only=True)}
 

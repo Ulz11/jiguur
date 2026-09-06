@@ -27,6 +27,7 @@ os.environ["DATABASE_URL"] = "sqlite://"  # in-memory
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from . import dbutil
 from app.db import Base
 from app import models
 from app.services import billing
@@ -37,7 +38,7 @@ from tests.test_api import iso, make_contract, _confirm_pending
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    engine = dbutil.test_engine()
     Base.metadata.create_all(engine)
     s = sessionmaker(bind=engine, expire_on_commit=False)()
     yield s

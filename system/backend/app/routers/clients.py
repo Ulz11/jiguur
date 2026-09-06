@@ -4,7 +4,9 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
+from .. import ordering
+from .. import clock
 from ..db import get_db
 from .. import models, schemas, serializers, auth
 from ..services import billing
@@ -29,11 +31,18 @@ def _safe(name: str) -> str:
 
 @router.get("/clients")
 def list_clients(db: Session = Depends(get_db), user=Depends(auth.current_user)):
-    today = date.today()
-    for c in db.query(models.Contract).filter_by(status="active").all():
-        billing.ensure_invoices(db, c, today)
-    return [serializers.client_row(c, today)
-            for c in db.query(models.Client).order_by(models.Client.name).all()]
+    today = clock.today()
+    # ⚠ EAGER ачаалалт: `client_row` нь харилцагч бүрийн гэрээ, гэрээ бүрийн
+    # нэхэмжлэл, хөдөлгөөн, тарифын өөрчлөлтийг уншина. Lazy горимд энэ нь
+    # 200 харилцагч × 4 хамаарал = мянга орчим жижиг query болдог; SQLite-д
+    # (нэг файл, микросекунд) мэдрэгддэггүй, Neon дээр секунд иднэ.
+    contracts = db.query(models.Contract).options(*billing.contract_load()).all()
+    billing.ensure_invoices_sweep(
+        db, [c for c in contracts if c.status == "active"], today)
+    clients = (db.query(models.Client)
+               .options(selectinload(models.Client.contracts))
+               .all())
+    return [serializers.client_row(c, today) for c in ordering.by_name(clients)]
 
 
 # ---------------- ДАВХАР ХАРИЛЦАГЧ (нэг нэр — нэг мөр) ----------------
@@ -111,7 +120,7 @@ def add_client(body: schemas.ClientIn, db: Session = Depends(get_db),
     db.refresh(c)
     audit_svc.log(db, user, "create", "client", c.id,
                   f"{c.name}" + (f" · ТТД {c.reg}" if c.reg else ""))
-    return serializers.client_row(c, date.today())
+    return serializers.client_row(c, clock.today())
 
 
 @router.put("/clients/{cid}")
@@ -123,7 +132,7 @@ def edit_client(cid: int, body: schemas.ClientIn, db: Session = Depends(get_db),
     for k, v in body.model_dump().items():
         setattr(c, k, v)
     db.commit()
-    return serializers.client_row(c, date.today())
+    return serializers.client_row(c, clock.today())
 
 
 # ---------------- ГАРЫН ҮСЭГТНҮҮД (№72, 73) ----------------
@@ -324,7 +333,7 @@ def client_statement_pdf(cid: int,
     ЭРХИЙН зураас, харагдацынх биш (UI-ЗАРЧИМ §4).
     """
     c = _client_or_404(db, cid)
-    today = date.today()
+    today = clock.today()
     # Явагдаж буй циклийн хуримтлал ёроолын тоонд ордог тул нэхэмжлэл нь
     # ЭНЭ агшинд бэлэн байх ёстой — эс бөгөөс дуусчихсан цикл «нэхэмжлэгдээгүй»
     # мөрөнд орж, дэлгэцтэй зөрнө.
@@ -349,7 +358,7 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
     c = db.get(models.Client, cid)
     if not c:
         raise HTTPException(404, "Харилцагч олдсонгүй")
-    today = date.today()
+    today = clock.today()
     for ct in c.contracts:
         billing.ensure_invoices(db, ct, today)
     db.refresh(c)
@@ -366,7 +375,8 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
                 for ct in c.contracts for i in ct.invoices]
     invoices.sort(key=lambda i: i["due_date"], reverse=True)
     payments = [serializers.payment(p) for p in
-                db.query(models.Payment).filter_by(client_id=cid).order_by(models.Payment.date.desc()).all()]
+                db.query(models.Payment).filter_by(client_id=cid).order_by(
+                 models.Payment.date.desc(), models.Payment.id.desc()).all()]
     files = [serializers.attachment(a) for a in
              db.query(models.Attachment).filter_by(entity_type="client", entity_id=cid).all()]
     for ct in c.contracts:
@@ -426,7 +436,8 @@ def client_profile(cid: int, db: Session = Depends(get_db), user=Depends(auth.cu
 
     barter = [barter_ser(a) for a in
               db.query(models.BarterAsset).filter_by(client_id=cid)
-              .order_by(models.BarterAsset.date_in.desc()).all()]
+              .order_by(models.BarterAsset.date_in.desc(),
+                        models.BarterAsset.id.desc()).all()]
 
     notes = [{"id": n.id, "date": str(n.date), "kind": n.kind, "note": n.note,
               "promise_date": str(n.promise_date) if n.promise_date else None,

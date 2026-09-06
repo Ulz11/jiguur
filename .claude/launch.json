@@ -4,19 +4,60 @@
     {
       "name": "jiguur",
       "runtimeExecutable": "system/backend/.venv/bin/python",
-      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000", "--app-dir", "system/backend", "--reload", "--reload-dir", "system/backend/app"],
-      "port": 8000
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        "--app-dir",
+        "system/backend",
+        "--reload",
+        "--reload-dir",
+        "system/backend/app"
+      ],
+      "port": 8000,
+      "env": {
+        "JIGUUR_AUTO_INIT": "1",
+        "JIGUUR_CRON_LOOP": "1"
+      }
     },
     {
       "name": "jiguur-top10",
       "runtimeExecutable": "system/backend/.venv/bin/python",
-      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000", "--app-dir", "system/backend", "--env-file", "system/backend/.env.top10", "--reload", "--reload-dir", "system/backend/app"],
-      "port": 8000
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        "--app-dir",
+        "system/backend",
+        "--env-file",
+        "system/backend/.env.top10",
+        "--reload",
+        "--reload-dir",
+        "system/backend/app"
+      ],
+      "port": 8000,
+      "env": {
+        "JIGUUR_AUTO_INIT": "1",
+        "JIGUUR_CRON_LOOP": "1"
+      }
     },
     {
       "name": "jiguur-web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "system/frontend", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "system/frontend",
+        "run",
+        "dev"
+      ],
       "port": 5173
     }
   ]

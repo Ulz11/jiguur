@@ -2,6 +2,7 @@
 import os
 import tempfile
 
+from . import dbutil
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -11,10 +12,10 @@ from app.seed import seed
 
 
 def _seeded_session():
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    engine = create_engine("sqlite:///" + path, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine)
+    path = dbutil.temp_sqlite_path()
+    engine = dbutil.test_engine(path)
+    if not dbutil.TEST_DATABASE_URL:
+        Base.metadata.create_all(engine)
     s = sessionmaker(bind=engine, expire_on_commit=False)()
     seed(s)
     return s, engine, path
@@ -35,5 +36,5 @@ def test_seed_leaves_no_negative_stock():
         assert bad == [], f"Сөрөг үлдэгдэлтэй нөөц (материал, зэрэглэл, on_hand, on_rent, in_repair, written_off): {bad}"
     finally:
         s.close()
-        engine.dispose()
+        dbutil.dispose(engine)
         os.unlink(path)

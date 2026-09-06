@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from openpyxl import Workbook, load_workbook
+from .. import ordering
+from .. import clock
 from ..db import get_db
 from .. import models, auth, serializers
 from ..services import reports as R
@@ -40,7 +42,7 @@ SHEETS = ("Ашиг алдагдал", "Задаргаа", "Авлага", "Зэ
 @router.get("/reports")
 def reports(months: int = 6, d_from: str = "", d_to: str = "",
             db: Session = Depends(get_db), user=Depends(guard)):
-    today = date.today()
+    today = clock.today()
     f, t = report_range(months, d_from, d_to, today)
     ranged = bool(d_from and d_to)
     return {"pnl": R.pnl(db, f, t),
@@ -62,7 +64,7 @@ def _xlsx(wb: Workbook) -> bytes:
 @router.get("/reports/export.xlsx")
 def export_report(months: int = 6, d_from: str = "", d_to: str = "",
                   db: Session = Depends(get_db), user=Depends(guard)):
-    today = date.today()
+    today = clock.today()
     f, t = report_range(months, d_from, d_to, today)
     p = R.pnl(db, f, t)
     dt = p["detail"]
@@ -164,8 +166,8 @@ def export_report(months: int = 6, d_from: str = "", d_to: str = "",
     # уншигдаж, хэзээ ч гаргаагүй шийдвэр баримт болно (R25 / H2).
     ws2.append(["Харилцагч", "Идэвхтэй гэрээ", "Авлагын үлдэгдэл",
                 "Нэхэгдсэн алданги", "Алдангийн тооцоолол (нэхэгдээгүй)", "Барьцаа"])
-    today_ = date.today()
-    for c in db.query(models.Client).order_by(models.Client.name).all():
+    today_ = clock.today()
+    for c in ordering.by_name(db.query(models.Client).all()):
         row = serializers.client_row(c, today_)
         ws2.append([row["name"], row["active_contracts"], row["receivable"],
                     row["penalty_booked"], row["penalty_unbooked"], row["deposit"]])
@@ -190,9 +192,9 @@ def export_report(months: int = 6, d_from: str = "", d_to: str = "",
 
 @router.get("/export/receivables.xlsx")
 def export_receivables(db: Session = Depends(get_db), user=Depends(guard)):
-    today = date.today()
-    for c in db.query(models.Contract).filter_by(status="active").all():
-        billing.ensure_invoices(db, c, today)
+    today = clock.today()
+    billing.ensure_invoices_sweep(
+        db, db.query(models.Contract).filter_by(status="active").all(), today)
     wb = Workbook()
     ws = wb.active
     ws.title = "Авлага"
@@ -203,7 +205,7 @@ def export_receivables(db: Session = Depends(get_db), user=Depends(guard)):
                "Авлагын үлдэгдэл", "үүнээс нэхэмжилсэн",
                "үүнээс нэхэмжлэгдээгүй", "Нэхэгдсэн алданги",
                "Алдангийн тооцоолол (нэхэгдээгүй)", "Барьцаа", "Хэтэрсэн эсэх"])
-    for c in db.query(models.Client).order_by(models.Client.name).all():
+    for c in ordering.by_name(db.query(models.Client).all()):
         row = serializers.client_row(c, today)
         ws.append([row["name"], row["reg"], row["phone"], row["active_contracts"],
                    row["receivable"], row["receivable_invoiced"],

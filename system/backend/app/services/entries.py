@@ -104,7 +104,7 @@ def _debit(db: Session, client: models.Client, e: models.ClientEntry, day: date)
     """
     c = account_contract(db, client, day)
     db.commit()
-    with billing.contract_invoice_lock(c.id):
+    with billing.invoice_guard(db, c.id):
         inv = models.Invoice(
             contract_id=c.id, no=next_invoice_no(db, c, client.id),
             cycle_start=day, cycle_end=day, due_date=day,

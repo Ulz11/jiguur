@@ -3,6 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from .. import clock
 from ..db import get_db
 from .. import models, auth
 from ..services import audit
@@ -61,7 +62,7 @@ VALUE_IN_ERR = "Орж ирсэн үнэ 0-ээс их байх ёстой"
 
 
 def ser(a: models.BarterAsset, today: date | None = None):
-    today = today or date.today()
+    today = today or clock.today()
     gain = (a.sold_amount - a.value_in) if a.status == "sold" else None
     held = a.status == "held"
     days = (today - a.date_in).days
@@ -105,8 +106,9 @@ def _changes(before: dict, after: dict) -> str:
 
 @router.get("/barter")
 def list_assets(db: Session = Depends(get_db), user=Depends(auth.current_user)):
-    today = date.today()
-    assets = db.query(models.BarterAsset).order_by(models.BarterAsset.date_in.desc()).all()
+    today = clock.today()
+    assets = db.query(models.BarterAsset).order_by(
+        models.BarterAsset.date_in.desc(), models.BarterAsset.id.desc()).all()
     rows = [ser(a, today) for a in assets]
     held = [r for r in rows if r["status"] == "held"]
     sold = [r for r in rows if r["status"] == "sold"]

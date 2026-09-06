@@ -14,6 +14,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite://")
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from . import dbutil
 from app.db import Base
 from app.services import billing, pdfappendix, pdflayout
 from tests.test_billing import setup_contract, mv
@@ -21,7 +22,7 @@ from tests.test_billing import setup_contract, mv
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    engine = dbutil.test_engine()
     Base.metadata.create_all(engine)
     s = sessionmaker(bind=engine, expire_on_commit=False)()
     yield s

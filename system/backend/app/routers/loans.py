@@ -3,6 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from .. import clock
 from ..db import get_db
 from .. import models, auth
 from ..services import audit
@@ -113,8 +114,9 @@ def _reopen(db: Session, user, l: models.Loan, why: str) -> bool:
 
 @router.get("/loans")
 def list_loans(db: Session = Depends(get_db), user=Depends(guard)):
-    today = date.today()
-    loans = db.query(models.Loan).order_by(models.Loan.principal.desc()).all()
+    today = clock.today()
+    loans = db.query(models.Loan).order_by(
+        models.Loan.principal.desc(), models.Loan.id.desc()).all()
     return {"loans": [ser(l, today) for l in loans], "summary": L.summary(db, today)}
 
 
@@ -130,7 +132,7 @@ def add_loan(body: LoanIn, db: Session = Depends(get_db), user=Depends(guard)):
     audit.log(db, user, "create", "loan", l.id,
               f"{l.name} · {_mn(l.kind)} · {l.principal:,.0f}₮ · "
               f"сарын хүү {l.monthly_rate}% · {l.start_date}")
-    return ser(l, date.today())
+    return ser(l, clock.today())
 
 
 @router.post("/loans/{lid}/payments")
@@ -153,7 +155,7 @@ def pay_loan(lid: int, body: LoanPayIn, db: Session = Depends(get_db), user=Depe
               f"{l.name} · {p.date} · {PART_MN[p.part]} · {p.amount:,.0f}₮")
     db.refresh(l)
     closed = _autoclose(db, user, l)
-    return {**ser(l, date.today()), "closed": closed}
+    return {**ser(l, clock.today()), "closed": closed}
 
 
 class LoanPatch(BaseModel):
@@ -188,7 +190,7 @@ def patch_loan(lid: int, body: LoanPatch, db: Session = Depends(get_db), user=De
         setattr(l, k, v)
     db.commit()
     audit.log(db, user, "update", "loan", l.id, f"{l.name} · {_changes(before, data)}")
-    return ser(l, date.today())
+    return ser(l, clock.today())
 
 
 def _get_payment(db: Session, lid: int, pid: int):
@@ -226,7 +228,7 @@ def edit_loan_payment(lid: int, pid: int, body: LoanPayIn,
     db.refresh(l)
     closed = _autoclose(db, user, l)
     _reopen(db, user, l, "төлөлт засагдав")
-    return {**ser(l, date.today()), "closed": closed}
+    return {**ser(l, clock.today()), "closed": closed}
 
 
 @router.delete("/loans/{lid}/payments/{pid}")
@@ -248,7 +250,7 @@ def delete_loan_payment(lid: int, pid: int,
     audit.log(db, user, "delete", "loan_payment", pid, detail)
     db.refresh(l)
     reopened = _reopen(db, user, l, "төлөлт устгагдав")
-    return {**ser(l, date.today()), "reopened": reopened}
+    return {**ser(l, clock.today()), "reopened": reopened}
 
 
 @router.post("/loans/{lid}/close")

@@ -18,6 +18,7 @@ import calendar
 import json
 from datetime import date
 from sqlalchemy.orm import Session
+from .. import clock
 from .. import models
 from . import billing
 
@@ -150,7 +151,7 @@ def pnl(db: Session, d_from: date, d_to: date):
               .filter(models.PaymentAllocation.part == "penalty",
                       models.Payment.voided_at.is_(None),
                       models.Payment.date >= d_from, models.Payment.date <= d_to)
-              .order_by(models.Payment.date).all()):
+              .order_by(models.Payment.date, models.Payment.id).all()):
         penalty_income += a.amount
         penalty_paid_rows.append({"date": str(a.payment.date),
                                   "client": a.payment.client.name,
@@ -166,7 +167,8 @@ def pnl(db: Session, d_from: date, d_to: date):
                    .filter(billing.LIVE_CHARGE,
                            models.PenaltyCharge.as_of >= d_from,
                            models.PenaltyCharge.as_of <= d_to)
-                   .order_by(models.PenaltyCharge.as_of).all()]
+                   .order_by(models.PenaltyCharge.as_of,
+                             models.PenaltyCharge.id).all()]
 
     # ДОТООД ажил (`INTERNAL`) ОРЛОГО БИШ — өөрийн барилга дээрх кран руу
     # нэхэмжлэл явдаггүй (`machines.billable_jobs`), машины карт ба мөнгөн
@@ -221,7 +223,7 @@ def pnl(db: Session, d_from: date, d_to: date):
               .filter(models.LoanPayment.part == "interest",
                       models.LoanPayment.date >= d_from,
                       models.LoanPayment.date <= d_to)
-              .order_by(models.LoanPayment.date).all()):
+              .order_by(models.LoanPayment.date, models.LoanPayment.id).all()):
         interest_expense += p.amount
         interest_rows.append({"date": str(p.date), "loan": p.loan.name,
                               "amount": round(p.amount)})
@@ -272,7 +274,7 @@ def pnl(db: Session, d_from: date, d_to: date):
     for c in db.query(models.Contract).filter(models.Contract.status == "active").all():
         if c.no.startswith("OB-"):
             continue
-        cur = billing.current_cycle_accrual(c, min(d_to, date.today()))
+        cur = billing.current_cycle_accrual(c, min(d_to, clock.today()))
         if cur:
             accruing += cur["accrued"]
 

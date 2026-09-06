@@ -1,6 +1,7 @@
 """Материалын ашигт байдал ба мөнгөний урсгалын прогноз."""
 from datetime import date, timedelta
 from sqlalchemy.orm import Session
+from .. import clock
 from .. import models
 from . import billing
 from . import contacts as contacts_svc
@@ -18,7 +19,7 @@ def material_yield(db: Session, months: int = 6, today: date | None = None):
 
     Мөн ашиглалт (түрээсэнд байгаа хувь) ба нөөцийн задаргаа.
     """
-    today = today or date.today()
+    today = today or clock.today()
     d_from = today - timedelta(days=30 * months)
 
     # (material_id, grade_id) → орлого
@@ -113,7 +114,7 @@ def cash_forecast(db: Session, today: date | None = None):
     товчлуур — прогноз нь болоогүй нэхэмжлэлээ ТООЦООЛЖ (`pending_invoice_specs`)
     харуулна, дүн нь ижил, харин DB нь хөндөгдөхгүй.
     """
-    today = today or date.today()
+    today = today or clock.today()
     buckets = [{"label": lbl, "start": a, "end": b, "inflow": 0.0, "outflow": 0.0,
                 "items_in": [], "items_out": []} for a, b, lbl in FORECAST_BUCKETS]
 
@@ -265,7 +266,7 @@ def cash_forecast(db: Session, today: date | None = None):
 # ---------------- Авлага цуглуулах ажлын урсгал ----------------
 
 def collections(db: Session, today: date | None = None):
-    today = today or date.today()
+    today = today or clock.today()
     for c in db.query(models.Contract).filter(models.Contract.status == "active").all():
         billing.ensure_invoices(db, c, today)
 

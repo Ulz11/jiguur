@@ -2,6 +2,10 @@
 chcp 65001 >nul
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
+rem Asahad huusnegt/seed beltgene (import deer BISH, ehleh agshind)
+set JIGUUR_AUTO_INIT=1
+rem Odor tutmiin nehemjleliin davhraga (06:00)
+set JIGUUR_CRON_LOOP=1
 title Jiguur Zam - Udirdlagiin sistem
 cd /d "%~dp0backend"
 

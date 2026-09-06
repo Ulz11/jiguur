@@ -30,6 +30,7 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from .. import clock
 from .. import models
 from ..db import SessionLocal
 from . import billing
@@ -78,7 +79,7 @@ def generate_all(db: Session, today: date | None = None) -> dict:
 
     Буцна: {"date", "created", "contracts": [гэрээний №…], "errors": [...]}
     """
-    today = today or date.today()
+    today = today or clock.today()
     created = 0
     touched: list[str] = []
     errors: list[dict] = []
@@ -126,15 +127,20 @@ def run_line(res: dict) -> str:
     return line
 
 
-def run_once(today: date | None = None) -> dict:
-    """Өөрийн Session-той нэг гүйлт (давхрагын нэг цохилт).
+def run_once(today: date | None = None, db: Session | None = None) -> dict:
+    """Нэг гүйлт (давхрагын нэг цохилт).
 
     ҮРГЭЛЖ нэг мөр бичнэ — 0 нэхэмжлэлтэй өдөр ч. «Мөр байхгүй» гэдэг нь
     «гүйлт явсан, юу ч гараагүй» ба «гүйлт ОГТ ЯВААГҮЙ» хоёрыг ялгаж
     чаддаггүй; хоёр дахь нь мөнгө алдагдах тохиолдол тул хариулт нь
     бүртгэлд байх ёстой.
+
+    `db` өгвөл ТҮҮГЭЭР явна (HTTP цэг өөрийн session-ыг дамжуулна:
+    serverless дээр хоёр дахь холболт нээх нь Neon-ийн хязгаартай хямд биш).
+    Өгөөгүй бол — asyncio давхрага — өөрөө нээж, өөрөө хаана.
     """
-    db = SessionLocal()
+    own = db is None
+    db = db or SessionLocal()
     try:
         res = generate_all(db, today)
         line = run_line(res)
@@ -143,7 +149,8 @@ def run_once(today: date | None = None) -> dict:
         if res["errors"]:
             print(f"[cron] {len(res['errors'])} гэрээ алдаатай — давхрага үргэлжилнэ")
     finally:
-        db.close()
+        if own:
+            db.close()
     return res
 
 
@@ -165,7 +172,7 @@ async def daily_loop(hour: int = CRON_HOUR, first_delay: float = START_DELAY) ->
             raise
         except Exception as e:                       # noqa: BLE001
             print(f"[cron] давхрагын алдаа: {e!r}")
-        delay = seconds_until(datetime.now(), hour)
+        delay = seconds_until(clock.now_local(), hour)
 
 
 def start() -> asyncio.Task | None:

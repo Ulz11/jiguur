@@ -3,6 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from .. import ordering
 from ..db import get_db
 from .. import models, auth
 from ..services import audit
@@ -137,8 +138,8 @@ def salary_summary(db: Session = Depends(get_db), user=Depends(guard)):
 
 @router.get("/salary/employees")
 def employees(db: Session = Depends(get_db), user=Depends(guard)):
-    return [emp_ser(e) for e in db.query(models.Employee).filter_by(active=1)
-            .order_by(models.Employee.type, models.Employee.name).all()]
+    return [emp_ser(e) for e in ordering.by_fields(
+        db.query(models.Employee).filter_by(active=1).all(), "type", "name")]
 
 
 @router.post("/salary/employees")
@@ -202,7 +203,8 @@ def reactivate_employee(eid: int, db: Session = Depends(get_db), user=Depends(gu
 def runs(db: Session = Depends(get_db), user=Depends(guard)):
     emap = {e.id: e.name for e in db.query(models.Employee).all()}
     rows = db.query(models.SalaryRun).order_by(models.SalaryRun.period.desc(),
-                                               models.SalaryRun.half.desc()).all()
+                                               models.SalaryRun.half.desc(),
+                                               models.SalaryRun.id.desc()).all()
     return [run_ser(r, emap) for r in rows]
 
 

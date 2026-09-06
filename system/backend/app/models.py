@@ -5,7 +5,7 @@
 """
 from datetime import date, datetime
 from sqlalchemy import (String, Integer, Float, Boolean, Date, DateTime, ForeignKey,
-                        Index, Text, UniqueConstraint)
+                        Index, LargeBinary, Text, UniqueConstraint)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -882,12 +882,26 @@ class Note(Base):
 
 # ---------- Бусад ----------
 class Attachment(Base):
+    """Хавсралт — файл нь САНД ӨӨРТӨӨ сууна (`data`), диск дээр БИШ.
+
+    Урьд нь backend/uploads/ хавтас байв. Serverless дээр тэр хавтас нь
+    хүсэлт бүрийн дараа алга болдог түр диск: Отгоо гэрээнийхээ зургийг
+    хавсаргаад маргааш нээхэд «Файл олдсонгүй» гарна — өгөгдөл нь чимээгүй
+    алга болно. Тиймээс байт нь мөрөндөө: нөөцлөлт нэг л зүйл нөөцөлнө.
+
+    `path` нь ХУУЧИН мөрүүдийн төлөө nullable-аар үлдэв (диск дээрх файлаа
+    хараахан зөөгөөгүй сан ажиллаж байна).
+    """
     __tablename__ = "attachments"
     id: Mapped[int] = mapped_column(primary_key=True)
     entity_type: Mapped[str] = mapped_column(String(20))  # contract | client | payment
     entity_id: Mapped[int] = mapped_column(Integer)
     filename: Mapped[str] = mapped_column(String(255))
-    path: Mapped[str] = mapped_column(String(500))
+    #: Хуучин (диск дээрх) мөрүүдийн зам. Шинэ мөрүүдэд NULL.
+    path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    #: Файлын БАЙТ. LargeBinary → SQLite BLOB, Postgres bytea.
+    data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    mime: Mapped[str] = mapped_column(String(100), default="application/octet-stream")
     size: Mapped[int] = mapped_column(Integer, default=0)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

@@ -1,6 +1,12 @@
 """Дэд бүтэц — нөөцлөлт бүтэн эсэх, схемийн автомат шинэчлэл.
 
 Эдгээр тест өөрсдийн түр engine/файл дээр ажиллана: conftest-ийн DB-д хүрэхгүй.
+
+⚠ БҮХ файл `sqlite_only`: энд шалгагдаж буй зүйлс нь SQLite-ийн МЕХАНИК —
+файлын нөөцлөлт (WAL), `ALTER TABLE ADD COLUMN`-ын автомат нөхөлт. Postgres
+дээр эдгээрийн аль нь ч байхгүй (схемийг Alembic авч явна) тул алгасна.
+Дата НӨХӨЛТ (`schema_backfills`) нь хоёр диалектад ажилладаг —
+түүний диалект хөндлөн шалгуур нь `tests/test_portability.py`-д.
 """
 import os
 import sqlite3
@@ -9,13 +15,17 @@ import sys
 from datetime import date
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app import models
 from app.db import Base
-from app.main import backup_db
+from app.main import auto_init, backup_db
 from app.schema import migrate_schema
+from app.schema_backfills import run_all as run_backfills
+
+pytestmark = pytest.mark.sqlite_only
 
 
 # ---------- Нөөцлөлт ----------
@@ -60,12 +70,17 @@ def test_backup_keeps_last_14(tmp_path):
     assert "jiguur-20260101-0019.db" in left          # хамгийн шинэ нь үлдсэн
 
 
-def test_import_with_temp_db_leaves_real_backups_untouched(tmp_path):
-    """Түр DATABASE_URL-тэй импортлоход БОДИТ backups/ хавтас огт өөрчлөгдөхгүй.
+def test_importing_app_main_touches_no_database_at_all(tmp_path):
+    """`import app.main` нь САНД ХҮРЭХГҮЙ — нөөц ч бичихгүй, хүснэгт ч үүсгэхгүй.
 
-    Регресс: pytest бүр conftest-ээр app.main-ийг импортлох үед тестийн түр DB
-    system/backend/backups/ руу нөөцлөгдөж, 14-ийн эргэлтээр жинхэнэ хуучин
-    нөөцүүдийг нэг нэгээр нь идэж байв. Нөөц DB файлынхаа ХАЖУУД очих ёстой.
+    Урьд нь импортын мөчид дөрвөн алхам (нөөц → create_all → ALTER → seed)
+    өөрсдөө ажилладаг байв. Тэр нь:
+      · serverless дээр хүйтэн эхлэл бүрийг сан руу бичүүлж, зэрэгцээ
+        процессуудыг бие бие рүү нь мөргүүлнэ;
+      · ямар ч скрипт «import app.something» гэсэн ганц мөрөөр БОДИТ
+        jiguur.db-г нээж, нөөцлөж, seed бичих эрсдэлтэй болгодог байв.
+
+    Одоо тэр ажил `JIGUUR_AUTO_INIT=1` дээр, ЭХЛЭХ агшинд (lifespan) ажиллана.
     """
     backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     real_bdir = os.path.join(backend, "backups")
@@ -80,13 +95,49 @@ def test_import_with_temp_db_leaves_real_backups_untouched(tmp_path):
     sqlite3.connect(src).execute("CREATE TABLE t (id INTEGER)")   # хоосон биш
     env = {**os.environ, "DATABASE_URL": "sqlite:///" + src}
     env.pop("JIGUUR_BACKUP_DIR", None)   # default замын логикийг шалгаж байна
+    env.pop("JIGUUR_AUTO_INIT", None)
 
     before = snapshot()
     r = subprocess.run([sys.executable, "-c", "import app.main"],
                        cwd=backend, env=env, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert snapshot() == before                       # бодит хавтас хэвээрээ
+    assert not (tmp_path / "backups").exists(), "импорт нөөц бичсэн байна"
+    with sqlite3.connect(src) as c:
+        tables = {n for (n,) in c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert tables == {"t"}, f"импорт хүснэгт үүсгэсэн байна: {tables - {'t'}}"
+
+
+def test_auto_init_does_the_four_steps_the_import_used_to_do(tmp_path, monkeypatch):
+    """`JIGUUR_AUTO_INIT=1` — оффисын зан төлөв ЯГ ХЭВЭЭР.
+
+    Нөөц бичигдэнэ, хүснэгтүүд босно, суурь seed (гурван хэрэглэгч) орно.
+    Энэ нь Отгоогийн компьютер дээр `run.bat` дарахад юу болохын шалгуур.
+    """
+    src = str(tmp_path / "office.db")
+    sqlite3.connect(src).execute("CREATE TABLE t (id INTEGER)")   # хоосон биш
+    monkeypatch.setenv("JIGUUR_BACKUP_DIR", str(tmp_path / "backups"))
+    code = ("import app.main as m; m.auto_init();"
+            " from app.db import SessionLocal; from app import models;"
+            " print(SessionLocal().query(models.User).count())")
+    env = {**os.environ, "DATABASE_URL": "sqlite:///" + src,
+           "JIGUUR_BACKUP_DIR": str(tmp_path / "backups")}
+    env.pop("JIGUUR_SEED_DEMO", None)          # суурь seed — демогүй
+    backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run([sys.executable, "-c", code], cwd=backend, env=env,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().splitlines()[-1] == "3"      # гурван хэрэглэгч
     assert len(list((tmp_path / "backups").glob("jiguur-*.db"))) == 1
+    with sqlite3.connect(src) as c:
+        tables = {n for (n,) in c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"contracts", "invoices", "users"} <= tables
+    # демогүй seed нь ХАРИЛЦАГЧ үүсгэхгүй — бодит сан руу зохиомол мөр орохгүй
+    with sqlite3.connect(src) as c:
+        assert c.execute("SELECT COUNT(*) FROM clients").fetchone()[0] == 0
+    assert callable(auto_init)
 
 
 def test_backup_dir_env_override(tmp_path, monkeypatch):
@@ -211,7 +262,7 @@ def test_backfill_movement_line_rates(tmp_path):
         s.add(models.MovementLine(movement_id=3, material_id=1, grade_id=1, qty=30))
         s.commit()
 
-    migrate_schema(engine)
+    run_backfills(engine)
 
     def rates():
         with engine.connect() as c:
@@ -222,7 +273,7 @@ def test_backfill_movement_line_rates(tmp_path):
     # idempotent — гараар засварласан тариф хэвээр үлдэнэ
     with engine.begin() as c:
         c.exec_driver_sql("UPDATE movement_lines SET rate = 400 WHERE id = 1")
-    migrate_schema(engine)
+    run_backfills(engine)
     assert rates() == {1: 400.0, 2: 58000.0, 3: None}
     engine.dispose()
 
@@ -264,7 +315,7 @@ def test_backfill_penalty_charges_rescues_legacy_bookings(tmp_path):
                              due_date=date(2026, 7, 20), total=1000, paid=0))
         s.commit()
 
-    migrate_schema(engine)
+    run_backfills(engine)
 
     def charges():
         with engine.connect() as c:
@@ -277,7 +328,7 @@ def test_backfill_penalty_charges_rescues_legacy_bookings(tmp_path):
         (1, 1, "2026-06-25", 352_837.5, "(хуучин системээс)"),
     ]
     # idempotent — дахин ажиллуулахад давхардахгүй
-    migrate_schema(engine)
+    run_backfills(engine)
     assert len(charges()) == 2
     engine.dispose()
 

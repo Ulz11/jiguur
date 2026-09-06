@@ -173,6 +173,10 @@ def test_the_forecast_does_not_create_a_single_invoice(client, as_role):
     h = as_role("otgoo")
     a_rent_contract(client, h, days_ago=70)
     with session() as db:                       # нэхэмжлэлүүдийг арчина
+        # ⚠ Хуваарилалт нь ЭХЛЭЭД: `payment_allocations.invoice_id` нь гадаад
+        # түлхүүр. SQLite нь (тестийн engine дээр PRAGMA foreign_keys асаагүй
+        # тул) үүнийг чимээгүй зөвшөөрдөг, Postgres нь ЗӨВ татгалздаг.
+        db.query(models.PaymentAllocation).delete()
         db.query(models.Invoice).delete()
         db.commit()
         before = db.query(models.Invoice).count()

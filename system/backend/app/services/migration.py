@@ -8,6 +8,7 @@
 import json
 from datetime import date, timedelta
 from sqlalchemy.orm import Session
+from .. import clock
 from .. import models
 from . import deposit as deposit_svc
 
@@ -29,7 +30,7 @@ def account_contract(db: Session, client: models.Client, as_of: date | None = No
     if c is not None:
         return c
     c = models.Contract(no=no, client_id=client.id, type="rent",
-                        start_date=as_of or date.today(), cycle_days=30,
+                        start_date=as_of or clock.today(), cycle_days=30,
                         penalty_percent=0, status="active",
                         note=note or "Харилцагчийн данс — түрээсийн мөчлөгт хамаарахгүй бичилтүүд")
     db.add(c)
@@ -243,7 +244,7 @@ def reset_catalog(db: Session, data: dict, counts: dict, warnings: list) -> None
     `base_rate` нь `catalog_rates` — түүний өөрийн гэрээнүүдээс. Хаанаас ч
     гараагүй бол 0 + ТУГТАЙ асуулт («Тариф бүртгэгдээгүй — үнийг та тогтооно уу»).
     """
-    as_of = date.fromisoformat(data.get("as_of") or str(date.today()))
+    as_of = date.fromisoformat(data.get("as_of") or str(clock.today()))
     db.query(models.MaterialGradePrice).delete()
     rates = catalog_rates(data.get("contracts") or [])
     for m in db.query(models.Material).all():
@@ -264,7 +265,7 @@ def reset_catalog(db: Session, data: dict, counts: dict, warnings: list) -> None
 def load_data(db: Session, data: dict) -> dict:
     """real_data.json-г DB руу. Буцна: тоолол + warnings."""
     from . import entries as entries_svc      # тойрог импортоос зайлсхийв
-    as_of = date.fromisoformat(data.get("as_of") or str(date.today()))
+    as_of = date.fromisoformat(data.get("as_of") or str(clock.today()))
     counts = {"clients": 0, "stock": 0, "loans": 0, "barter": 0, "contracts": 0,
               "skipped": 0, "materials": 0, "contacts": 0, "entries": 0, "notes": 0,
               "deposit_events": 0, "agreed": 0, "sites": 0}

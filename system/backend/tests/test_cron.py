@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from . import dbutil
 from app.db import Base
 from app import models
 from app.services import billing, cron
@@ -32,7 +33,7 @@ from app.services import billing, cron
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    engine = dbutil.test_engine()
     Base.metadata.create_all(engine)
     s = sessionmaker(bind=engine, expire_on_commit=False)()
     yield s
@@ -133,8 +134,10 @@ def test_generate_all_creates_exactly_what_per_contract_ensure_would(db):
     build_world(db)
     res = cron.generate_all(db, TODAY)
 
-    engine2 = create_engine("sqlite://", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine2)
+    # ХОЁР ДАХЬ ертөнц бүрэн тусдаа санд — үндсэнх нь хөндөгдөхгүй
+    engine2 = dbutil.alt_engine()
+    if not dbutil.TEST_DATABASE_URL:
+        Base.metadata.create_all(engine2)
     db2 = sessionmaker(bind=engine2, expire_on_commit=False)()
     for c in build_world(db2):
         billing.ensure_invoices(db2, c, TODAY)
@@ -311,8 +314,15 @@ def test_no_task_is_scheduled_under_the_test_flag(monkeypatch):
 
 
 def test_the_task_is_scheduled_when_the_flag_is_absent(monkeypatch):
+    """`JIGUUR_CRON_LOOP=1` — давхрага асна.
+
+    ⚠ Давхрага одоо DEFAULT УНТРААЛТТАЙ: serverless дээр процесс амьдардаггүй
+    тул asyncio давхрага утгагүй, тэнд `GET /api/cron/daily` цохигдоно.
+    Оффисын сервер (run.bat, launch.json) тугаа ИЛЭРХИЙ тавина.
+    """
     from app.main import app
     monkeypatch.delenv("JIGUUR_NO_CRON", raising=False)
+    monkeypatch.setenv("JIGUUR_CRON_LOOP", "1")
     with TestClient(app):
         t = app.state.cron_task
         assert t is not None and not t.done()

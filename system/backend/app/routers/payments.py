@@ -21,7 +21,8 @@ def list_payments(client_id: int | None = None, db: Session = Depends(get_db),
     q = db.query(models.Payment)
     if client_id:
         q = q.filter_by(client_id=client_id)
-    return [serializers.payment(p) for p in q.order_by(models.Payment.date.desc()).limit(200).all()]
+    return [serializers.payment(p) for p in q.order_by(
+        models.Payment.date.desc(), models.Payment.id.desc()).limit(200).all()]
 
 
 def _check_allocations(db: Session, body: schemas.PaymentIn,

@@ -19,12 +19,31 @@ from . import models
 from .services.audit import log as audit_log
 
 
+def is_production() -> bool:
+    """Vercel (эсвэл ил зарласан prod) дээр ажиллаж байна уу."""
+    return bool(os.environ.get("VERCEL")) or \
+        os.environ.get("JIGUUR_ENV", "").strip().lower() == "prod"
+
+
 def _load_secret() -> str:
     """JIGUUR_SECRET env байвал түүнийг; үгүй бол backend/.secret файлд
-    санамсаргүй түлхүүр үүсгэж хадгална (сервер дахин асахад токен хүчинтэй хэвээр)."""
+    санамсаргүй түлхүүр үүсгэж хадгална (сервер дахин асахад токен хүчинтэй хэвээр).
+
+    ⚠ PROD дээр (Vercel) файлын нөөц зам БАЙХГҮЙ: serverless FS нь түр
+    зуурынх — процесс бүр өөр өөр түлхүүр үүсгэж, нэвтэрсэн хүн дараагийн
+    хүсэлт дээрээ хаягдана. Бүр дор нь: хуучин `jiguur-fallback-secret` гэсэн
+    ТОГТМОЛ мөр рүү унавал ХЭН Ч токен зурж чадна. Тиймээс prod дээр
+    JIGUUR_SECRET нь ЗААВАЛ — байхгүй бол ажиллахаас татгалзана.
+    """
     env = os.environ.get("JIGUUR_SECRET")
     if env:
         return env
+    if is_production():
+        raise RuntimeError(
+            "JIGUUR_SECRET тохируулаагүй байна. Vercel дээр (эсвэл JIGUUR_ENV=prod) "
+            "энэ нь ЗААВАЛ шаардлагатай: токен гарын үсгийн түлхүүр. "
+            "Vercel → Settings → Environment Variables дотор JIGUUR_SECRET нэмнэ үү "
+            "(ж: python -c \"import os;print(os.urandom(32).hex())\").")
     base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     path = os.path.join(base, ".secret")
     try:
@@ -45,7 +64,24 @@ def _load_secret() -> str:
         return "jiguur-fallback-secret"
 
 
-SECRET = _load_secret()
+#: Түлхүүрийг ЭХНИЙ ХЭРЭГЛЭЭ дээр уншина — импорт нь файл ч бичихгүй,
+#: унах ч үгүй (Vercel-ийн build алхам JIGUUR_SECRET-гүй байж болно).
+_SECRET_CACHE: str | None = None
+
+
+def secret() -> str:
+    global _SECRET_CACHE
+    if _SECRET_CACHE is None:
+        _SECRET_CACHE = _load_secret()
+    return _SECRET_CACHE
+
+
+def reset_secret_cache() -> None:
+    """Тест env сольсны дараа дуудна."""
+    global _SECRET_CACHE
+    _SECRET_CACHE = None
+
+
 TOKEN_TTL = 60 * 60 * 12  # 12 цаг
 #: Токеныг хэдэн секунд ашигласны дараа СУНГАХ вэ. 12 цаг гэдэг нь ажлын
 #: өдрөөс богино: Отгоо эгч 09:00-д нэвтрээд 21:00-д тайлангаа хэвлэж
@@ -71,7 +107,7 @@ def verify_password(pw: str, stored: str) -> bool:
 
 
 def _sign(data: bytes) -> str:
-    return hmac.new(SECRET.encode(), data, hashlib.sha256).hexdigest()
+    return hmac.new(secret().encode(), data, hashlib.sha256).hexdigest()
 
 
 def create_token(user: models.User) -> str:
@@ -142,6 +178,18 @@ def roles_text(roles) -> str:
     return ", ".join(ROLE_MN.get(r, r) for r in roles)
 
 
+def denied(*roles) -> HTTPException:
+    """ТАТГАЛЗЛЫН МӨР — ГАНЦ газраас.
+
+    `require_roles`-оор хийгдээгүй, ГАРААР шалгадаг хаалгууд (тэмдэглэл,
+    механизмын мөр, буцаалтын засвар — тэдгээрийн эрх нь ролиос гадна
+    объектоос хамаардаг) урьд нь `HTTPException(403, "Энэ үйлдлийг хийх эрх
+    байхгүй")` гэж бичдэг байв: ЯГ ижил өгүүлбэр, гэхдээ «тэгвэл хэн хийх вэ?»
+    гэсэн хариугүй. Одоо бүгд энэ нэг хаалганаас гарна.
+    """
+    return HTTPException(403, f"{DENIED} — зөвхөн {roles_text(roles)}")
+
+
 def require_roles(*roles):
     """Рольын хаалт. Татгалзал нь ХЭН хийж болохыг НЭРЛЭНЭ.
 
@@ -152,7 +200,7 @@ def require_roles(*roles):
     """
     def dep(user: models.User = Depends(current_user)) -> models.User:
         if user.role not in roles:
-            raise HTTPException(403, f"{DENIED} — зөвхөн {roles_text(roles)}")
+            raise denied(*roles)
         return user
     return dep
 

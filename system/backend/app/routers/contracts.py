@@ -4,7 +4,8 @@ from datetime import date, datetime
 from datetime import date as _date_t
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
+from .. import clock
 from ..db import get_db
 from .. import models, schemas, serializers, auth
 from ..services import billing, pdfappendix, pdfgen
@@ -45,15 +46,16 @@ SALE_ONLY_RENT_ERR = ("«Худалдаа болгох» нь зөвхөн ТҮ�
 @router.get("/contracts")
 def list_contracts(scope: str = "all", db: Session = Depends(get_db),
                    user=Depends(auth.current_user)):
-    today = date.today()
+    today = clock.today()
     q = db.query(models.Contract)
     if scope in ("rent", "sale"):
         q = q.filter(models.Contract.type == scope)
-    rows = []
-    for c in q.order_by(models.Contract.created_at.desc()).all():
-        billing.ensure_invoices(db, c, today)
-        rows.append(serializers.contract_row(c, today))
-    return rows
+    contracts = (q.options(*billing.contract_load(),
+                           selectinload(models.Contract.client))
+                 .order_by(models.Contract.created_at.desc(),
+                           models.Contract.id.desc()).all())
+    billing.ensure_invoices_sweep(db, contracts, today)
+    return [serializers.contract_row(c, today) for c in contracts]
 
 
 @router.post("/contracts")
@@ -174,11 +176,12 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
     c = db.get(models.Contract, cid)
     if not c:
         raise HTTPException(404, "Гэрээ олдсонгүй")
-    today = date.today()
+    today = clock.today()
     billing.ensure_invoices(db, c, today)
     db.refresh(c)
     gmap, mmap = _maps(db)
     live = _live_items(db, c, today, gmap, mmap)
+    mine_today = audit.own_today(db, user, "movement", [m.id for m in c.movements])
     out = {**serializers.contract_row(c, today),
            # `cycle_mode` нь `contract_row`-оос ирнэ (жагсаалт ба дэлгэрэнгүй
            # НЭГ эх сурвалжтай) — энд дахин бичихгүй.
@@ -186,7 +189,11 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
            "items": live,
            # Материалын мөр бүрийн доор задардаг хөдөлгөөний дэвтэр (зөвхөн унших)
            "material_lines": serializers.material_lines(c, gmap, mmap, today),
-           "movements": [serializers.movement(m, gmap, mmap)
+           # `mine_today` — «энэ мөрийг би өнөөдөр бүртгэсэн». Дэлгэц огнооны
+           # засварыг ЗУРАХААС ӨМНӨ мэдэх ёстой: үргэлж 403 болдог товч бол
+           # худал амлалт (`patch_movement`-ийн хаалгатай ЯГ нэг дүрэм).
+           "movements": [{**serializers.movement(m, gmap, mmap),
+                          "mine_today": m.id in mine_today}
                          for m in sorted(c.movements, key=lambda m: (m.date, m.id), reverse=True)],
            "invoices": [serializers.invoice(i, today)
                         for i in sorted(c.invoices, key=lambda i: i.due_date, reverse=True)],
@@ -214,7 +221,8 @@ def contract_detail(cid: int, db: Session = Depends(get_db), user=Depends(auth.c
                             "current_start": str(billing.this_cycle_start(c, today)),
                             "next_start": str(billing.next_cycle_start(c, today))},
            "payments": [serializers.payment(p) for p in
-                        db.query(models.Payment).filter_by(contract_id=c.id).order_by(models.Payment.date.desc()).all()]}
+                        db.query(models.Payment).filter_by(contract_id=c.id).order_by(
+                            models.Payment.date.desc(), models.Payment.id.desc()).all()]}
     # ⚠ ЭЗЭНИЙ ШИЙДВЭР (2026-09): үйлдвэрийн даргад мөнгө харуулахгүй байх нь
     # НУУЦЛАЛЫН асуудал БИШ — ЭМХ ЦЭГЦНИЙХ. Дарга нь харилцагчийн, гэрээний
     # мөнгөний талаар асуухад хариулж чаддаг байх ЁСТОЙ; зүгээр л ажлынх нь
@@ -389,7 +397,7 @@ def _gated(db: Session, user, c: models.Contract, mutate, days: list[date],
 
     Буцна: (rebuilt | None, preview_response | None).
     """
-    today = date.today()
+    today = clock.today()
     if not _touches_invoiced(c, days):
         mutate()
         db.commit()
@@ -481,7 +489,7 @@ def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
                 raise HTTPException(400, str(e)) from e
         audit.log(db, user, "update", "contract", c.id,
                   f"№{c.no}: " + (audit.changes_text(before, fields) or "дуусах огноог цэвэрлэв"))
-        row = serializers.contract_row(c, date.today())
+        row = serializers.contract_row(c, clock.today())
         return {**row, "rebuilt": rebuilt} if rebuilt else row
 
     mutate()
@@ -493,21 +501,29 @@ def patch_contract(cid: int, body: ContractPatch, db: Session = Depends(get_db),
             raise HTTPException(400, str(e)) from e
     audit.log(db, user, "update", "contract", c.id,
               f"№{c.no}: " + (audit.changes_text(before, fields) or "дуусах огноог цэвэрлэв"))
-    return serializers.contract_row(c, date.today())
+    return serializers.contract_row(c, clock.today())
 
 
 @router.patch("/movements/{mid}")
 def patch_movement(mid: int, body: MovementPatch, db: Session = Depends(get_db),
                    user=Depends(auth.require_roles("manager", "factory"))):
-    """Хөдөлгөөний огноо / тэмдэглэлийг засна (огноог зөвхөн менежер)."""
+    """Хөдөлгөөний огноо / тэмдэглэлийг засна.
+
+    ОГНОО нь менежерийнх — НЭГ УЧИРААС бусад: үйлдвэрийн дарга ӨНӨӨДӨР
+    ӨӨРӨӨ бүртгэсэн хөдөлгөөнийхөө өдрийг зөв болгож чадна. Талбай дээр
+    «өчигдөр буцсан» гэдгээ бичих гэж утас руу гүйх шаардлагагүй; маргааш
+    нь тэр мөр түүхийн хэсэг болж, зөвхөн эзэн хөндөнө.
+    """
     mv = db.get(models.Movement, mid)
     if not mv:
         raise HTTPException(404, "Хөдөлгөөн олдсонгүй")
     c = mv.contract
     new_date = body.date if body.date is not None else mv.date
     moved = new_date != mv.date
-    if moved and getattr(user, "role", "") != "manager":
-        raise HTTPException(403, "Хөдөлгөөний огноог зөвхөн менежер өөрчилнө")
+    if moved and getattr(user, "role", "") != "manager" \
+            and not audit.is_own_today(db, user, "movement", mv.id):
+        raise HTTPException(403, "Хөдөлгөөний огноог зөвхөн менежер өөрчилнө "
+                                 "— эсвэл өнөөдөр өөрөө бүртгэсэн хүн")
     if moved and mv.status == "done":
         keys = {(ln.material_id, ln.grade_id) for ln in mv.lines}
         if not _timeline_ok(c, keys, mv_dates={mv.id: new_date}):
@@ -616,7 +632,7 @@ DAYS_WARN_HINT = "Тоо нь тань — баталгаажуулбал ЯГ �
 
 @router.patch("/movement-lines/{lid}")
 def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends(get_db),
-                        user=Depends(auth.require_roles("manager"))):
+                        user=Depends(auth.require_roles("manager", "factory"))):
     """Хөдөлгөөний мөрийн тоо / тариф / БУЦААЛТЫН ДЭЛГЭРЭНГҮЙГ засна.
 
     Падан загварын гол засвар. Буцаалтын мөрөнд нэмж: буцаж ирсэн зэрэглэл,
@@ -624,12 +640,21 @@ def patch_movement_line(lid: int, body: MovementLinePatch, db: Session = Depends
     гараар бичигдэхгүй — каталогоос үүсгэх үеийнхтэй ижил томьёогоор дахин
     бодогдоно; нөөц нь толиндоо буцаж, нэхэмжлэгдсэн бол дахин бодолтын
     хаалгаар дамжина.
+
+    ХЭН: буцаалтыг талбай дээр БҮРТГЭДЭГ нь үйлдвэрийн дарга — «40ш» гэж
+    бичээд 38 байсныг олж мэдэх нь өдөр бүрийн явдал. Тиймээс БУЦААЛТЫН
+    мөрийн ТОО, засвар/акт, зэрэглэл, падан, гар хоног нь түүнд нээлттэй.
+    ТАРИФ (болон бүхэлдээ ОЛГОЛТЫН мөр) нь МӨНГӨ — зураас тэнд хэвээр.
+    Дахин бодолтын хаалга ХЭНД Ч ижил.
     """
     ln = db.get(models.MovementLine, lid)
     if not ln:
         raise HTTPException(404, "Мөр олдсонгүй")
     mv = ln.movement
     c = mv.contract
+    if getattr(user, "role", "") == "factory" and (mv.type != "RETURN"
+                                                   or body.rate is not None):
+        raise auth.denied("manager")
     if body.qty is not None and body.qty <= 0:
         raise HTTPException(400, "Тоо 0-ээс их байх ёстой")
     if body.rate is not None:
@@ -986,7 +1011,7 @@ def _rate_effective_from(c: models.Contract, raw: date | None) -> date:
     мөрүүд хагарч, «нэг цикл — нэг тариф» гэсэн 20 жилийн хэлбэр эвдэрнэ.
     """
     if raw is None:
-        return billing.next_cycle_start(c, date.today())
+        return billing.next_cycle_start(c, clock.today())
     if not billing.is_cycle_boundary(c, raw):
         win = billing.cycle_of(c, raw)
         hint = f"{win[0]} эсвэл {win[1]}" if win else str(billing.billing_origin(c))
@@ -1373,7 +1398,7 @@ def extend(cid: int, body: schemas.ExtendIn, db: Session = Depends(get_db),
     c = db.get(models.Contract, cid)
     if not c:
         raise HTTPException(404, "Гэрээ олдсонгүй")
-    err = _extend_date_error(c, body.end_date, date.today())
+    err = _extend_date_error(c, body.end_date, clock.today())
     if err:
         raise HTTPException(400, err)
     before = {"end_date": c.end_date}
@@ -1518,7 +1543,7 @@ def _close_preview_payload(db: Session, c: models.Contract, close_date: _date_t 
     хаасны дараах цаас ХОЁР ӨӨР кодоос гарах боломжгүй. Гэрээнд хүрэхгүй:
     функц нь цэвэр (pure), `close_date` ба сонголтууд нь зөвхөн параметр.
     """
-    today = date.today()
+    today = clock.today()
     billing.ensure_invoices(db, c, today)
     db.refresh(c)
     gmap, mmap = _maps(db)
@@ -1606,7 +1631,7 @@ def close(cid: int, body: CloseIn | None = None, db: Session = Depends(get_db),
     c = db.get(models.Contract, cid)
     if not c:
         raise HTTPException(404, "Гэрээ олдсонгүй")
-    today = date.today()
+    today = clock.today()
     out_qty = [billing.qty_on(c, it.material_id, it.grade_id, today) for it in c.items]
     if c.type == "rent" and any(q > 0.001 for q in out_qty):
         raise HTTPException(400, CLOSE_GOODS_ERR)
@@ -1695,14 +1720,14 @@ def agree_invoice(iid: int, body: AgreeIn, db: Session = Depends(get_db),
     if not by:
         raise HTTPException(400, "Хэн гарын үсэг зурснаа бичнэ үү — «✓» дангаараа "
                                  "хэнийг ч нэрлэхгүй")
-    inv.agreed_at = body.date or date.today()
+    inv.agreed_at = body.date or clock.today()
     inv.agreed_by = by
     db.commit()
     audit.log(db, user, "agree", "invoice", inv.id,
               f"{inv.contract.client.name} · гэрээ №{inv.contract.no} · "
               f"нэхэмжлэл {inv.no} ({inv.total:,.0f}₮) — тооцоо нийлсэн "
               f"{inv.agreed_at} · {by}")
-    return serializers.invoice(inv, date.today())
+    return serializers.invoice(inv, clock.today())
 
 
 @router.post("/invoices/{iid}/unagree")
@@ -1723,11 +1748,23 @@ def unagree_invoice(iid: int, body: UnagreeIn, db: Session = Depends(get_db),
     audit.log(db, user, "unagree", "invoice", inv.id,
               f"{inv.contract.client.name} · нэхэмжлэл {inv.no} — {was} · {was_by} "
               f"гэсэн нийлсэн тэмдгийг цуцлав: {reason}")
-    return serializers.invoice(inv, date.today())
+    return serializers.invoice(inv, clock.today())
+
+
+# БАРИМТУУД (PDF) — МЕНЕЖЕР + САНХҮҮЧ.
+#
+# Гэрээ, акт, нэхэмжлэл, хавсралт нь ТАРИФ, ҮЛДЭГДЭЛ, АЛДАНГИ тээж явдаг —
+# дэлгэц дээр даргаас нуусан ЯГ тэр тоонууд. Хаалга нь `current_user` дээр
+# байсан тул нуултыг PDF-ээр тойрч болдог байв (эмх цэгц нь нэг л дутуу
+# хаалганаас утгагүй болно). Харин САНХҮҮЧ нь эдгээр баримтыг харилцагч руу
+# илгээдэг хүн — түүнд хаалттай байх нь ажлыг нь зогсоож байв.
+#
+# Даргын БАРААНЫ харагдац (ачилт, буцаалт, дэвтэр, тооллого) ХЭВЭЭР.
+paper_roles = auth.require_roles("manager", "finance")
 
 
 @router.get("/invoices/{iid}/pdf")
-def invoice_pdf(iid: int, db: Session = Depends(get_db), user=Depends(auth.current_user)):
+def invoice_pdf(iid: int, db: Session = Depends(get_db), user=Depends(paper_roles)):
     inv = db.get(models.Invoice, iid)
     if not inv:
         raise HTTPException(404, "Олдсонгүй")
@@ -1740,7 +1777,7 @@ def invoice_pdf(iid: int, db: Session = Depends(get_db), user=Depends(auth.curre
 
 @router.get("/invoices/{iid}/appendix-pdf")
 def invoice_appendix_pdf(iid: int, db: Session = Depends(get_db),
-                         user=Depends(auth.current_user)):
+                         user=Depends(paper_roles)):
     """Нэхэмжлэлийн ТҮРЭЭСИЙН ТООЦООНЫ ХАВСРАЛТ — зурвас бүрээр задалсан хуудас."""
     inv = db.get(models.Invoice, iid)
     if not inv:
@@ -1757,7 +1794,7 @@ def invoice_appendix_pdf(iid: int, db: Session = Depends(get_db),
 
 
 @router.get("/contracts/{cid}/pdf")
-def contract_pdf(cid: int, db: Session = Depends(get_db), user=Depends(auth.current_user)):
+def contract_pdf(cid: int, db: Session = Depends(get_db), user=Depends(paper_roles)):
     """Гэрээний бүрэн хувилбар — хэвлэж гарын үсэг зурна."""
     c = db.get(models.Contract, cid)
     if not c:
@@ -1770,7 +1807,7 @@ def contract_pdf(cid: int, db: Session = Depends(get_db), user=Depends(auth.curr
 
 
 @router.get("/contracts/{cid}/act-pdf")
-def act_pdf(cid: int, db: Session = Depends(get_db), user=Depends(auth.current_user)):
+def act_pdf(cid: int, db: Session = Depends(get_db), user=Depends(paper_roles)):
     c = db.get(models.Contract, cid)
     if not c:
         raise HTTPException(404, "Гэрээ олдсонгүй")
@@ -1784,7 +1821,7 @@ def act_pdf(cid: int, db: Session = Depends(get_db), user=Depends(auth.current_u
 
 @router.get("/contracts/{cid}/cycle-appendix-pdf")
 def cycle_appendix_pdf(cid: int, db: Session = Depends(get_db),
-                       user=Depends(auth.current_user)):
+                       user=Depends(paper_roles)):
     """ЯВАГДАЖ БУЙ циклийн хавсралт — нэхэмжлэл хараахан үүсээгүй байхад.
 
     Дээрх `act-pdf`-ээс ЯЛГААТАЙ нь `ensure_invoices`-ыг ЗОРИУДААР дуудахгүй:

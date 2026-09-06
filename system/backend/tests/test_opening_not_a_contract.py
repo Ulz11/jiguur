@@ -11,6 +11,7 @@ Excel-ээс шилжсэн үлдэгдэл бүр `OB-{харилцагчий�
 """
 import os
 import sys
+from . import dbutil
 from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,7 +26,7 @@ from app.services import migration as M
 
 
 def _session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    engine = dbutil.test_engine()
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)()
 

@@ -2,6 +2,7 @@
 import calendar
 from datetime import date
 from sqlalchemy.orm import Session
+from .. import clock
 from .. import models
 
 
@@ -84,7 +85,7 @@ def overdue_state(loan: models.Loan, today: date) -> tuple[bool, int]:
 def overdue_loans(db: Session, today: date | None = None) -> list[dict]:
     """Хоцорсон зээлүүд — мэдэгдлийн давхрага (`billing.build_notifications`)
     ба дэлгэц хоёулаа ЭНЭ функцээс уншина: нэг дүрэм, нэг жагсаалт."""
-    today = today or date.today()
+    today = today or clock.today()
     rows = []
     for l in db.query(models.Loan).filter_by(status="active").all():
         late, days = overdue_state(l, today)
@@ -96,7 +97,7 @@ def overdue_loans(db: Session, today: date | None = None) -> list[dict]:
 
 
 def summary(db: Session, today: date | None = None):
-    today = today or date.today()
+    today = today or clock.today()
     loans = db.query(models.Loan).filter_by(status="active").all()
     total_debt = sum(loan_balance(l) for l in loans)
     burden = sum(monthly_due(l) for l in loans)

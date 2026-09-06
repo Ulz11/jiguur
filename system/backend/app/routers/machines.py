@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from .. import clock
 from ..db import get_db
 from .. import models, auth
 from ..services import audit, pdfmachine
@@ -20,10 +21,15 @@ router = APIRouter(prefix="/api")
 # ажлын дүнг бүртгэх нь МЭДЭЭЛЭЛ ОРУУЛАХ үйлдэл.
 guard = auth.require_roles("manager", "factory", "finance")
 
-# Бичигдсэнийг ЭРГҮҮЛЭН засах, устгах, нэхэмжлэл гаргах — МӨНГӨНИЙ
-# шийдвэр тул менежер + санхүүчийнх. Гэрээний дэлгэрэнгүй дээр татсан зураас
-# (`seesMoney`) энд ч ижилхэн: дарга машины P&L-ийг хардаггүй, тэгэхээр түүнийг
-# өөрчилдөг товч ч түүнд байх учиргүй. Машин ӨӨРӨӨ үүсгэх/зогсоох нь менежерийнх.
+# ХУУЧИН бичилтийг засах, устгах, нэхэмжлэл гаргах — МӨНГӨНИЙ шийдвэр тул
+# менежер + санхүүчийнх. Гэрээний дэлгэрэнгүй дээр татсан зураас (`seesMoney`)
+# энд ч ижилхэн: дарга машины P&L-ийг хардаггүй, тэгэхээр түүнийг өөрчилдөг
+# товч ч түүнд байх учиргүй. Машин ӨӨРӨӨ үүсгэх/зогсоох нь менежерийнх.
+#
+# ⚠ ГАНЦ ЦОНХ: log мөрийг ЗАСАХ/УСТГАХ хоёр нь `money_guard`-аас гарч
+# `_own_log`-д шилжив — өнөөдөр ӨӨРӨӨ бичсэн мөрөө дарга залруулна. Ажлаа
+# өөрөө бүртгэдэг хүн бичсэнээ засаж ч чаддаг байх ёстой; маргааш нь тэр мөр
+# ашгийн тооцоонд орсон байна. Нэхэмжлэл нь ХЭВЭЭР мөнгөний эздийнх.
 money_guard = auth.require_roles("manager", "finance")
 
 
@@ -100,9 +106,14 @@ def machine_ser(m: models.Machine):
             "net": round(income - expense), "log_count": len(m.logs)}
 
 
-def log_ser(l: models.MachineLog):
+def log_ser(l: models.MachineLog, mine_today: bool = False):
+    """`mine_today` — «энэ мөрийг би өнөөдөр бичсэн» (`_own_log`-тэй нэг дүрэм).
+
+    Дэлгэц ✎ ба ✕-г ЗУРАХААС ӨМНӨ мэдэх ёстой: үргэлж 403 болдог товч бол
+    худал амлалт."""
     return {"id": l.id, "date": str(l.date), "entry": l.entry, "label": l.label,
-            "client": l.client, "amount": l.amount, "method": l.method, "note": l.note}
+            "client": l.client, "amount": l.amount, "method": l.method, "note": l.note,
+            "mine_today": mine_today}
 
 
 def invoice_ser(inv: models.MachineInvoice):
@@ -169,7 +180,7 @@ def _vat_percent(db: Session) -> float:
 def _next_no(db: Session, period_end: date) -> str:
     """`M-YY/MM-N` — N нь тухайн он/сар дотор нэмэгдэнэ.
 
-    ⚠ Он/сар нь НЭХЭМЖИЛСЭН ХУГАЦААНААС гарна, `date.today()`-оос БИШ.
+    ⚠ Он/сар нь НЭХЭМЖИЛСЭН ХУГАЦААНААС гарна, `clock.today()`-оос БИШ.
     Урьд нь 5-р сарын ажлыг 9-р сард гаргахад `M-26/09-1` гэсэн дугаар
     төрдөг байв: Отгоо эгч дугаараар нь хайхад «26/05» гэж хайдаг ба олдохгүй.
     Баримтын дугаар нь ХЭЗЭЭ ХЭВЛЭСЭН биш, ЮУГ нэхэмжилснийг хэлнэ.
@@ -234,10 +245,12 @@ def list_machines(db: Session = Depends(get_db), user=Depends(auth.current_user)
 @router.get("/machines/{mid}/logs")
 def machine_logs(mid: int, db: Session = Depends(get_db), user=Depends(auth.current_user)):
     m = _machine(db, mid)
+    mine = audit.own_today(db, user, "machine_log", [l.id for l in m.logs])
     invs = db.query(models.MachineInvoice).filter_by(machine_id=mid).order_by(
         models.MachineInvoice.id.desc()).all()
     return {**machine_ser(m),
-            "logs": [log_ser(l) for l in sorted(m.logs, key=lambda l: (l.date, l.id), reverse=True)],
+            "logs": [log_ser(l, l.id in mine)
+                     for l in sorted(m.logs, key=lambda l: (l.date, l.id), reverse=True)],
             "invoices": [invoice_ser(i) for i in invs],
             "clients": sorted({l.client.strip() for l in m.logs
                                if l.entry == "job" and l.method != "INTERNAL" and l.client.strip()})}
@@ -291,7 +304,8 @@ def add_log(mid: int, body: LogIn, db: Session = Depends(get_db), user=Depends(g
     audit.log(db, user, "create", "machine_log", l.id,
               f"{m.name} · {l.date} · {l.label or ENTRY_MN[l.entry]} · "
               f"{l.client or '—'} · {l.amount:,.0f}₮ · {audit.value_mn(l.method)}")
-    return log_ser(l)
+    # Дөнгөж бичсэн хүн нь эзэн нь — мөр өөрөө засагдаж чадна гэдгээ хэлнэ.
+    return log_ser(l, True)
 
 
 def _log(db: Session, lid: int) -> models.MachineLog:
@@ -301,9 +315,25 @@ def _log(db: Session, lid: int) -> models.MachineLog:
     return l
 
 
+def _own_log(db: Session, user, lid: int) -> None:
+    """ӨӨРИЙН, ӨНӨӨДРИЙН мөр бол дарга ч засна, устгана.
+
+    Ажлаа өөрөө бүртгэдэг хүн бичсэн зүйлээ засаж ч чаддаг байх ёстой:
+    «Бүтэн өдөр» гэж дараад хагас байсныг мэдэх нь тэр өдөртөө л болдог
+    явдал. Маргааш нь тэр мөр ашгийн тооцоонд орсон байх тул мөнгөний
+    эздийнх (`money_guard`) хэвээр.
+    """
+    if getattr(user, "role", "") in ("manager", "finance"):
+        return
+    if not audit.is_own_today(db, user, "machine_log", lid):
+        raise auth.denied("manager", "finance")
+
+
 @router.patch("/machine-logs/{lid}")
-def patch_log(lid: int, body: LogPatch, db: Session = Depends(get_db), user=Depends(money_guard)):
+def patch_log(lid: int, body: LogPatch, db: Session = Depends(get_db),
+              user=Depends(guard)):
     """Inline засвар — огноо, ажил, харилцагч, дүн, хэлбэр, тэмдэглэл."""
+    _own_log(db, user, lid)
     l = _log(db, lid)
     data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if "amount" in data and data["amount"] <= 0:
@@ -316,11 +346,12 @@ def patch_log(lid: int, body: LogPatch, db: Session = Depends(get_db), user=Depe
     db.commit()
     audit.log(db, user, "update", "machine_log", l.id,
               f"{l.machine.name} · {audit.changes_text(before, {k: str(v) for k, v in data.items()})}")
-    return log_ser(l)
+    return log_ser(l, audit.is_own_today(db, user, "machine_log", l.id))
 
 
 @router.delete("/machine-logs/{lid}")
-def delete_log(lid: int, db: Session = Depends(get_db), user=Depends(money_guard)):
+def delete_log(lid: int, db: Session = Depends(get_db), user=Depends(guard)):
+    _own_log(db, user, lid)
     l = _log(db, lid)
     detail = (f"{l.machine.name} · {l.date} · {l.label or ENTRY_MN[l.entry]} · "
               f"{l.client or '—'} · {l.amount:,.0f}₮")

@@ -4,6 +4,7 @@ import os
 from datetime import date
 from fpdf import FPDF
 from sqlalchemy.orm import Session
+from .. import clock
 from .. import models
 from . import billing
 from .pdflayout import GRID
@@ -364,7 +365,7 @@ def _contract_signatures(p: FPDF, company: str, c: models.Contract,
 def _compose_contract(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
     """Гэрээг угсрах хуваалцсан цөм — ялгаа нь бүхэлдээ дээрх цэвэр туслахуудад
     (нэр томьёо, төлбөр, үүрэг) байх тул түрээс/худалдаа хоёулаа ЭНД нийлнэ."""
-    today = date.today()
+    today = clock.today()
     company = _company(db)
     company_label, client_label = _party_labels(c.type)
     p = _pdf()
@@ -442,7 +443,7 @@ def akt_doc_total(rows: list[dict]) -> float:
 
 def act_pdf(db: Session, c: models.Contract, gmap: dict, mmap: dict) -> bytes:
     """Тооцоо нийлсэн акт — хоёр тал гарын үсэг зурдаг хуудас (бодит форматыг дуурайв)."""
-    today = date.today()
+    today = clock.today()
     p = _pdf()
     p.set_font("dejavu", "", 9)
     p.cell(0, 6, f"{c.start_date} №{c.no} Гэрээний хавсралт", align="R", new_x="LMARGIN", new_y="NEXT")

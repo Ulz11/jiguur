@@ -23,6 +23,7 @@
 import re
 from datetime import date, datetime
 from sqlalchemy.orm import Session
+from .. import clock
 from .. import models
 from . import billing
 
@@ -61,7 +62,7 @@ def rebuild_contract_invoices(db: Session, contract: models.Contract,
     Буцна: {created, deleted, warnings, diffs} — diffs нь хуучин/шинэ дүнгийн
     зэрэгцүүлэлт (алга болсон цикл new_total=0, шинээр төрсөн цикл old_total=0).
     """
-    today = today or date.today()
+    today = today or clock.today()
     if contract.no.startswith("OB-"):
         raise ValueError("Үлдэгдэл шилжүүлэлтийн (OB) гэрээг дахин бодох боломжгүй — "
                          "энэ нэхэмжлэл хуучин системээс гараар шилжсэн")
@@ -81,7 +82,7 @@ def rebuild_contract_invoices(db: Session, contract: models.Contract,
     # Иймд «устга → дахин үүсгэ» нь `ensure_invoices`-ийн «унш → бич»-тэй ЯГ
     # ижил түгжээний дор, ХУВААГДАШГҮЙ явна. Дахин бодолт нь Отгоогийн ГАРААР
     # хийдэг ховор засвар тул түгжээг бүтэн ажлын турш барих нь хямд.
-    with billing.contract_invoice_lock(contract.id):
+    with billing.invoice_guard(db, contract.id):
         return _rebuild_locked(db, contract, today)
 
 
@@ -130,7 +131,15 @@ def _rebuild_locked(db: Session, contract: models.Contract, today: date) -> dict
          .delete(synchronize_session=False))
         (db.query(models.Invoice).filter(models.Invoice.id.in_(doomed_ids))
          .delete(synchronize_session=False))
-        db.commit()
+        # ⚠ `commit()` БИШ `flush()`. Устгал ба дахин үүсгэлт нь НЭГ гүйлгээнд
+        # байх ёстой: Postgres дээр гэрээний түгжээ нь ГҮЙЛГЭЭНИЙХ
+        # (`pg_advisory_xact_lock`) тул дундуур `commit()` хийвэл ТҮГЖЭЭ
+        # СУЛАРНА — яг тэр агшинд зэрэгцээ GET орж ирээд «цикл алга» гэж
+        # уншаад ижил нэхэмжлэлийг ДАХИН үүсгэнэ (E2E дээр 396,000₮ =
+        # 2 × 198,000₮). `flush()` нь энэ session-д устгалыг харуулах ба
+        # гүйлгээг НЭЭЛТТЭЙ үлдээх тул түгжээ 3-р алхам хүртэл барина.
+        # Нэмэлт ашиг: 3-р алхам унавал устгал ч буцна (бүтэн эсвэл юу ч үгүй).
+        db.flush()
         db.expire_all()
 
     # 3) ДАХИН ҮҮСГЭХ — бүх spec шинээр (алданги 0-оос эхэлнэ)
@@ -289,7 +298,7 @@ def preview_rebuild(db: Session, contract: models.Contract, today: date | None =
     DB-д ямар ч өөрчлөлт ҮЛДЭХГҮЙ: нэхэмжлэлийн тоо, дүн, хуваарилалт бүгд
     дуудахын өмнөх байдалдаа эргэж очно.
     """
-    today = today or date.today()
+    today = today or clock.today()
     with _DryRun(db):
         if mutate is not None:
             mutate()

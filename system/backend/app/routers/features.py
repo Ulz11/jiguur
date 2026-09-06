@@ -4,6 +4,7 @@ from datetime import date as _date_t   # `date` нэртэй ТАЛБАР төр
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from .. import clock
 from ..db import get_db
 from .. import models, auth, serializers
 from ..services import billing, analytics, cron
@@ -222,7 +223,7 @@ def book_penalty(cid: int, body: BookPenaltyIn, db: Session = Depends(get_db),
     if c.penalty_percent <= 0:
         raise HTTPException(400, "Энэ гэрээнд алдангийн хувь 0 — алданги нэхэгдэхгүй. "
                                  "Нэхэх бол эхлээд гэрээний алдангийн хувийг тохируулна уу.")
-    as_of = body.as_of or date.today()
+    as_of = body.as_of or clock.today()
     if as_of < billing.billing_origin(c):
         raise HTTPException(400, "Огноо гэрээний эхлэлээс өмнө байна")
     billing.ensure_invoices(db, c, as_of)
@@ -311,8 +312,9 @@ def patch_note(nid: int, body: NotePatch, db: Session = Depends(get_db),
     if body.status is None:
         return notes_router.patch_entity_note(nid, body.text, body.flag, body.date,
                                               db, user)
+    # Амлалт хаах нь АВЛАГЫН ажил. Мөр нь эзнээ НЭРЛЭНЭ (`auth.denied`).
     if getattr(user, "role", "") not in ("manager", "finance"):
-        raise HTTPException(403, "Энэ үйлдлийг хийх эрх байхгүй")
+        raise auth.denied("manager", "finance")
     return set_promise_status(db, nid, body.status, user)
 
 
@@ -414,7 +416,7 @@ def stocktake(body: StocktakeIn, db: Session = Depends(get_db),
             raise HTTPException(409, stock_svc.conflict_message(m, ln.system, now))
 
     # --- 2) Бичилтүүд, нэг багцаар ---
-    batch = f"{body.date}-{datetime.now():%H%M%S}"
+    batch = f"{body.date}-{clock.now_local():%H%M%S}"
     adjusted = 0
     diff_total = 0.0
     details: list[str] = []
@@ -473,7 +475,7 @@ def snooze_notification(body: SnoozeIn, db: Session = Depends(get_db),
         raise HTTPException(400, "Мэдэгдлийн төрөл буруу")
     if not 1 <= body.days <= 365:
         raise HTTPException(400, "Хоног 1-365 хооронд байна")
-    until = date.today() + timedelta(days=body.days)
+    until = clock.today() + timedelta(days=body.days)
     st = billing.snooze_row(db, user.id, body.kind, body.entity_id)
     if st is None:
         st = models.NotificationState(kind=body.kind, entity_id=body.entity_id,
@@ -545,7 +547,19 @@ def audit_list(from_: _date_t | None = Query(None, alias="from"),
     UTC-гээр суудаг тул цонх нь 8 цагаар шилжиж тулгагдана — эс бөгөөс
     орой 20:00-д хийсэн үйлдэл «маргаашийнх» болж шүүлтээс унана.
     """
+    return _audit_page(db, from_, to, action, entity, who, q, limit, offset)
+
+
+def _audit_page(db: Session, from_, to, action: str, entity: str, who: str,
+                q: str, limit: int, offset: int, only_name: str | None = None) -> dict:
+    """Шүүлт · хуудаслалт — ХОЁР хаалганы НЭГ бие (`/audit`, `/audit/mine`).
+
+    `only_name` нь ХАТУУ тэнцэл: «миний» хаалга нь дуудагчийнхаа мөрийг л
+    мэднэ, `?user=` -аар өөр хүн рүү эргүүлэх зам байхгүй.
+    """
     qs = db.query(models.AuditLog)
+    if only_name is not None:
+        qs = qs.filter(models.AuditLog.user_name == only_name)
     if from_:
         qs = qs.filter(models.AuditLog.created_at
                        >= datetime.combine(from_, datetime.min.time()) - timedelta(hours=8))
@@ -557,7 +571,7 @@ def audit_list(from_: _date_t | None = Query(None, alias="from"),
         qs = qs.filter(models.AuditLog.action == action)
     if entity:
         qs = qs.filter(models.AuditLog.entity == entity)
-    if who.strip():
+    if only_name is None and who.strip():
         qs = qs.filter(models.AuditLog.user_name.ilike(f"%{who.strip()}%"))
     if q.strip():
         needle = f"%{q.strip()}%"
@@ -567,3 +581,23 @@ def audit_list(from_: _date_t | None = Query(None, alias="from"),
     rows = (qs.order_by(models.AuditLog.id.desc())
             .offset(max(offset, 0)).limit(min(max(limit, 1), AUDIT_LIMIT)).all())
     return {"rows": [audit_row(r) for r in rows], "total": total}
+
+
+@router.get("/audit/mine")
+def audit_mine(from_: _date_t | None = Query(None, alias="from"),
+               to: _date_t | None = None, action: str = "", entity: str = "",
+               q: str = "", limit: int = 200, offset: int = 0,
+               db: Session = Depends(get_db),
+               me=Depends(auth.current_user)):
+    """«МИНИЙ БҮРТГЭЛ» — өөрийн үлдээсэн мөрүүд. БҮХ рольд.
+
+    Бүтэн бүртгэл нь эзнийх хэвээр (`/audit` — зөвхөн менежер): тэнд бусдын
+    үйлдэл, мөнгөний мөрүүд бий. Гэвч «би өнөөдөр юу бүртгэсэн бэ», «тэр
+    тооллого суусан уу» гэдэг нь ХЭНИЙ Ч ажилдаа хариуцлага хүлээх эрх —
+    үйлдвэрийн дарга тооллого хийгээд үр дүнгээ хардаггүй байв.
+
+    Шүүлт, хуудаслалт нь `/audit`-тай ЯГ ижил хэлбэртэй: дэлгэц нэг л
+    бүрэлдэхүүнээр хоёуланг нь зурна.
+    """
+    return _audit_page(db, from_, to, action, entity, "", q, limit, offset,
+                       only_name=(getattr(me, "name", "") or ""))

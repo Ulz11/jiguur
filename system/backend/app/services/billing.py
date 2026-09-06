@@ -18,9 +18,11 @@
 import json
 import threading
 from calendar import monthrange
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
-from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy import or_, text
+from sqlalchemy.orm import Session, selectinload
+from .. import clock
 from .. import models
 
 
@@ -758,7 +760,7 @@ def is_cycle_boundary(contract: models.Contract, d: date) -> bool:
 
 def this_cycle_start(contract: models.Contract, today: date | None = None) -> date:
     """Өнөөдөр аль циклд байна вэ — түүний эхлэл («Энэ циклээс»)."""
-    today = today or date.today()
+    today = today or clock.today()
     origin = billing_origin(contract)
     if today < origin:
         return origin
@@ -772,7 +774,7 @@ def next_cycle_start(contract: models.Contract, today: date | None = None) -> da
     Отгоогийн семантик: «шинэ тариф дараагийн циклээс». Энэ огноогоор ирсэн
     өөрчлөлт НЭХЭМЖЛЭГДСЭН юуг ч хөндөхгүй тул дахин бодолт ч шаардахгүй.
     """
-    today = today or date.today()
+    today = today or clock.today()
     origin = billing_origin(contract)
     if today < origin:
         return origin
@@ -896,7 +898,7 @@ def close_day_conflicts(contract: models.Contract, close_date: date,
     шалгагдсан тул тэнд зөрчил байх боломжгүй, мөн нэхэмжлэгдсэн түүхийг
     хаалтын мөчид эргүүлэн асуух нь ТУСДАА (дахин бодолтын) хаалга.
     """
-    today = today or date.today()
+    today = today or clock.today()
     if contract.type != "rent":
         return []
     # ЯГ `derivable_invoice_specs`-ийн тасралт: дуусаагүй циклийн төгсгөл нь
@@ -976,7 +978,7 @@ def derivable_invoice_specs(contract: models.Contract, today: date | None = None
     багтахаа болиход тэр СОНГОЛТ хийдэг бөгөөс wizard-ийн амлалт ба хаасны
     дараах цаас ХОЁУЛАА энэ ганц функцээр гардаг тул зөрөх боломжгүй.
     """
-    today = today or date.today()
+    today = today or clock.today()
     cd = close_date if close_date is not None else close_day(contract)
     specs: list[dict] = []
     if contract.type == "sale":
@@ -1063,6 +1065,31 @@ def contract_invoice_lock(contract_id: int) -> threading.RLock:
 _contract_invoice_lock = contract_invoice_lock
 
 
+@contextmanager
+def invoice_guard(db: Session, contract_id: int):
+    """Гэрээний нэхэмжлэлийн ХАМГААЛАЛТ — диалект бүрд зөв хэрэгсэл.
+
+    · SQLite — процессын доторх `RLock`. Оффисын сервер НЭГ uvicorn
+      ажилчинтай (`run.bat`) тул энэ нь бүрэн хаалт;
+    · Postgres — `pg_advisory_xact_lock(contract_id)`. Vercel дээр НЭГ
+      процесс гэдэг баталгаа БАЙХГҮЙ: хүсэлт бүр өөрийн функцын instance
+      дээр буудаг тул Python-ы түгжээ хөршөө огт хардаггүй. Зөвлөх түгжээ
+      нь ГҮЙЛГЭЭНИЙ (`_xact_`) — commit/rollback дээр өөрөө суларна, тул
+      мартагдсан түгжээ гэж байхгүй.
+
+    ⚠ `RLock` нь нэг урсгал доторх давхар барилтыг (rebuild → ensure)
+    зөвшөөрдөг; `pg_advisory_xact_lock` нь мөн адил нэг гүйлгээн дотор
+    дахин авахад ГАЦАХГҮЙ (session-ийн өөрийн барьсан түгжээ). Хоёулаа
+    ижил амлалт өгнө.
+    """
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(:cid)"), {"cid": int(contract_id)})
+        yield
+        return
+    with contract_invoice_lock(contract_id):
+        yield
+
+
 def _existing_invoice_keys(db: Session, contract: models.Contract) -> set:
     """Гэрээн дээр ОДООГООР байгаа нэхэмжлэлийн түлхүүрүүд — DB-ЭЭС уншина.
 
@@ -1090,6 +1117,69 @@ def pending_invoice_specs(db: Session, contract: models.Contract,
                         sp["no"]) not in existing]
 
 
+def contract_load():
+    """Гэрээний ЖАГСААЛТАД хэрэгтэй хамаарлуудын EAGER багц.
+
+    `contract_balance` / `client_receivable` нь гэрээ бүрийн нэхэмжлэл,
+    хөдөлгөөн (мөрүүдтэйгээ), тарифын өөрчлөлтийг уншдаг. Lazy горимд
+    жагсаалт бүр гэрээ × 4 жижиг query төрүүлнэ (N+1): 200 гэрээ = 800+
+    эргэлт. SQLite (нэг файл) дээр энэ нь микросекунд тул хэн ч анзаараагүй;
+    Neon руу сүлжээгээр явахад ЯГ ижил код секундээр хэмжигдэнэ.
+
+    `selectinload` нь JOIN биш ТУСДАА `IN (...)` query — мөр үржүүлэхгүй тул
+    хэдэн зуун мөртэй хөдөлгөөн ч хариуг хавдуулахгүй.
+
+    Гурван жагсаалт (харилцагч, гэрээ, дашбоард) НЭГ багц хэрэглэнэ: шинэ
+    хамаарал нэмэгдвэл гурван газар мартагдахгүй.
+    """
+    return (selectinload(models.Contract.invoices),
+            selectinload(models.Contract.items),
+            selectinload(models.Contract.akt_entries),
+            selectinload(models.Contract.rate_changes),
+            selectinload(models.Contract.movements)
+            .selectinload(models.Movement.lines))
+
+
+def ensure_invoices_sweep(db: Session, contracts, today: date | None = None) -> list:
+    """ОЛОН гэрээг НЭГ ялгаагаар шүүж, ажилтайг нь л хөндөнө.
+
+    Жагсаалтын хуудсууд (харилцагч, гэрээ, дашбоард, cron) гэрээ бүр дээр
+    `ensure_invoices` дууддаг байв. Тэр нь гэрээ бүрд:
+      · «байгаа нэхэмжлэлүүд» гэсэн ТУСДАА query (N + 1),
+      · түгжээ (Postgres дээр — advisory lock, серверийн зөвлөх түгжээ),
+      · худалдааны гэрээнд ЮУ Ч ҮҮСЭЭГҮЙ ч `db.commit()`
+    гэсэн гурван зардал үүсгэнэ. 200 гэрээтэй харилцагчийн жагсаалт нээхэд
+    Neon рүү 200 нэмэлт эргэлт — Улаанбаатараас Франкфурт хүртэлх зам дээр
+    тэр нь секунд болно.
+
+    Одоо: БҮХ гэрээний байгаа түлхүүрийг НЭГ query-гээр авч, ЮУ Ч дутуугүй
+    гэрээг БҮРЭН алгасна (түгжээ ч авахгүй, бичилт ч хийхгүй). Ажилтай
+    гэрээ л `ensure_invoices`-ийн бүрэн замаар явна — логик ХЭВЭЭР.
+    """
+    today = today or clock.today()
+    rows = list(contracts)
+    if not rows:
+        return []
+    ids = [c.id for c in rows]
+    keys: dict[int, set] = {c.id: set() for c in rows}
+    by_id = {c.id: c for c in rows}
+    for cid, cs, ce, no in db.query(
+            models.Invoice.contract_id, models.Invoice.cycle_start,
+            models.Invoice.cycle_end, models.Invoice.no
+    ).filter(models.Invoice.contract_id.in_(ids)).all():
+        keys[cid].add(spec_key(by_id[cid], cs, ce, no))
+
+    created: list = []
+    for c in rows:
+        due = [sp for sp in derivable_invoice_specs(c, today)
+               if spec_key(c, sp["cycle_start"], sp["cycle_end"], sp["no"])
+               not in keys[c.id]]
+        if not due:
+            continue                      # ⚠ БИЧИЛТГҮЙ, ТҮГЖЭЭГҮЙ
+        created += ensure_invoices(db, c, today)
+    return created
+
+
 def ensure_invoices(db: Session, contract: models.Contract, today: date | None = None):
     """Дууссан цикл бүрд нэхэмжлэл автоматаар үүсгэнэ (байхгүй бол).
 
@@ -1108,11 +1198,31 @@ def ensure_invoices(db: Session, contract: models.Contract, today: date | None =
     бөгөөс түүний «устгасан ба дахин үүсгэсний ХООРОНД» гэсэн цонхонд энэ
     функц орж, ижил циклийг ХОЁР удаа төрүүлнэ.
     """
-    today = today or date.today()
+    today = today or clock.today()
+    specs = derivable_invoice_specs(contract, today)
+
+    # ---- ЭХЛЭЭД УНШИНА, ТҮГЖЭЭГҮЙГЭЭР ----
+    # Ажил байхгүй бол түгжээ АВАХ ЁСГҮЙ. Postgres дээр түгжээ нь
+    # ГҮЙЛГЭЭНИЙХ (`pg_advisory_xact_lock`) бөгөөс `commit()` дээр л
+    # суларна — гэтэл ЮУ Ч үүсээгүй үед доорх нөхцөл commit хийдэггүй тул
+    # түгжээ session-ы дараагийн commit хүртэл БАРИГДАЖ ҮЛДЭНЭ. Тэр агшнаас
+    # эхлэн тэр гэрээ дээрх БҮХ зэрэгцээ хүсэлт хүлээнэ («хуудас нээгдэхээ
+    # больсон»). Уншдаг зам нь ямар ч түгжээ барих ёсгүй.
+    existing = _existing_invoice_keys(db, contract)
+    pending = [sp for sp in specs
+               if spec_key(contract, sp["cycle_start"], sp["cycle_end"],
+                           sp["no"]) not in existing]
+    if not pending:
+        if contract.type == "sale":
+            db.commit()
+        return []
+
     created = []
-    with _contract_invoice_lock(contract.id):
+    with invoice_guard(db, contract.id):
+        # Түгжээний ДОР дахин уншина: дээрх уншилтын дараа хэн нэгэн
+        # үүсгэсэн байж болно (яг тэр цонх нь давхардал төрүүлдэг).
         existing = _existing_invoice_keys(db, contract)
-        for sp in derivable_invoice_specs(contract, today):
+        for sp in specs:
             if spec_key(contract, sp["cycle_start"], sp["cycle_end"], sp["no"]) in existing:
                 continue
             # relationship-д нэмнэ — эс бөгөөс тухайн session дотор ачаалагдсан
@@ -1120,8 +1230,9 @@ def ensure_invoices(db: Session, contract: models.Contract, today: date | None =
             inv = models.Invoice(contract_id=contract.id, **sp)
             contract.invoices.append(inv)
             created.append(inv)
-        if created or contract.type == "sale":
-            db.commit()
+        # ⚠ ҮРГЭЛЖ commit — түгжээг барьсан бол ЗААВАЛ суллана. Уралдаанд
+        # хожигдож юу ч үүсээгүй байсан ч гүйлгээ нээлттэй үлдэх ёсгүй.
+        db.commit()
     if created:
         apply_client_credit(db, contract.client_id)
     return created
@@ -1139,7 +1250,7 @@ def current_cycle_accrual(contract: models.Contract, today: date | None = None):
     Авлага цуглуулах ДӨРВҮҮЛЭЭ хаагдсан гэрээ тутамд эцсийн циклийн дүнгээр
     хөөрөгдөж байв. «Тоолуур ҮНЭХЭЭР зогсоно» гэдэг нь энэ.
     """
-    today = today or date.today()
+    today = today or clock.today()
     if contract.type != "rent":
         return None
     if close_day(contract) is not None:
@@ -1206,7 +1317,7 @@ def upcoming_payment(contract: models.Contract, today: date | None = None):
         төрүүлэхгүй (`derivable_invoice_specs` алгасдаг) — «0₮ хүлээгдэж
         байна» гэсэн хий мөр Отгоогийн жагсаалтыг бохирдуулна.
     """
-    today = today or date.today()
+    today = today or clock.today()
     if contract.type != "rent" or contract.status != "active":
         return None
     cycles = cycles_of(contract, today)
@@ -1318,7 +1429,7 @@ def invoice_penalty(inv: models.Invoice, today: date | None = None) -> float:
     Хэзээ ч нэхэгдээгүй нэхэмжлэлд энэ нь хуучин томьёотой ЯГ ижил
     (booked = 0, since = due_date) — гэхдээ бүхэлдээ НЭХЭГДЭЭГҮЙ дүн.
     """
-    today = today or date.today()
+    today = today or clock.today()
     pen = invoice_penalty_due(inv)
     out = invoice_outstanding(inv)
     if out <= 0:
@@ -1354,7 +1465,7 @@ PAID_EPS = 0.005
 
 
 def invoice_status(inv: models.Invoice, today: date | None = None) -> str:
-    today = today or date.today()
+    today = today or clock.today()
     out = invoice_outstanding(inv)
     if out <= PAID_EPS:
         # үндсэн дүн хаагдсан ч бүртгэгдсэн алданги үлдсэн бол ТӨЛӨГДӨӨГҮЙ хэвээр
@@ -1486,7 +1597,7 @@ def contract_penalty_charges(db: Session, contract_id: int,
 
 
 def contract_balance(contract: models.Contract, today: date | None = None):
-    today = today or date.today()
+    today = today or clock.today()
     live = live_invoices(contract)
     outstanding = sum(invoice_outstanding(i) for i in live)
     penalty = sum(invoice_penalty(i, today) for i in live)
@@ -1529,7 +1640,7 @@ def client_receivable(client: models.Client, today: date | None = None) -> dict:
     `analytics.collections` (авлагын жагсаалт) хоёул ЭНЭ функцийг дууддаг.
     Шинэ дэлгэц нэмэгдвэл мөн эндээс — өөр газар дахин нийлүүлж БОЛОХГҮЙ.
     """
-    today = today or date.today()
+    today = today or clock.today()
     invoiced = uninvoiced = 0.0
     penalty = booked = deposit = 0.0
     active = 0
@@ -1979,7 +2090,7 @@ def build_notifications(db: Session, today: date | None = None, scope: str = "al
     төрөлгүй мэдэгдлүүд (зээл, бартер, амлалт) нь дашбоард дээр нэмэгддэг ба
     scope-оос хамаардаггүй — тэдэнд түрээс/худалдаа гэсэн харьяалал байхгүй.
     """
-    today = today or date.today()
+    today = today or clock.today()
     notes = []
     contracts = db.query(models.Contract).filter(models.Contract.status == "active").all()
     for c in contracts:
@@ -2043,7 +2154,7 @@ def overdue_invoices(db: Session, today: date | None = None,
     төлөгдөөгүй нэхэмжлэл нь мөнгө ХЭВЭЭР — түүнийг жагсаалтаас хасах нь
     авлагыг чимээгүй арчина.
     """
-    today = today or date.today()
+    today = today or clock.today()
     rows = [i for i in db.query(models.Invoice).filter(LIVE_INVOICE).all()
             if invoice_status(i, today) == "overdue"]
     if scope != "all":
@@ -2076,7 +2187,7 @@ def overdue_by_client(db: Session, today: date | None = None,
     ТОЛЬ болж буцна — харилцагч тутам дуудагдвал бүх нэхэмжлэл дахин дахин
     уншигдана (200 харилцагч × бүх нэхэмжлэл). Авлагын хуудас нэг л удаа авна.
     """
-    today = today or date.today()
+    today = today or clock.today()
     out: dict[int, dict] = {}
     for i in overdue_invoices(db, today, scope):
         if not i.contract:
@@ -2142,7 +2253,7 @@ def snooze_row(db: Session, user_id: int, kind: str,
 def snoozed_keys(db: Session, user_id: int,
                  today: date | None = None) -> set[tuple[str, int | None]]:
     """Тухайн хүнд ӨНӨӨДӨР нуугдаж байгаа мэдэгдлүүдийн хаягууд."""
-    today = today or date.today()
+    today = today or clock.today()
     return {(r.kind, r.entity_id)
             for r in db.query(models.NotificationState)
             .filter(models.NotificationState.user_id == user_id).all()

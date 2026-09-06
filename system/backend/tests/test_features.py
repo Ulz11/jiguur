@@ -4,6 +4,7 @@
 4) Мөнгөний урсгалын прогноз  5) Авлага цуглуулах  6) Утсаар тооллого
 7) Гэрээний PDF  8) Audit log
 """
+from . import dbutil
 from datetime import date, timedelta
 
 
@@ -154,7 +155,7 @@ def test_forecast_excludes_opening_balance(db_session_free_client=None):
     from app import models
     from app.services import migration as M, analytics as A
 
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    engine = dbutil.test_engine()
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine, expire_on_commit=False)()
     cl = models.Client(name="Хуучин өртэй")

@@ -40,6 +40,7 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from .. import clock
 from .. import models
 from . import billing
 from .pdfgen import _company, _money
@@ -237,12 +238,12 @@ def first_event_date(db: Session, client: models.Client) -> date | None:
     inv = (db.query(models.Invoice.due_date).join(models.Contract)
            .filter(models.Contract.client_id == client.id)
            .filter(billing.LIVE_INVOICE)
-           .order_by(models.Invoice.due_date).first())
+           .order_by(models.Invoice.due_date, models.Invoice.id).first())
     if inv:
         days.append(inv[0])
     pay = (db.query(models.Payment.date).filter_by(client_id=client.id)
            .filter(billing.LIVE_PAYMENT)
-           .order_by(models.Payment.date).first())
+           .order_by(models.Payment.date, models.Payment.id).first())
     if pay:
         days.append(pay[0])
     return min(days) if days else None
@@ -265,7 +266,7 @@ def build_statement(db: Session, client: models.Client, d_from: date,
     цаана үлдэнэ — тэр нь хуулгын хувьд ЗӨВ (тухайн өдрийн байдлаарх зураг),
     гэхдээ авлагын нийт тоонд аль хэдийн ордог тул зөрүү үүсгэж болно.
     """
-    today = date.today()
+    today = clock.today()
     events = _events(db, client, d_to)
 
     opening = 0.0

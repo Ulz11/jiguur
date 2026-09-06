@@ -35,13 +35,16 @@ class NoteVoidIn(BaseModel):
 def _require_write(user, entity_type: str) -> None:
     """Бичих эрх. Үйлдвэрийн дарга нь ГЭРЭЭ ба ХӨДӨЛГӨӨН дээр л бичнэ:
     «ирээгүй» гэдгийг талбай дээр анзаардаг нь тэр. Харилцагч · нэхэмжлэл ·
-    материал нь мөнгө/каталогийн дэвтэр тул түүнд хаалттай."""
-    role = getattr(user, "role", "")
-    if role in ("manager", "finance"):
-        return
-    if role == "factory" and entity_type in notes_svc.FACTORY_TYPES:
-        return
-    raise HTTPException(403, "Энэ үйлдлийг хийх эрх байхгүй")
+    материал нь мөнгө/каталогийн дэвтэр тул түүнд хаалттай.
+
+    Татгалзал нь ХЭН бичиж болохыг НЭРЛЭНЭ (`auth.denied`) — «эрх байхгүй»
+    гэсэн нүцгэн мөр нь «тэгвэл хэн бичих вэ?» гэсэн асуулт үлдээж, хүнийг
+    утас руу гүйлгэдэг.
+    """
+    roles = (("manager", "finance", "factory")
+             if entity_type in notes_svc.FACTORY_TYPES else ("manager", "finance"))
+    if getattr(user, "role", "") not in roles:
+        raise auth.denied(*roles)
 
 
 def _check_type(entity_type: str) -> None:

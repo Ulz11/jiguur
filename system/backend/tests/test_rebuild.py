@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+from . import dbutil
 from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,7 +28,7 @@ from tests.test_billing import setup_contract, mv
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    engine = dbutil.test_engine()
     Base.metadata.create_all(engine)
     s = sessionmaker(bind=engine, expire_on_commit=False)()
     yield s
@@ -453,12 +454,12 @@ def session_factory():
     `sqlite://` (санах ой) нь холболт бүрд ӨӨР DB өгдөг тул зэрэгцээ
     урсгалын тест тэнд утгагүй болно.
     """
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    engine = create_engine("sqlite:///" + path, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine)
+    path = dbutil.temp_sqlite_path()
+    engine = dbutil.test_engine(path)
+    if not dbutil.TEST_DATABASE_URL:
+        Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine, expire_on_commit=False)
-    engine.dispose()
+    dbutil.dispose(engine)
     try:
         os.unlink(path)
     except OSError:

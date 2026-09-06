@@ -1,7 +1,8 @@
 """Дашбоард — KPI, орлогын задаргаа, насжилт, мэдэгдэл."""
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
+from .. import clock
 from ..db import get_db
 from .. import models, auth, serializers
 from ..services import billing
@@ -29,11 +30,13 @@ def month_keys(today: date, n=6):
 @router.get("/dashboard")
 def dashboard(scope: str = "all", db: Session = Depends(get_db),
               user=Depends(auth.current_user)):
-    today = date.today()
-    contracts = db.query(models.Contract).all()
-    for c in contracts:
-        if c.status == "active":
-            billing.ensure_invoices(db, c, today)
+    today = clock.today()
+    contracts = (db.query(models.Contract)
+                 .options(*billing.contract_load(),
+                          selectinload(models.Contract.client))
+                 .all())
+    billing.ensure_invoices_sweep(
+        db, [c for c in contracts if c.status == "active"], today)
 
     def in_scope(c: models.Contract | None):
         return scope == "all" or (c is not None and c.type == scope)

@@ -1,12 +1,26 @@
 """Mock data — бодит Numbers файлын бүтцээр (нэрс зохиомол).
 
 MVP бүрэн дуусмагц бодит датаг Numbers файлуудаас импортлоно.
+
+⚠ ДЕМО дата нь ЗӨВХӨН `JIGUUR_SEED_DEMO=1` дээр бичигдэнэ. Хоосон сан дээр
+хуурамч харилцагч, хуурамч гэрээ өөрөө үүсэх нь Отгоо эгчийн хувьд «энэ тоо
+хаанаас гарав?» гэсэн асуулт — бодит сан руу нэг ч зохиомол мөр орох ёсгүй.
+Тест (`tests/conftest.py`) энэ тугийг өөрөө асаана.
 """
+import os
 from datetime import date, timedelta
 from sqlalchemy.orm import Session
+from . import clock
 from . import models
 from .auth import hash_password
 from .services import billing
+
+#: Демо (mock) датаг зөвшөөрөх туг.
+DEMO_FLAG = "JIGUUR_SEED_DEMO"
+
+
+def demo_enabled() -> bool:
+    return os.environ.get(DEMO_FLAG, "").strip() == "1"
 
 
 def seed_base(db: Session):
@@ -44,6 +58,9 @@ def seed_base(db: Session):
 
 
 def seed(db: Session):
+    """Хоосон сан дүүргэнэ. Демогүй бол = `seed_base` (хэрэглэгч, каталог, тохиргоо)."""
+    if not demo_enabled():
+        return seed_base(db)
     if db.query(models.User).count():
         return
 
@@ -122,7 +139,7 @@ def _seed_demo(db: Session, mats, g_new, g_a, g_b):
     ider = client("Идэр Зам ХХК", "4482910", "Г.Уянга", "8810-3130")
     bat = client("Бат Бүтээц ХХК", "6120458", "С.Болд", "9908-7712")
 
-    today = date.today()
+    today = clock.today()
 
     def contract(no, cl, ctype, start, items, end=None, deposit=0, penalty=0.5):
         c = models.Contract(no=no, client_id=cl.id, type=ctype, start_date=start,

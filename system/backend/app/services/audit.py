@@ -1,6 +1,7 @@
 """Audit log — хэн, юуг, хэзээ өөрчилснийг бүртгэнэ."""
 import sys
 import traceback
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 from .. import models
@@ -69,6 +70,55 @@ def log(db: Session, user, action: str, entity: str, entity_id=None, detail: str
             db.rollback()
         except Exception:  # noqa: BLE001
             pass
+
+
+# ---------------------------------------------------------------------------
+# «ӨНӨӨДӨР ӨӨРӨӨ БҮРТГЭСЭН» — засварын жижиг цонх
+#
+# Үйлдвэрийн дарга талбай дээр «40ш буцлаа» гэж бичээд, 20 минутын дараа 38
+# байсныг олж мэднэ. Өнөөдрийг хүртэл түүний ганц зам нь Отгоо руу залгах
+# байв. Хөдөлгөөн нь УСТДАГГҮЙ, ЗАСВАР нь бүртгэгддэг тул энэ цонх аюулгүй:
+# ЗӨВХӨН өөрийнх нь мөр, ЗӨВХӨН тэр өдөртөө. Маргааш нь тэр мөр түүхийн
+# нэг хэсэг болно — түүнийг зөвхөн эзэн засна.
+#
+# «Хэн үүсгэсэн» гэдгийг ЭНЭ ЛЕДЖЕР мэднэ: `Movement`, `MachineLog` хоёрын
+# аль нь ч «хэн» гэсэн багана авч яваагүй, харин үүсгэх бүрд энд мөр үлддэг.
+# ---------------------------------------------------------------------------
+#: Улаанбаатар — UTC+8, зуны цаггүй (`routers/features.py`-ийн LOCAL_TZ-тэй нэг тоо).
+LOCAL_TZ = timezone(timedelta(hours=8))
+
+
+def local_today() -> date:
+    """ОРОН НУТГИЙН өнөөдөр. DB-д цаг нь UTC-гээр суудаг тул орой 20:00-д
+    хийсэн бүртгэл «маргаашийнх» болж, эзэн нь өөрийнхөө мөрийг олохгүй."""
+    return datetime.now(timezone.utc).astimezone(LOCAL_TZ).date()
+
+
+def own_today(db: Session, user, entity: str, ids) -> set:
+    """`ids`-ийн дотроос ЭНЭ хүн ӨНӨӨДӨР үүсгэсэн объектуудын id.
+
+    Нэг хүсэлт — жагсаалт бүхэлдээ (мөр бүр дээр DB рүү очихгүй).
+    """
+    ids = [i for i in ids if i is not None]
+    name = (getattr(user, "name", "") or "").strip()
+    if not ids or not name:
+        return set()
+    day = local_today()
+    lo = datetime.combine(day, datetime.min.time()) - timedelta(hours=8)
+    rows = (db.query(models.AuditLog.entity_id)
+            .filter(models.AuditLog.action == "create",
+                    models.AuditLog.entity == entity,
+                    models.AuditLog.entity_id.in_(ids),
+                    models.AuditLog.user_name == name,
+                    models.AuditLog.created_at >= lo,
+                    models.AuditLog.created_at < lo + timedelta(days=1))
+            .all())
+    return {r[0] for r in rows}
+
+
+def is_own_today(db: Session, user, entity: str, entity_id) -> bool:
+    """Ганц объектын хувьд — хаалганы мөрд уншигдахаар."""
+    return entity_id in own_today(db, user, entity, [entity_id])
 
 
 # ---------------------------------------------------------------------------

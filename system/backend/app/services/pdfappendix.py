@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
+from .. import clock
 from . import billing
 from .pdfgen import _company, _money
 from .pdflayout import (A4, INK, MARGIN, MUTED, Doc, cell_row, draw_header, ensure_space,
@@ -374,7 +375,7 @@ def cycle_appendix_pdf(db, c, gmap: dict, mmap: dict, today: date | None = None)
     буй хуримтлал»-аас зөрнө. Цикл байхгүй бол (худалдаа, дууссан гэрээ)
     `None` буцаана; роутер үүнийг 400 болгоно.
     """
-    today = today or date.today()
+    today = today or clock.today()
     cur = billing.current_cycle_accrual(c, today)
     if cur is None:
         return None

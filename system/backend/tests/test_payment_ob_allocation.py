@@ -15,6 +15,7 @@
 """
 import os
 import sys
+from . import dbutil
 from datetime import date
 
 import pytest
@@ -41,7 +42,7 @@ RENT_DUE = date(2026, 9, 19)
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    engine = dbutil.test_engine()
     Base.metadata.create_all(engine)
     s = sessionmaker(bind=engine, expire_on_commit=False)()
     yield s
