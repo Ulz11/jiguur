@@ -52,18 +52,22 @@ export function filterTouched(f: AuditFilter, today: string): boolean {
 }
 
 /** `/api/audit?…` — ХООСОН талбар огт явахгүй (сервер хоосон мөрөөр шүүхгүй
- *  ч URL нь уншигдахуйц үлдэнэ). */
-export function auditQuery(f: AuditFilter): string {
+ *  ч URL нь уншигдахуйц үлдэнэ).
+ *
+ *  `mine` — «Миний бүртгэл» (`/api/audit/mine`, бүх рольд нээлттэй). Тэр
+ *  хаалга нь дуудагчийнхаа мөрийг л мэддэг тул «Хэн» шүүлт утгагүй: огт
+ *  явуулахгүй (сервер ч түүнийг үл тоох боловч URL нь худал амлахгүй). */
+export function auditQuery(f: AuditFilter, mine = false): string {
   const p = new URLSearchParams();
   if (f.from) p.set("from", f.from);
   if (f.to) p.set("to", f.to);
   if (f.action) p.set("action", f.action);
   if (f.entity) p.set("entity", f.entity);
-  if (f.who.trim()) p.set("user", f.who.trim());
+  if (!mine && f.who.trim()) p.set("user", f.who.trim());
   if (f.q.trim()) p.set("q", f.q.trim());
   p.set("limit", String(PAGE));
   if (f.offset > 0) p.set("offset", String(f.offset));
-  return `/api/audit?${p.toString()}`;
+  return `/api/audit${mine ? "/mine" : ""}?${p.toString()}`;
 }
 
 /**

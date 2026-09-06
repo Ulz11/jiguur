@@ -4,6 +4,7 @@ import { api, fmt, money, user } from "../api";
 import { Spinner, Empty, FinanceDisclosure, FinanceBlock, FinanceRow,
          ConfirmModal, OutcomeStrip, useToast } from "../ui";
 import { rowClickProps } from "../lib/rowClick";
+import { canOpen } from "../lib/guard";
 import { clientHref, contractHref } from "../lib/links";
 import { dialogOpen, useLive } from "../lib/live";
 import { holdingSections, rateLabel, daysLabel } from "../lib/material";
@@ -100,10 +101,14 @@ export default function MaterialDetail() {
       <div className="card p-6 mb-4">
         <div className="flex gap-5 items-start justify-between flex-wrap">
           <div className="min-w-[230px]">
-            <h1 className="text-[22px] font-extrabold text-ink tracking-tight flex items-center gap-2.5 flex-wrap">
-              {d.name}
+            {/* Ангилал нь ГАРЧГИЙН ХЭСЭГ БИШ. `<h1>` дотор суусан пил нь
+                хуудсын нэрийг «Хэв хашмал 6012 Хэв» болгож уншуулдаг байв —
+                уншигч, табын гарчиг, хайлт гурвуулаа тэр давхардлыг авч явна.
+                Нэр нь гарчигт, ангилал нь ХАЖУУД нь. */}
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h1 className="text-[22px] font-extrabold text-ink tracking-tight">{d.name}</h1>
               <span className="pill-grey">{d.category}</span>
-            </h1>
+            </div>
             <div className="text-[13px] text-t2 mt-1.5 flex gap-x-4 gap-y-1.5 flex-wrap">
               <span>Хэмжих нэгж: <b className="text-t1">{unit}</b></span>
               {seesMoney && (<>
@@ -346,7 +351,17 @@ export default function MaterialDetail() {
                         mv.voided ? "text-t3 line-through" : mv.delta > 0 ? "text-money" : "text-danger"}`}>
                     {signed(mv.delta)}
                   </td>
-                  <td className="td text-right">
+                  <td className="td text-right whitespace-nowrap">
+                    {/* «ЭНЭ ЗАЛРУУЛГЫГ ХЭН ХИЙВ?» — мөрөөс нь бүртгэл рүү.
+                        Тооллого, залруулгыг хийдэг нь ДАРГА тул холбоос нь
+                        түүнд ч ажиллана: эзэнд бүтэн бүртгэл, бусдад «Миний
+                        бүртгэл» (`/audit/mine` — өөрийн мөрүүд). Хаалттай
+                        хуудас руу худал холбоос үүсэхгүй (UI-ЗАРЧИМ §1). */}
+                    <Link className="btn-ghost btn-row"
+                          aria-label={`${adjustmentLine(mv)} — бүртгэлээс харах`}
+                          to={`${canOpen("/audit", u?.role) ? "/audit" : "/audit/mine"}?entity=stock_adjustment`}>
+                      бүртгэл →
+                    </Link>
                     {/* Андуурч тоолсныг БУЦААХ зам. Мөр нь ЖАГСААЛТААС
                         ГАРАХГҮЙ — шалтгаантайгаа үлдэж, зөвхөн тооноос гарна. */}
                     {canVoid && !mv.voided && (

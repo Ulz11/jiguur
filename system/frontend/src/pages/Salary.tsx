@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useId, useState } from "react";
-import { api, money, sayaFmt } from "../api";
+import { Link } from "react-router-dom";
+import { api, money, sayaFmt, user } from "../api";
 import { Spinner, FormModal, SubmitButton, useToast, Empty, Receipt, ConfirmModal, InlineEdit,
          DisclosureCell, DisclosureHead } from "../ui";
 import { ErrorCard, SideStrip } from "../components/SideStrip";
@@ -9,6 +10,7 @@ import { empBody, type EmployeeBody } from "../lib/employee";
 import { rowClickProps } from "../lib/rowClick";
 import { panelId, disclosureProps } from "../lib/disclosure";
 import { exactBelow } from "../lib/credit";
+import { canOpen } from "../lib/guard";
 import { PAID_RUN_LOCKED, ndshLabel, runDeletable, trimPct } from "../lib/sideRows";
 import { employeeOutcome, salaryPaidOutcome, salaryRunDeletedOutcome, salaryRunOutcome,
          type Outcome } from "../lib/outcomeSide";
@@ -71,6 +73,9 @@ export default function Salary() {
   const netFund = Number(sum?.payroll_net ?? 0);
   const dailyDays = Number(sum?.daily_days ?? 22);
   const ndshPct = Number(sum?.ndsh_percent ?? 0);
+  /* Тохиргоо руу очих зам нь ЗӨВХӨН менежерт нээлттэй (сервер ч, чиглүүлэгч
+     ч) — хаалттай хуудас руу худал холбоос үүсгэхгүй (UI-ЗАРЧИМ §1). */
+  const canSetPct = canOpen("/settings", user()?.role);
 
   return (
     <div>
@@ -154,7 +159,24 @@ export default function Salary() {
           бүтэн өргөнд, хэвтээ гүйлгэлтгүй. */}
       <div className="flex flex-col gap-4">
         <div className="card overflow-x-auto">
-          <h2 className="font-bold text-ink text-[15.5px] px-4 pt-4 pb-1">Ажилчид</h2>
+          {/* НДШ ХУВЬ ХААНА БАЙНА ВЭ. Гарын авлага «Тохиргооноос өөрчилнө»
+              гэдэг ч ТОХИРГОО нь ЗӨВХӨН менежерийнх: санхүүч тэр хуудсыг
+              нээж чадахгүй тул зааврыг дагаад мухардана. Одоо ХУВЬ нь энд
+              БИЧИГДЭНЭ (нэг л газраас — `/api/salary/summary`), эзэн нь
+              шууд очно, бусад нь ХЭН өөрчлөхийг мэднэ. */}
+          <div className="flex items-baseline justify-between gap-3 flex-wrap px-4 pt-4 pb-1">
+            <h2 className="font-bold text-ink text-[15.5px]">Ажилчид</h2>
+            {ndshPct > 0 && (
+              <span className="text-[12.5px] text-t2">
+                НДШ <b className="text-t1 tabular-nums">{trimPct(ndshPct)}%</b>{" "}
+                {canSetPct
+                  ? <Link to="/settings" className="tap-link text-brand-ink font-semibold hover:underline">
+                      Тохиргооноос өөрчлөх →
+                    </Link>
+                  : <span className="text-t3">(Тохиргоо — менежер өөрчилнө)</span>}
+              </span>
+            )}
+          </div>
           <table className="w-full min-w-[420px]">
             <thead><tr><th className="th">Нэр</th><th className="th">Төрөл</th>
               <th className="th text-right">Цалин / Өдрийн хөлс</th><th className="th">НДШ</th><th className="th"></th></tr></thead>

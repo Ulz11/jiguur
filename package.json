@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Барилгын материалын **түрээс, худалдаа, тооцоо, санхүү**-г нэг дор хөтөлдөг систем. Messenger чат, гар падан, Numbers файлын оронд.",
   "main": "index.js",
+  "engines": {
+    "node": "22.x"
+  },
   "directories": {
     "doc": "docs"
   },

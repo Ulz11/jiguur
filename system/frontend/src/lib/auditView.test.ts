@@ -37,6 +37,16 @@ describe("хүсэлтийн мөр", () => {
   it("эхний хуудсанд `offset` огт бичигдэхгүй", () => {
     expect(auditQuery({ ...defaultFilter(TODAY), offset: 0 })).not.toContain("offset");
   });
+
+  it("«Миний бүртгэл» нь ӨӨР хаалга — «Хэн» шүүлт огт явахгүй", () => {
+    const f = { ...defaultFilter(TODAY), who: "Отгоо", entity: "movement" };
+    const q = auditQuery(f, true);
+    expect(q.startsWith("/api/audit/mine?")).toBe(true);
+    expect(q).toContain("entity=movement");
+    expect(q).not.toContain("user=");
+    // Бүтэн бүртгэл дээр «Хэн» ХЭВЭЭР ажиллана
+    expect(auditQuery(f)).toContain("user=");
+  });
 });
 
 describe("шүүлт хөндөгдсөн эсэх", () => {

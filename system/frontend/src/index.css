@@ -113,8 +113,11 @@ body::before {
     background: var(--color-cardbg);
   }
   .btn-secondary:hover { background: var(--color-sunken); border-color: var(--color-line-strong); }
+  /* `min-h-9` нь ХАТУУ 36px байв — хуруутай төхөөрөмж дээр шат нь өсөхөд
+     («Буцах», задлах, ✕ товчнууд) энэ ганц тоо хоцордог. Одоо шатнаасаа уншина. */
   .btn-ghost {
-    @apply inline-flex items-center gap-2 rounded-xl px-3 py-2 font-semibold text-sm min-h-9 cursor-pointer transition active:scale-[.97] disabled:opacity-50 text-t2 hover:text-ink hover:bg-sunken;
+    @apply inline-flex items-center gap-2 rounded-xl px-3 py-2 font-semibold text-sm cursor-pointer transition active:scale-[.97] disabled:opacity-50 text-t2 hover:text-ink hover:bg-sunken;
+    min-height: var(--target-sm);
   }
   /* Төлөв хаяг (pill) — гэрээний ТӨЛӨВ гэдэг мэдээлэл, чимэглэл биш.
      11px байсныг 12px болгож, өнгө бүр өөрийн дэвсгэр дээрээ 4.5:1 давав. */
@@ -148,6 +151,22 @@ body::before {
     background: #fff;
   }
   .inp:focus { border-color: var(--color-brand); box-shadow: 0 0 0 3px rgba(248, 135, 18, 0.18); background: #fff; }
+  /* ---- САФАРИ ДЭЭРХ СОНГОГЧ (`<select class="inp">`) ----
+     WebKit нь ӨӨРИЙН зурдаг сонгогч дээр `min-height`-ийг УНШДАГГҮЙ: буцаалтын
+     цонхны «Очих зэрэглэл» ба «Аль падангаас» хоёр даргын iPad дээр 23px
+     өндөртэй зурагддаг байв (Chromium дээр ЯГ тэр хоёр 44). Хэмжсэн: 810×1080
+     WebKit. Хэлбэрийг нь өөрсдөө зурснаар л шат үйлчилнэ — тиймээс өөрийн ᵥ
+     тэмдгийг (SVG) баруун талд нь тавьж, түүнд зай гаргана.
+     ⚠ `background-color` нь `.inp`-ээс хэвээр: энд ЗӨВХӨН зураг нь бичигдэнэ. */
+  select.inp {
+    -webkit-appearance: none;
+    appearance: none;
+    padding-right: 30px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%234a5670' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 10px 6px;
+  }
   .lbl { @apply block text-[12px] font-semibold text-t1 mb-1.5; }
   /* Хүснэгт бүр excel шиг бүрэн нүдтэй тор — border-collapse-аар зэргэлдээ ирмэгүүд нэг шугам болно */
   table { border-collapse: collapse; }
@@ -425,6 +444,18 @@ tr.row-fresh { box-shadow: none; }
      md  44px — энгийн товч/талбар (btn-primary, btn-secondary, .inp)
      sm  36px — десктоп хүснэгтийн нягт үйлдэл. Дарагдах юм 36px-ээс намхан байхгүй. */
   --target-lg: 52px; --target: 44px; --target-sm: 36px; }
+/* ---- ХУРУУНЫ ШАТ: ТӨХӨӨРӨМЖ ШИЙДНЭ, ХУУДАС БИШ ----
+   36px нь ХУЛГАНЫ доод шат. Даргын iPad дээр (810×1080, WebKit) хэмжихэд 26
+   төрлийн товч 44px-ээс намхан зогсож байв: тооллогын залруулгын пил, ⚑ мөрийн
+   товчнууд, ✎ засварууд, шүүлтүүрийн чипс, «Буцах» холбоос, задлах толгой,
+   drawer-ийн ✕, топбарын амьд заагч… Тэдгээрийг НЭГ НЭГЭЭР нь өсгөх нь дараагийн
+   товч төрөх бүрд дахин эхлэх ажил. Шат нь `pointer: coarse` дээр БҮХЭЛДЭЭ
+   өснө — хувьсагчаараа уншдаг бүх бүрэлдэхүүн ямар ч засваргүйгээр дагана
+   (`src/lib/touch.ts`-ийн ЯГ тэр асуулт: заагч нь хуруу юу?).
+   `--target-lg` 52px хэвээр — тэр нь АНХНААСАА хурууны хэмжүүр. */
+@media (pointer: coarse) {
+  :root { --target: 48px; --target-sm: 44px; }
+}
 /* Шатны утгыг класс болгож өгнө — тоо нь нэг эх сурвалжтай үлдэнэ */
 .tap-lg { min-height: var(--target-lg); }
 .tap { min-height: var(--target); }
@@ -477,7 +508,8 @@ tr.row-fresh { box-shadow: none; }
 .brand-plate img.brand-mark-img { width: auto; max-width: 34px; max-height: 40px; }
 
 /* Цэс хураах товч — topbar-ийн зүүн талд */
-.jz-collapse { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center;
+.jz-collapse { --collapse-btn: max(40px, var(--target-sm));
+  width: var(--collapse-btn); height: var(--collapse-btn); flex: 0 0 var(--collapse-btn); display: grid; place-items: center;
   border-radius: 7px; font-size: 15px; line-height: 1; font-weight: 700; color: var(--jz-blue);
   background: var(--color-sunken); transition: background .15s, color .15s; }
 /* Улбар дэвсгэр дээр цагаан тэмдэг 2.36:1 — товчтойгоо адил navy болгов. */
@@ -506,8 +538,11 @@ tr.row-fresh { box-shadow: none; }
 /* Нэрийн товчлол — улбар дээрх navy. #253886 нь 4.64:1 (босгын ирмэг дээр);
    товчтойгоо нэг ижил гүн navy болгоход 5.66:1 болж, брэнд хослол хэвээрээ. */
 .user-monogram { width: 40px; height: 40px; border-radius: 6px; flex: 0 0 40px; display: grid; place-items: center; color: var(--jz-blue-deep); background: var(--jz-orange); font: 600 12.5px var(--jz-mono); position: relative; z-index: 1; }
-/* Нууц үг солих 🔑 / гарах ⎋ — 13px өргөн бичиг байсныг 40×40 товч болгов */
-.side-foot-btn { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center;
+/* Нууц үг солих 🔑 / гарах ⎋ — 13px өргөн бичиг байсныг 40×40 товч болгов.
+   ХАТУУ 40 нь хуруунд дутуу: `max()` нь хулгана дээр 40-ийг хэвээр үлдээж,
+   `pointer: coarse` дээр шатны утгыг (44px) авна. */
+.side-foot-btn { --side-btn: max(40px, var(--target-sm));
+  width: var(--side-btn); height: var(--side-btn); flex: 0 0 var(--side-btn); display: grid; place-items: center;
   border-radius: 7px; font-size: 15px; line-height: 1; color: rgba(255,255,255,.72);
   transition: background .15s, color .15s; }
 .side-foot-btn:hover { background: rgba(255,255,255,.16); color: #fff; }
@@ -518,14 +553,16 @@ tr.row-fresh { box-shadow: none; }
    нь өнгөрдөг ч ХЭМЖЭЭ нь Отгоод торгодог. 12px + зай нь хагаслав. */
 .jz-location { color: var(--color-t2); font: 12px var(--jz-mono); letter-spacing: .045em; }
 .jz-location i { display: inline-block; width: 4px; height: 4px; margin: 0 10px 2px; border-radius: 50%; background: var(--jz-orange); }
-.jz-topbar-actions { display: flex; align-items: center; gap: 15px; margin-left: auto; }
+/* `flex: none` — эс бөгөөс явцуу дэлгэц дээр амьд заагч ХУМИГДАЖ, 26px өргөн
+   ЦЭГ болж хоцордог байв (390×844 дээр хэмжсэн). Хумигдах нь БАЙРШЛЫН мөрийнх. */
+.jz-topbar-actions { display: flex; align-items: center; gap: 15px; margin-left: auto; flex: none; }
 .top-pulse { width: 8px; height: 8px; background: var(--color-money); border-radius: 50%; box-shadow: 0 0 0 4px var(--color-money-50); }
 /* ---- АМЬД ЗААГЧ: «Шинэчилсэн: 14:03» ----
    Ногоон цэг дангаараа зогсож байв — тэр нь ХЭЗЭЭ Ч өөрчлөгддөггүй тул юу ч
    хэлдэггүй. Одоо цэгний хажууд ЦАГ бичигдэж, дарагддаг товч болов: 36px
    өндөр (гар хүрэх хамгийн бага хэмжээ), өнгө нь төлөвөө дагана.
    ⚠ ӨНГӨ ДАНГААРАА УТГА ЗӨӨХГҮЙ — үг нь хажуудаа явна (UI-ЗАРЧИМ §4). */
-.top-live { display: inline-flex; align-items: center; gap: 7px; min-height: 36px;
+.top-live { display: inline-flex; align-items: center; gap: 7px; min-height: var(--target-sm);
   padding: 0 11px; border-radius: 999px; border: 1px solid transparent;
   background: transparent; color: var(--color-t2);
   font: 600 12.5px var(--jz-mono); letter-spacing: .02em; white-space: nowrap;
@@ -538,11 +575,8 @@ tr.row-fresh { box-shadow: none; }
 .top-live.is-down { color: var(--color-danger); background: var(--color-danger-50); border-color: var(--color-danger); }
 .top-live.is-down .top-pulse { background: var(--color-danger); box-shadow: 0 0 0 4px var(--color-danger-50); }
 .top-live.is-idle .top-pulse { background: var(--color-t3); box-shadow: 0 0 0 4px var(--color-sunken); }
-@media (max-width: 760px) {
-  /* Явцуу дэлгэц дээр цаг нь хумигдана — цэг нь ҮЛДЭНЭ (төлөв нь чухал) */
-  .top-live .top-live-text { display: none; }
-  .top-live { padding: 0 8px; }
-}
+/* Хураангуй шошго (ГАНЦ ЦАГ) нь ЗӨВХӨН утсан дээр гарна — доорх 480px-ийн блок */
+.top-live .top-live-short { display: none; }
 
 /* ---- ТОГТМОЛ ЗУРВАС (топбарын доор) ----
    Toast нь 3.2 секундын дараа арилдаг — Отгоо тэр агшинд цаас руугаа харж
@@ -606,6 +640,15 @@ tr.row-fresh { box-shadow: none; }
 .command-metric::before { content: ""; position: absolute; top: 0; left: 0; width: 27px; border-top: 2px solid var(--jz-orange); }
 /* KPI-ийн нэр — тухайн тоо ЮУ болохыг хэлдэг тул мэдээлэл. 11px байсныг
    12px болгож, том үсгийн өргөн зайг багасгав. */
+/* ПИЛ НЬ КАРТААСАА ГАРАХГҮЙ.
+   `.pill` бүр `whitespace-nowrap` — жагсаалтын дунд тэр зөв (шошго тасрахгүй).
+   Гэвч KPI картын дотор тэр нь ТАСАРСАН ТОО болдог: Отгоогийн 1366 дээр карт
+   206px, «11 нэхэмжлэл · 8 харилцагч» нь 198px дээр `overflow: hidden`-д
+   хайчлагдаж «…8 харилц» болж зогсдог байв (хэмжсэн). Хоёр мөр болж эвхэгдэх
+   нь тоо тасрахаас ХАМААГҮЙ дээр. */
+.command-metric :is(.pill, .pill-green, .pill-amber, .pill-red, .pill-blue, .pill-grey, .pill-violet) {
+  white-space: normal;
+}
 .command-metric [class~="text-[12.5px]"], .command-metrics .card [class~="text-[12.5px]"] { color: var(--color-t2); font: 12px var(--jz-mono); letter-spacing: .03em; text-transform: uppercase; }
 .command-metric [class~="text-[28px]"], .command-metrics .card [class~="text-[28px]"] { font: 700 30px/1.15 var(--jz-display); letter-spacing: -.04em; }
 .dashboard-analysis { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, .9fr); gap: 13px; }
@@ -677,6 +720,10 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2p
 .segment > button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .tab-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .cal-day:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+/* Хуанлийн сар солих ‹ › — ХАТУУ 40×40 байв: даргын планшет дээр шатнаасаа
+   (44px) доогуур үлддэг ганц хос. Хулгана дээр 40 хэвээр. */
+.cal-nav { --cal-nav: max(40px, var(--target-sm));
+  width: var(--cal-nav); height: var(--cal-nav); flex: 0 0 var(--cal-nav); }
 .pick-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .work-row:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .tech-details > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
@@ -775,6 +822,25 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2p
   .login-stage::after { display: none; }
 }
 
+/* ---- УТАС (390×844 дээр хэмжсэн) ----
+   Топбар нь гурван зүйлийг НЭГ мөрөнд шахаж байв: байршил, амьд заагч, ☰.
+   Үр дүн нь ХОЁР тасалдал — заагч 26px өргөн болж ЦЭГ болж хоцордог (юу ч
+   хэлэхгүй), байршил нь «202…» болж ӨДРИЙН ДУНДУУР тасардаг. Аль нь ч
+   мэдээлэл БИШ. Тиймээс утсан дээр:
+     · заагч нь ЦЭГ + ЦАГ (үг нь `title`/`aria-label` дээр бүтнээрээ);
+     · байршлын мөр нь ХАМГИЙН чухал хэсгээ л барина — ХУУДСЫНХАА нэрийг.
+       Огноо нь утсан дээрээ өөрөө бичээстэй; компанийн нэр нь 390px дээр
+       чимэглэл (хэрэглэгч хаана ажиллаж байгаагаа мэднэ — хаягийн мөр нь
+       ХУУДСЫГ хэлдэг). Хоёулаа `title` дээр бүтнээрээ үлдэнэ: АЛДАГДААГҮЙ,
+       зөвхөн нүүсэн. Хэмжсэн: «ЖИГҮҮР ЗАМ ХХК · АВЛАГА ЦУГЛУУЛАХ ·
+       2026-09-06» нь 390px дээр 25px-ээр таслагдаж «…» болдог байв. */
+@media (max-width: 480px) {
+  .top-live .top-live-text { display: none; }
+  .top-live .top-live-short { display: inline; }
+  .top-live { padding: 0 9px; gap: 6px; }
+  .jz-loc-date, .jz-loc-org { display: none; }
+}
+
 /* ---- Тооллогын доод тууз ----
    Урьд нь `fixed bottom-0 left-0 right-0` байсан нь дэлгэцийн БҮХ өргөнийг
    эзэлж, зүүн талын navy цэсийг доод талаас нь таслан хучиж байв: «Агуулах»
@@ -782,3 +848,28 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2p
    агуулгын баганад үлдээнэ — цэс хураагдсан (76px) эсвэл дэлгэгдсэн (262px)
    аль ч үед өөрөө тохирно, планшет дээр цэс drawer болоход ч зөв. */
 .stocktake-bar { background: rgba(255, 255, 255, .94); }
+
+/* ============================================================
+   ХУРУУНЫ ШАТ — Tailwind-ийн ХАТУУ «9» (36px) утилитуудыг шат руу татах
+   ------------------------------------------------------------
+   `!min-h-9`, `w-9 h-9` нь 15 файлын 39 газарт тарсан бөгөөд бүгд НЭГ санааны
+   хуулбар: «десктопын нягт үйлдэл». Хуруутай төхөөрөмж дээр тэр санааны ТОО
+   өөрчлөгддөг (`--target-sm` 36 → 44). Тоог 39 газар засахын оронд утилитыг
+   өөрийг нь шат руу заана — маргааш төрөх 40 дэх товч ч зөв төрнө.
+
+   ⚠ Энэ нь `@layer utilities` ДОТОР байх ЁСТОЙ. Tailwind-ийн `!min-h-9` нь
+   `!important`-той бөгөөд ДАВХАРГАД сууна; important дээр давхаргын эрэмбэ
+   УРВУУ тул давхаргагүй дүрэм түүнийг ХЭЗЭЭ Ч дарахгүй. Ижил давхарга дотор,
+   илүү өндөр тодорхойлолттой (элемент + анги) дүрэм л хожино.
+   ============================================================ */
+@layer utilities {
+  @media (pointer: coarse) {
+    :is(button, a, input, select, textarea, summary, [role="button"]):is(
+      .\!min-h-9, .min-h-9, .\!min-h-\[36px\], .min-h-\[36px\]) {
+      min-height: var(--target-sm) !important;
+    }
+    /* Квадрат товчнууд (InlineEdit-ийн ✓ ✕, тоо нэмэх/хасах) — хоёр талаараа */
+    :is(button, a, [role="button"]):is(.h-9, .\!h-9) { height: var(--target-sm) !important; }
+    :is(button, a, [role="button"]):is(.w-9, .\!w-9) { width: var(--target-sm) !important; }
+  }
+}

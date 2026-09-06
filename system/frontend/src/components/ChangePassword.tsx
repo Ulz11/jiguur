@@ -3,7 +3,12 @@ import { api } from "../api";
 import { FormModal, useToast } from "../ui";
 import { formDirty } from "../lib/dirty";
 
-export default function ChangePassword({ onClose }: { onClose: () => void }) {
+/** `onClose(changed)` — ХААГДСАН нь СОЛИГДСОН гэсэн үг БИШ.
+ *  Escape, «Болих», гадна товшилт гурвуулаа хаана; `changed` нь ЗӨВХӨН сервер
+ *  нууц үгийг үнэхээр сольсон үед үнэн болно (`lib/session.ts`
+ *  `mustChangeAfterClose`). Урьд нь дуудагч тал ялгаж чаддаггүй байсан тул
+ *  «анхны нууц үг хэвээр» гэсэн зурвас Escape дээр ч унтардаг байв. */
+export default function ChangePassword({ onClose }: { onClose: (changed?: boolean) => void }) {
   const toast = useToast();
   const f0 = { old_password: "", new_password: "", repeat: "" };
   const [f, setF] = useState(f0);
@@ -19,7 +24,7 @@ export default function ChangePassword({ onClose }: { onClose: () => void }) {
       await api("/api/auth/change-password", { method: "POST",
         body: JSON.stringify({ old_password: f.old_password, new_password: f.new_password }) });
       toast("Нууц үг солигдлоо");
-      onClose();
+      onClose(true);
     } catch (e: any) { toast(e.message, "err"); setBusy(false); }
   }
 
@@ -41,7 +46,9 @@ export default function ChangePassword({ onClose }: { onClose: () => void }) {
              onKeyDown={(e) => e.key === "Enter" && submit()} />
       {mismatch && <p id={`${uid}-mm`} className="text-danger text-[12px] mt-1.5">Таарахгүй байна</p>}
       <div className="flex justify-end gap-2.5 mt-6">
-        <button className="btn-secondary" onClick={onClose}>Болих</button>
+        {/* ⚠ `onClick={onClose}` БИШ: React товшилтын үйл явдлыг эхний аргумент
+            болгон дамжуулдаг тул «Болих» нь `changed`-ыг ҮНЭН болгож орхино. */}
+        <button className="btn-secondary" onClick={() => onClose()}>Болих</button>
         <button className="btn-primary" disabled={busy || !f.old_password || !f.new_password} onClick={submit}>
           {busy ? "…" : "Солих"}
         </button>

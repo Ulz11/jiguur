@@ -52,6 +52,9 @@ export const HER_ROUTES: HerRoute[] = [
   { path: '/reports', heading: 'Тайлан', action: '⇩ Excel татах' },
   { path: '/analytics', heading: 'Аналитик', action: 'Материалын өгөөж' },
   { path: '/audit', heading: 'Үйлдлийн бүртгэл', action: 'Үйлдлийн бүртгэлээс хайх' },
+  /* «Миний бүртгэл» — ИЖИЛ бие, зөвхөн «зөвхөн миний мөр» гэсэн ялгаа.
+     Бүх рольд нээлттэй тул Отгоогийнх нь энд бас алхана. */
+  { path: '/audit/mine', heading: 'Миний бүртгэл', action: 'Үйлдлийн бүртгэлээс хайх' },
   { path: '/settings', heading: 'Тохиргоо', action: '+ Материал нэмэх' },
 ];
 

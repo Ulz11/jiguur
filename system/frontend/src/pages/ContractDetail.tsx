@@ -21,6 +21,8 @@ import { daysVarianceText, lotDaysHint, lotDaysMax, lotOptions, materialSections
          overrideEffect, siteBreakdown, usedSites, MaterialSection } from "../lib/lots";
 import { penaltySplit, penaltyChargeRows, penaltyChargeTotal, UNCHARGED,
          chargeLabel, chargedTotal, laterLiveCharge } from "../lib/penalty";
+import { canEditMovementDate, canEditReturnDetail } from "../lib/edit";
+import { canOpen } from "../lib/guard";
 import { clientHref, invoiceAnchorId, materialHref } from "../lib/links";
 import { OPENING_LABEL, isOpeningRow, openingUntil } from "../lib/opening";
 import { daysBetween, todayIso } from "../lib/schedule";
@@ -689,7 +691,7 @@ export default function ContractDetail() {
                     {open && (
                       <tr id={pid}><td colSpan={seesMoney ? 6 : 4} className="td !bg-canvas !p-0">
                         <MaterialLedger sec={sec} sale={d.type === "sale"} seesMoney={seesMoney}
-                          canEdit={u?.role === "manager"} onEdit={gatedPatch}
+                          canEdit={u?.role === "manager"} role={u?.role} onEdit={gatedPatch}
                           onVoid={(mid) => setVoidMv(
                             d.movements.find((m: any) => m.id === mid))} />
                       </td></tr>
@@ -1022,7 +1024,11 @@ export default function ContractDetail() {
                     </div>
                   ) : (
                     <div id={mvPid} className="mt-1.5 rounded-2xl border border-line-strong p-3 bg-sunken/40">
-                      {u?.role === "manager" && (
+                      {/* ОГНОО — эзний зам, НЭГ УЧРААС бусад: ӨНӨӨДӨР ӨӨРӨӨ
+                          бүртгэсэн хүн өдрөө зөв болгоно (`mine_today` нь
+                          серверээс — `patch_movement`-ийн хаалгатай ЯГ нэг
+                          дүрэм тул үргэлж 403 болдог товч төрөхгүй). */}
+                      {canEditMovementDate(u?.role, !!mv.mine_today) && (
                         <div className="text-[12px] text-t2 inline-flex items-center gap-1.5 mb-2">
                           <span aria-hidden="true">Огноо:</span>
                           <InlineEdit type="date" label={`${mv.date} · ${mvName(mv.type)} — огноо`}
@@ -2033,13 +2039,17 @@ function VoidMovementModal({ mv, onClose, onDone, onRebuild }: {
    нэхэмжлэгдсэн циклд хүрвэл эхлээд зөрүүг харуулж, баталгаажуулсан үед л
    дахин бодно. Хөдөлгүүр татгалзвал (жишээ нь гадаа байгаагаас их буцаалт)
    серверийн монгол шалтгаан мэдэгдэл болж гарна. */
-function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit, onVoid }: {
+function MaterialLedger({ sec, sale, seesMoney, canEdit, role, onEdit, onVoid }: {
   sec: MaterialSection;
   sale: boolean;
   /** Даргад: тоо, огноо, падангийн ХАМААРАЛ, үлдэгдэл нь ажил тул ХЭВЭЭР;
    *  тариф/нэгж үнэ, засвар/актын дүн нь мөнгө тул багана нь ч байхгүй. */
   seesMoney: boolean;
+  /** ЦУЦЛАХ ба ТАРИФ — эзний зам (сервер ч тэгнэ). */
   canEdit: boolean;
+  /** БУЦААЛТЫН мөрийн ТОО нь бүртгэсэн хүнийхээ гарт үлдэнэ
+   *  (`lib/edit.canEditReturnDetail` — серверийн хаалгатай нэг дүрэм). */
+  role?: string | null;
   onEdit: (path: string, body: any, okMsg: string) => Promise<void>;
   /** Дэвтрийн мөрөөс хөдөлгөөнөө цуцлах — цонхыг гэрээний хуудас эзэмшинэ. */
   onVoid: (movementId: number) => void;
@@ -2117,7 +2127,7 @@ function MaterialLedger({ sec, sale, seesMoney, canEdit, onEdit, onVoid }: {
                 {ln.note ? <span className="block text-t3">{ln.note}</span> : null}
               </td>
               <td className={`${td} text-right tabular-nums whitespace-nowrap`}>
-                {canEdit ? (
+                {canEditReturnDetail(role, ln.type) ? (
                   <InlineEdit type="number" right width="w-20" label={`${name} — тоо`}
                     value={ln.qty} display={(issue ? "+" : "−") + fmt(ln.qty)}
                     confirmText="Тоо солих уу?"
@@ -2401,7 +2411,9 @@ function ReturnModal({ d, grades, seesMoney, prefill, onClose, onDone }: any) {
           /* Падан-сонгогч нь ХОЁР задгай падантай материал дээр л гарна:
              ганц падантай мөрөнд «аль падангаас» гэсэн асуулт нь хариултгүй
              чимээ (сонголт бүр нь шийдвэр гуйдаг). */
-          const pins = lotOptions(grp, date);
+          /* Даргын сонголтын мөрөнд ТАРИФ гарахгүй (`lib/lots.ts`) — түүний
+             дэлгэц дээр үнэ бусад бүх газарт хумигдсан байдаг. */
+          const pins = lotOptions(grp, date, undefined, seesMoney);
           const hint = rowHint(r);
           const maxDays = rowMax(r);
           const typed = rowDays(r);
@@ -3070,6 +3082,9 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
 }) {
   const toast = useToast();
   const uid = useId();
+  /* Каталогийн үнэ тогтоох зам нь ЗӨВХӨН менежерт нээлттэй (сервер ч,
+     чиглүүлэгч ч) — `Analytics.tsx`-тай ижил ганц шалгуур. */
+  const canPrice = canOpen("/settings", user()?.role);
   const [p, setP] = useState<ClosePreview | null>(null);
   const [closeDate, setCloseDate] = useState(today());
   const [at, setAt] = useState(0);
@@ -3272,12 +3287,21 @@ function CloseWizard({ d, grades, onClose, onDone, onReload, pdf }: {
                           <b className="text-violet">{money(r.sale_amount)}</b></>
                       ) : <b className="text-warn">үнэ тогтоогоогүй</b>}
                     </span>
+                    {/* ХААЛТТАЙ ХУУДАС РУУ ХОЛБООС ҮҮСГЭХГҮЙ (UI-ЗАРЧИМ §1).
+                        Тохиргоо нь ЗӨВХӨН менежерийнх — санхүүч энэ линк
+                        дээр дарвал Удирдлагын төв рүү шидэгдэж, юу хийхээ
+                        мэдэхгүй үлдэнэ. Түүнд ХЭН тогтоохыг л хэлнэ
+                        (`Analytics.tsx`-ийн `canPrice`-тай нэг журам). */}
                     {(r.nb_price <= 0 || r.sale_price <= 0) && (
                       <span className="block text-[13px] text-warn">
                         Бүртгэлийн үнэ (акт) ба худалдах үнийг{" "}
-                        <Link to="/settings" className="font-semibold underline">
-                          Тохиргоо → Материалын каталог
-                        </Link>{" "}дээр тогтооно.
+                        {canPrice ? (
+                          <>
+                            <Link to="/settings" className="font-semibold underline">
+                              Тохиргоо → Материалын каталог
+                            </Link>{" "}дээр тогтооно.
+                          </>
+                        ) : "Тохиргоо → Материалын каталог дээр тогтооно — менежерт хэлнэ үү."}
                       </span>
                     )}
                   </div>

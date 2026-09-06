@@ -164,7 +164,11 @@ export function Modal({ title, onClose, children, footer, wide, dirty, rescue }:
             <span className="text-[13.5px] font-medium text-danger flex-1 min-w-[180px]">
               Хаавал оруулсан мэдээлэл устна. Хаах уу?
             </span>
-            <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]" onClick={onClose}>Хаах</button>
+            {/* `onClick={onClose}` БИШ: React товшилтын үйл явдлыг эхний
+                аргумент болгон дамжуулна — «хаагдсан уу, амжилттай болсон уу»
+                гэдгийг аргументаараа ялгадаг дуудагч (ChangePassword) түүнийг
+                «болсон» гэж уншина. Хаалт нь ХООСОН дуудагдана. */}
+            <button className="btn-secondary !min-h-9 !py-1.5 !px-3 text-[13px]" onClick={() => onClose()}>Хаах</button>
             <button className="btn-primary !min-h-9 !py-1.5 !px-3 text-[13px]" autoFocus
                     onClick={() => setAskClose(false)}>Үргэлжлүүлэх</button>
           </div>

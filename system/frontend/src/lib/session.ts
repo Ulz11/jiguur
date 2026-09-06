@@ -56,12 +56,55 @@ export function takeSessionExpired(): boolean {
    Дүрэм нь ЦЭВЭР логик: серверийн `auth.py`-ийн ЯГ тэр хоёр тоо.
    ══════════════════════════════════════════════════════════════════════════ */
 
-/** Серверийн `TOKEN_TTL` — 12 цаг. */
+/** Серверийн `TOKEN_TTL` — 12 цаг (сервер өөр тоо хэлэхгүй бол). */
 export const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 /** Серверийн `REFRESH_AFTER` — токен 1 цагаас хөгширсөн үед л шинэчилнэ. */
 export const REFRESH_AFTER_MS = 60 * 60 * 1000;
 /** Хэдийн өмнө сануулах вэ — 10 минут (Отгоо гэрээгээ хадгалж амжина). */
 export const EXPIRY_WARN_MS = 10 * 60 * 1000;
+
+/* ХОЁР ТОО ХОЁР ГАЗАР БИЧИГДСЭН БАЙВАЛ ЗӨРНӨ.
+ *
+ * Дээрх тоонууд нь серверийн `auth.py`-ийн ХУУЛБАР. Нэг компьютер дээр тэр
+ * хуулбар үнэн байсан — хоёуланг нь нэг хүн нэг өдөр өөрчилдөг. Vercel дээр
+ * сервер нь ШИНЭ хувилбар руу шилжсэн ч браузер нь КЭШЛЭГДСЭН хуучин JS-ээ
+ * ажиллуулж болно: сервер 4 цагийн токен өгч байхад дэлгэц 12 гэж бодвол
+ * «шинэчлэх цаг болсон» гэж хэзээ ч шийдэхгүй → Отгоо ажлын дундуур
+ * гэнэт нэвтрэх хуудсан дээр очно.
+ *
+ * Тиймээс сервер хэлж чадвал СЕРВЕРИЙН тоог авна: `/api/auth/login`,
+ * `/api/auth/me`, `/api/auth/refresh` хариунд `token_ttl_seconds` /
+ * `refresh_after_seconds` байвал тэдгээрийг хадгалж хэрэглэнэ. Байхгүй бол
+ * (одоогийн сервер) дээрх анхдагчид хэвээр ажиллана. */
+
+export type TokenPolicy = { ttlMs: number; refreshAfterMs: number };
+
+/** Сервер юу ч хэлээгүй үеийн бодлого. */
+export const DEFAULT_POLICY: TokenPolicy = {
+  ttlMs: TOKEN_TTL_MS,
+  refreshAfterMs: REFRESH_AFTER_MS,
+};
+
+/** Эерэг тоо мөн үү (0, сөрөг, NaN, мөр бүгд «мэдэхгүй» гэсэн үг). */
+function positive(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/** Серверийн хариунаас бодлого гаргана — талбар бүр ТУСДАА уначихаж болно. */
+export function policyFrom(d: unknown, fallback: TokenPolicy = DEFAULT_POLICY): TokenPolicy {
+  const o = (d && typeof d === "object" ? d : {}) as Record<string, unknown>;
+  const ttl = positive(o.token_ttl_seconds);
+  const ref = positive(o.refresh_after_seconds);
+  return {
+    ttlMs: ttl === null ? fallback.ttlMs : ttl * 1000,
+    refreshAfterMs: ref === null ? fallback.refreshAfterMs : ref * 1000,
+  };
+}
+
+/** Хадгалсан (эсвэл анхдагч) бодлого. */
+export function tokenPolicy(): TokenPolicy {
+  return policyFrom(readSessionInfo());
+}
 
 /** ISO цагийг ms болгоно. Уншигдахгүй бол `null` — хуудас нь ТААМАГЛАХГҮЙ
  *  (буруу тоо нь «10 минут үлдлээ» гэсэн ХУДАЛ зурвас төрүүлнэ). */
@@ -72,15 +115,17 @@ export function parseExpiry(iso: string | null | undefined): number | null {
 }
 
 /** Токен ХЭДЭН ms настай вэ (`TTL − үлдсэн`). Мэдэгдэхгүй бол `null`. */
-export function tokenAge(expiresAt: number | null, now: number): number | null {
-  return expiresAt === null ? null : TOKEN_TTL_MS - (expiresAt - now);
+export function tokenAge(expiresAt: number | null, now: number,
+                         policy: TokenPolicy = tokenPolicy()): number | null {
+  return expiresAt === null ? null : policy.ttlMs - (expiresAt - now);
 }
 
 /** Одоо шинэчлэх үү. Серверийн 1 цагийн хаалттай ЯГ ижил — эс бөгөөс дэлгэц
  *  хүсэлт бүрд `refresh` дуудаж, сервер бүр удаа «үгүй» гэж хариулна. */
-export function shouldRefresh(expiresAt: number | null, now: number): boolean {
-  const age = tokenAge(expiresAt, now);
-  return age !== null && age >= REFRESH_AFTER_MS;
+export function shouldRefresh(expiresAt: number | null, now: number,
+                              policy: TokenPolicy = tokenPolicy()): boolean {
+  const age = tokenAge(expiresAt, now, policy);
+  return age !== null && age >= policy.refreshAfterMs;
 }
 
 /** Хэдэн минут үлдэв (дээш нь бүхэлчилнэ: «0 минут» гэж хэлэхгүй). */
@@ -171,12 +216,28 @@ export function dropDraft(): void {
  */
 const INFO_KEY = "jz_session";
 
-export type SessionInfo = { token_expires_at?: string; must_change_password?: boolean };
+export type SessionInfo = {
+  token_expires_at?: string;
+  must_change_password?: boolean;
+  /** Серверийн хэлсэн токены нас (секунд) — байхгүй бол `TOKEN_TTL_MS`. */
+  token_ttl_seconds?: number;
+  /** Серверийн хэлсэн шинэчлэх хаалга (секунд) — байхгүй бол `REFRESH_AFTER_MS`. */
+  refresh_after_seconds?: number;
+};
+
+/** `undefined` талбарыг ХАЯНА — «энэ удаа хэлээгүй» нь «устга» гэсэн үг БИШ.
+ *  (Хуучин сервер `token_ttl_seconds` илгээхгүй; түүнээс болж өмнө нь мэдэж
+ *   байсан утга алга болох ёсгүй.) */
+function known(info: SessionInfo): SessionInfo {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(info)) if (v !== undefined) out[k] = v;
+  return out as SessionInfo;
+}
 
 export function saveSessionInfo(info: SessionInfo): void {
   try {
     const prev = readSessionInfo() || {};
-    localStorage.setItem(INFO_KEY, JSON.stringify({ ...prev, ...info }));
+    localStorage.setItem(INFO_KEY, JSON.stringify({ ...prev, ...known(info) }));
   } catch { /* санах ой хаалттай — дэлгэц `/api/auth/me` рүү унана */ }
 }
 
@@ -191,4 +252,17 @@ export function readSessionInfo(): SessionInfo | null {
 
 export function clearSessionInfo(): void {
   try { localStorage.removeItem(INFO_KEY); } catch { /* үл ойшоох */ }
+}
+
+/* ---------- «АНХНЫ НУУЦ ҮГ ХЭВЭЭР» гэсэн зурвасын АМЬДРАЛ ----------
+   Нууц үг солих цонх хаагдахад бүрхүүл нь `must_change_password: false`-ыг
+   ХАДГАЛДАГ байв. Гэвч цонх нь ГУРВАН замаар хаагддаг — Escape, «Болих»,
+   гадна товшилт — тэдгээрийн аль нь ч нууц үгийг СОЛИХГҮЙ. Үр дүнд нь
+   Отгоо цонхыг санамсаргүй нээгээд Escape дархад сануулга бүтэн сессийн
+   турш чимээгүй унтарч, /audit-ийн «Хэн» багана утгагүй хэвээр үлдэнэ
+   (гурван хүн бүгд «1234»).
+
+   Тиймээс шийдвэрийг ГАНЦ асуулт болгож нэрлэв: ХААГДСАН уу, СОЛИГДСОН уу. */
+export function mustChangeAfterClose(mustChange: boolean, changed: boolean): boolean {
+  return changed ? false : mustChange;
 }

@@ -11,6 +11,7 @@ import { rowClickProps } from "../lib/rowClick";
 import { clientHref } from "../lib/links";
 import { UNCHARGED } from "../lib/penalty";
 import { receivableSplit, uninvoicedLine } from "../lib/receivable";
+import { oversizeMessage } from "../lib/upload";
 
 /** Импортын хариу — нэрсээ авч явна (`routers/reports.import_clients`). */
 type ImportResult = { added_names?: string[]; skipped_names?: string[];
@@ -62,6 +63,11 @@ export default function Clients() {
   async function importFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
+    /* Импортын Excel нь 4 MB-аас том байвал Vercel түүнийг функц хүртэл
+       хүргэлгүй 413-аар буцаана — «Алдаа гарлаа» гэхийн оронд ЯГ ЮУ
+       болсныг нь энд хэлнэ (`lib/upload.ts`). */
+    const tooBig = oversizeMessage(f.size);
+    if (tooBig) { toast(tooBig, "err"); e.target.value = ""; return; }
     const fd = new FormData();
     fd.append("file", f);
     try {

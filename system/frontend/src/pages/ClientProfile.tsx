@@ -26,6 +26,7 @@ import { rowClickProps } from "../lib/rowClick";
 import { contractHref } from "../lib/links";
 import { contractCount, contractNoLabel, contractTitle, isOpeningRow, openingUntil,
          partnerSince } from "../lib/opening";
+import { ATTACH_ACCEPT, oversizeMessage } from "../lib/upload";
 import { dueLabel, todayIso } from "../lib/schedule";
 import { penaltySplit, UNCHARGED } from "../lib/penalty";
 import { uninvoicedLine } from "../lib/receivable";
@@ -143,7 +144,13 @@ export default function ClientProfile() {
 
   async function upload(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
+    e.target.value = "";                       // ижил файлыг дахин сонгож болно
     if (!f) return;
+    /* ХААЛГА НЬ ЭНД. Сервер рүү 7 MB зураг явуулбал Vercel нь функц хүртэл
+       хүргэлгүй 413-аар буцаана — тэр нь дэлгэц дээр «Алдаа гарлаа» болж
+       хувирна (`lib/upload.ts`). */
+    const tooBig = oversizeMessage(f.size);
+    if (tooBig) { toast(tooBig, "err"); return; }
     const fd = new FormData();
     fd.append("file", f);
     try {
@@ -186,16 +193,29 @@ export default function ClientProfile() {
                 : d.name}
               <span className={state.cls}>{state.label}</span>
             </h1>
+            {/* ГУРВАН ТАЛБАР нь ДАРГАД ЗАСАГДАХГҮЙ (сервер: `PUT /api/clients/{id}`
+                нь менежер + санхүүчийнх). Урьд нь тасархай зураас нь түүнд ч
+                зурагдаж байв: дарж, шинэ утга бичиж, ✓ дараад л улаан зурвас
+                уншина — үргэлж 403 болдог товч бол худал амлалт. Одоо ЖИРИЙН
+                ТЕКСТ: тоо нь хэвээр уншигдана, зөвхөн хаалга нь алга.
+                Хоосон утга «—» болно — засварын горимын «…» нь дарагдахгүй
+                зүйл дээр «энд юм байна» гэж хуурна. */}
             <div className="text-[13px] text-t2 mt-1.5 flex gap-x-4 gap-y-1.5 flex-wrap items-center">
               <span className="inline-flex items-center gap-1.5">Регистр:
-                <InlineEdit label="Регистр" value={d.reg} width="w-28" confirmText="Хадгалах уу?"
-                  onSave={(v) => saveClient("Регистр", { reg: v })} /></span>
+                {seesMoney
+                  ? <InlineEdit label="Регистр" value={d.reg} width="w-28" confirmText="Хадгалах уу?"
+                      onSave={(v) => saveClient("Регистр", { reg: v })} />
+                  : <b className="text-t1">{d.reg || "—"}</b>}</span>
               <span className="inline-flex items-center gap-1.5">Хариуцагч:
-                <InlineEdit label="Хариуцагч" value={d.person} width="w-36" confirmText="Хадгалах уу?"
-                  onSave={(v) => saveClient("Хариуцагч", { person: v })} /></span>
+                {seesMoney
+                  ? <InlineEdit label="Хариуцагч" value={d.person} width="w-36" confirmText="Хадгалах уу?"
+                      onSave={(v) => saveClient("Хариуцагч", { person: v })} />
+                  : <b className="text-t1">{d.person || "—"}</b>}</span>
               <span className="inline-flex items-center gap-1.5">Утас:
-                <InlineEdit label="Утас" value={d.phone} width="w-32" confirmText="Хадгалах уу?"
-                  onSave={(v) => saveClient("Утас", { phone: v })} /></span>
+                {seesMoney
+                  ? <InlineEdit label="Утас" value={d.phone} width="w-32" confirmText="Хадгалах уу?"
+                      onSave={(v) => saveClient("Утас", { phone: v })} />
+                  : <b className="text-t1">{d.phone || "—"}</b>}</span>
               {/* «Хамтран ажилласан» нь ХАРИЛЦААНЫ нас — системд бүртгүүлсэн
                   өдөр биш. Шилжүүлсэн харилцагч бүрд бүртгэлийн огноо нь
                   ачаалсан өдөр (2026-09-04) тул хоёр жилийн түнш «өнөөдөр
@@ -207,11 +227,18 @@ export default function ClientProfile() {
                   <b className="text-t1">{partnerSince(d.contracts)}-с</b></span>
               )}
             </div>
+            {/* Тэмдэглэл нь ЯГ ижил хаалганы цаана (`PUT /api/clients/{id}`) —
+                даргад уншигдана, засагдахгүй. Хоосон бол мөр нь ОГТ гарахгүй:
+                «тэмдэглэл нэмэх…» гэдэг нь ажиллахгүй урилга. */}
+            {(seesMoney || d.note) && (
             <div className="mt-2.5 text-[12.5px] text-t2 inline-flex items-center gap-2">💬
-              <InlineEdit label="Тэмдэглэл" value={d.note} display={d.note || "тэмдэглэл нэмэх…"} width="w-80"
-                confirmText="Хадгалах уу?"
-                onSave={(v) => saveClient("Тэмдэглэл", { note: v })} />
+              {seesMoney
+                ? <InlineEdit label="Тэмдэглэл" value={d.note} display={d.note || "тэмдэглэл нэмэх…"} width="w-80"
+                    confirmText="Хадгалах уу?"
+                    onSave={(v) => saveClient("Тэмдэглэл", { note: v })} />
+                : <span className="text-t1">{d.note}</span>}
             </div>
+            )}
           </div>
           {/* Дөрвөн үзүүлэлт нэг мөрөнд багтах ёстой тул гол тоо нь «сая»-гаараа
               үлдэнэ — гэхдээ АВЛАГА ярихад «12.3 сая» гэдэг хангалтгүй: залгаж
@@ -690,17 +717,22 @@ export default function ClientProfile() {
                   <b className="text-[13.5px] text-ink block truncate">{f.filename}</b>
                   <span className="text-[12px] text-t3">{(f.size / 1024).toFixed(0)} KB · {f.uploaded_at}</span>
                 </div>
-                {/* Татахад сервер алдаа буцаавал өмнө нь алдааны JSON нь
-                    файлын нэрээр диск рүү бууж, юу болсон нь мэдэгдэхгүй байв. */}
-                <a className="btn-ghost ml-auto !min-h-9" href={`/api/files/dl/${f.id}`}
+                {/* ТОВЧ, холбоос БИШ. Татахад сервер алдаа буцаавал өмнө нь
+                    алдааны JSON нь файлын нэрээр диск рүү бууж, юу болсон нь
+                    мэдэгдэхгүй байв — тиймээс `dl.download` токентой явуулна.
+                    Гэвч `<a href>` хэвээр байхад дундах товшилт / «шинэ табд
+                    нээх» нь тэр токенгүйгээр очиж 401 иргэдэг: хавсралт
+                    «алга болсон» мэт харагдана. Товч дээр тэр зам байхгүй. */}
+                <button type="button" className="btn-ghost ml-auto !min-h-9"
                    aria-busy={dl.busyPath === `/api/files/dl/${f.id}` || undefined}
-                   onClick={(e) => { e.preventDefault(); dl.download(`/api/files/dl/${f.id}`, f.filename); }}>
+                   onClick={() => dl.download(`/api/files/dl/${f.id}`, f.filename)}>
                   {dl.busyPath === `/api/files/dl/${f.id}` ? "Татаж байна…" : "Татах"}
-                </a>
+                </button>
               </div>
             ))}
             {d.files.length === 0 && <Empty title="Хавсралт алга" sub="Гэрээний скан, падангийн зураг зэргийг энд хадгална." />}
-            <input type="file" ref={fileRef} className="hidden" onChange={upload} />
+            <input type="file" ref={fileRef} className="hidden" accept={ATTACH_ACCEPT}
+                   onChange={upload} />
             <button className="btn-secondary mt-4" onClick={() => fileRef.current?.click()}>+ Файл хавсаргах</button>
           </div>
         )}
@@ -1206,10 +1238,10 @@ function TimelineCalendar({ events, money = true }: { events: TLEvent[]; money?:
       <div className="flex items-center justify-between mb-3">
         {/* ‹ › нь дүрс дээрээ л ярьдаг — хаашаа очихыг нь нэрэндээ агуулна */}
         <button onClick={() => go(-1)} aria-label={`Өмнөх сар — ${monthLabelMN(prev.year, prev.month)}`}
-          className="w-10 h-10 rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand-ink text-lg font-bold transition">‹</button>
+          className="cal-nav rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand-ink text-lg font-bold transition">‹</button>
         <b className="text-[14px] text-ink font-bold tabular-nums" aria-live="polite">{monthLabelMN(view.year, view.month)}</b>
         <button onClick={() => go(1)} aria-label={`Дараах сар — ${monthLabelMN(next.year, next.month)}`}
-          className="w-10 h-10 rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand-ink text-lg font-bold transition">›</button>
+          className="cal-nav rounded-lg grid place-items-center text-t2 hover:bg-brand-50 hover:text-brand-ink text-lg font-bold transition">›</button>
       </div>
 
       {/* Гарагийн толгой */}

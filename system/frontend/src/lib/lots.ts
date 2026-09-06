@@ -162,8 +162,13 @@ export function materialSections(items: ItemRow[], groups: LedgerGroup[]): Mater
    гаргадаг ч сонголтын мөр бүрд тусад нь асуух зам байхгүй. Мөр өөрөө нь
    хассан тоог БУЦААЖ нэмнэ — эс бөгөөс өөрийн хаасан паданг «хоосон» гэж
    уншиж, тэр мөр сонгогчоосоо алга болно. */
+/** `seesMoney` — ҮЙЛДВЭРИЙН ДАРГАД ТАРИФ ГАРАХГҮЙ.
+ *  Түүний дэлгэц дээр тариф хаа сайгүй хумигдсан байхад ЯГ энэ сонголтын мөр
+ *  «#13 · 2026-08-12 · 110₮ · 165ш үлдсэн» гэж үнийг ил гаргадаг байв. Падан нь
+ *  түүний хувьд ДУГААР ба ОГНООгоороо танигдана; тариф нь тэр шийдвэрт хэрэггүй. */
 export function lotOptions(group: { lines?: LedgerLine[] } | undefined | null,
-                           onDate: string, selfLineId?: number): [string, string][] {
+                           onDate: string, selfLineId?: number,
+                           seesMoney = true): [string, string][] {
   const out: [string, string][] = [["0", "Авто — эхлээд хуучнаас"]];
   const lines = group?.lines || [];
   const taken = new Map<number, number>();
@@ -178,8 +183,10 @@ export function lotOptions(group: { lines?: LedgerLine[] } | undefined | null,
     const left = ln.qty - (taken.get(ln.id) || 0);
     if (left <= 0) continue;
     const rate = ln.rate != null ? `${Math.round(ln.rate).toLocaleString("en-US")}₮` : "—";
+    const left_ = `${Math.round(left).toLocaleString("en-US")}ш үлдсэн`;
     out.push([String(ln.id),
-              `#${ln.id} · ${ln.date} · ${rate} · ${Math.round(left).toLocaleString("en-US")}ш үлдсэн`]);
+              seesMoney ? `#${ln.id} · ${ln.date} · ${rate} · ${left_}`
+                        : `#${ln.id} · ${ln.date} · ${left_}`]);
   }
   return out;
 }

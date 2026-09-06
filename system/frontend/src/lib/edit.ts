@@ -26,3 +26,43 @@ export function editKeyAction(key: string, mode: EditMode, busy = false): EditKe
   // Сервер хариу нэхэж байх хоромд дарсан Enter нэг засварыг хоёр удаа явуулна
   return busy ? "none" : "commit";
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ХЭН ЮУГ ЗАСАХ ВЭ — дэлгэц ба серверийн НЭГ ДҮРЭМ.
+
+   «Үргэлж 403 болдог товч» бол худал амлалт: дарга талбай дээр ✎ дарж,
+   тоогоо бичээд, ✓ дарж, улаан зурвас уншина. Тиймээс эдгээр нь серверийн
+   хаалгуудтай (`routers/contracts.py: patch_movement_line`, `patch_movement`,
+   `routers/machines.py: _own_log`) ҮГЧЛЭН ижил байх ёстой — цэвэр функц тул
+   хоёр талыг зэрэг уншиж болно.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+type Role = string | null | undefined;
+
+/** БУЦААЛТЫН мөрийн тоо, засвар/акт, зэрэглэл, падан, гар хоног.
+ *
+ *  Талбай дээр «40ш» гэж бичээд 38 байсныг олж мэдэх нь өдөр бүрийн явдал —
+ *  тэр мөрийг бүртгэсэн хүн өөрөө зална. ОЛГОЛТЫН мөр (падан төрүүлдэг,
+ *  тарифтай) нь эзнийх хэвээр. */
+export function canEditReturnDetail(role: Role, movementType: string): boolean {
+  if (role === "manager") return true;
+  return role === "factory" && movementType === "RETURN";
+}
+
+/** ТАРИФ / нэгж үнэ — МӨНГӨ. Зураас хэвээр. */
+export function canEditRate(role: Role): boolean {
+  return role === "manager";
+}
+
+/** ХӨДӨЛГӨӨНИЙ ОГНОО — эзний зам, НЭГ УЧРААС бусад: өнөөдөр ӨӨРӨӨ
+ *  бүртгэсэн хүн өдрөө зөв болгоно (маргааш нь тэр мөр түүх болно). */
+export function canEditMovementDate(role: Role, mineToday: boolean): boolean {
+  return role === "manager" || (role === "factory" && mineToday);
+}
+
+/** МЕХАНИЗМЫН бүртгэлийн мөр — засах, устгах. Мөнгөний эзэд үргэлж;
+ *  дарга нь ӨНӨӨДӨР ӨӨРИЙН бичсэн мөрөн дээр. */
+export function canEditMachineLog(role: Role, mineToday: boolean): boolean {
+  return role === "manager" || role === "finance"
+    || (role === "factory" && mineToday);
+}

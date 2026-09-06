@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { isSessionExpiry, markSessionExpired, takeSessionExpired,
          parseExpiry, tokenAge, shouldRefresh, minutesLeft, expiryWarning,
          keepDraft, takeDraft, dropDraft,
-         TOKEN_TTL_MS, REFRESH_AFTER_MS, EXPIRY_WARN_MS, DRAFT_TTL_MS } from "./session";
+         policyFrom, DEFAULT_POLICY,
+         TOKEN_TTL_MS, REFRESH_AFTER_MS, EXPIRY_WARN_MS, DRAFT_TTL_MS,
+         mustChangeAfterClose } from "./session";
 
 /* Отгоо гэрээ бөглөж байтал токен нь хүчингүй болж, нэвтрэх хуудас руу
    шидэгддэг. Тайлбар нь ЯГ НЭГ УДАА гарч ирээд арилах ёстой — эс бөгөөс
@@ -163,5 +165,74 @@ describe("цонхны ноорог", () => {
     expect(() => keepDraft("pay", "/x", { a: 1 })).not.toThrow();
     expect(takeDraft("pay", "/x")).toBeNull();
     expect(() => dropDraft()).not.toThrow();
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ХОЁР ТООГ СЕРВЕР ХЭЛНЭ
+
+   `TOKEN_TTL_MS`/`REFRESH_AFTER_MS` нь серверийн `auth.py`-ийн ХУУЛБАР.
+   Сервер хэлж чадвал түүнийхийг авна — эс бөгөөс кэшлэгдсэн хуучин JS нь
+   4 цагийн токеныг 12 гэж бодоод хэзээ ч шинэчлэхгүй.
+   ══════════════════════════════════════════════════════════════════════════ */
+describe("токены бодлого", () => {
+  it("сервер юу ч хэлээгүй бол анхдагч", () => {
+    expect(policyFrom(null)).toEqual(DEFAULT_POLICY);
+    expect(policyFrom({})).toEqual(DEFAULT_POLICY);
+    expect(policyFrom("хог")).toEqual(DEFAULT_POLICY);
+  });
+
+  it("серверийн секундыг ms болгоно", () => {
+    expect(policyFrom({ token_ttl_seconds: 4 * 3600, refresh_after_seconds: 900 }))
+      .toEqual({ ttlMs: 4 * 3600_000, refreshAfterMs: 900_000 });
+  });
+
+  it("нэг талбар л ирсэн бол нөгөө нь анхдагч хэвээр", () => {
+    expect(policyFrom({ token_ttl_seconds: 3600 }))
+      .toEqual({ ttlMs: 3600_000, refreshAfterMs: REFRESH_AFTER_MS });
+  });
+
+  it("утгагүй тоог (0, сөрөг, мөр) ҮЛ ТОО — тэдгээр нь бүх сессийг унтраана", () => {
+    for (const bad of [0, -5, NaN, "3600", null, {}]) {
+      expect(policyFrom({ token_ttl_seconds: bad })).toEqual(DEFAULT_POLICY);
+    }
+  });
+
+  it("серверийн бодлого нь насыг ӨӨРӨӨР тоолно", () => {
+    const NOW = Date.UTC(2026, 0, 15, 10, 0, 0);
+    const short = policyFrom({ token_ttl_seconds: 3600, refresh_after_seconds: 600 });
+
+    // Сервер 1 цагийн токен өгсөн, 55 минут үлдсэн → 5 минут настай: хэрэггүй
+    const fresh = NOW + 55 * 60_000;
+    expect(tokenAge(fresh, NOW, short)).toBe(5 * 60_000);
+    expect(shouldRefresh(fresh, NOW, short)).toBe(false);
+    /* ЯГ ТЭР агшинд 12 цагийн ХУУЛБАР нь токеныг 11 цаг настай гэж боддог —
+       товшилт бүрд `refresh` дуудна. Тоог сервер хэлэх шалтгаан нь ЭНЭ. */
+    expect(shouldRefresh(fresh, NOW, DEFAULT_POLICY)).toBe(true);
+
+    // 45 минут үлдсэн → 15 минут настай: серверийн 10 минутын хаалга нээгдэв
+    const old = NOW + 45 * 60_000;
+    expect(shouldRefresh(old, NOW, short)).toBe(true);
+  });
+});
+
+/* «АНХНЫ НУУЦ ҮГ ХЭВЭЭР» ГЭСЭН ЗУРВАС — ХААХ нь СОЛИХ БИШ.
+   Нууц үг солих цонх ГУРВАН замаар хаагддаг (Escape, «Болих», гадна товшилт);
+   гурвуулаа нууц үгийг хөндөхгүй. Гэвч бүрхүүл нь хаагдмагц
+   `must_change_password: false`-ыг ХАДГАЛДАГ байв: Отгоо цонхыг санамсаргүй
+   нээгээд Escape дархад сануулга бүтэн сессийн турш чимээгүй унтарна —
+   /audit-ийн «Хэн» багана утгагүй хэвээр (гурван хүн бүгд «1234»). */
+describe("нууц үгийн сануулга — цонх хаагдсаны дараа", () => {
+  it("Escape / «Болих» нь зурвасыг ҮЛДЭЭНЭ", () => {
+    expect(mustChangeAfterClose(true, false)).toBe(true);
+  });
+
+  it("нууц үг ҮНЭХЭЭР солигдсон үед л унтарна", () => {
+    expect(mustChangeAfterClose(true, true)).toBe(false);
+  });
+
+  it("зурвасгүй хүн дээр юу ч асуухгүй", () => {
+    expect(mustChangeAfterClose(false, false)).toBe(false);
+    expect(mustChangeAfterClose(false, true)).toBe(false);
   });
 });

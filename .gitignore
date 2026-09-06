@@ -32,6 +32,12 @@ docs/Тулгалтын тайлан.html
 system/frontend/node_modules/
 system/frontend/tsconfig.tsbuildinfo
 
+# Build-ийн ГАРАЛТ — эх код БИШ. Vercel нь `npm run build`-ыг өөрөө гүйцэтгэнэ,
+# локал дээр backend нь `npm --prefix system/frontend run build` хийсний дараа
+# энэ хавтсыг үйлчилдэг (docs/Байршуулалт.md → «Локал ажиллагаа»).
+# Git дотор байлгах нь мөргөлдөөн (нэг мөр засахад 2 MB-ийн diff) төрүүлдэг.
+system/frontend/dist/
+
 # graphify knowledge-graph output (томоохон artifact — дахин үүсгэж болно)
 graphify-out/
 

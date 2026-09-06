@@ -1,0 +1,4 @@
+# Vercel-ийн Python runtime нь хамаарлаа ТӨСЛИЙН ҮНДЭС дэх энэ файлаас уншина
+# (https://vercel.com/docs/functions/runtimes/python — «Dependencies»).
+# Жинхэнэ жагсаалт нь backend-ийн дэргэд амьдарна — хоёр газар давхардуулахгүй.
+-r system/backend/requirements.txt

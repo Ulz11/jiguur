@@ -7,6 +7,7 @@ import { disclosureProps } from "../lib/disclosure";
 import { useScope, ScopeSwitch } from "../App";
 import { useLive } from "../lib/live";
 import { rowClickProps } from "../lib/rowClick";
+import { isTouchDevice } from "../lib/touch";
 import { clientHref, contractHref, contractsHref, flaggedHref, invoiceHref,
          notificationHref, notificationKey } from "../lib/links";
 import { shipmentOutcome } from "../lib/outcome";
@@ -56,6 +57,9 @@ export default function Dashboard() {
   const nav = useNavigate();
   const u = user();
   const isFactory = u?.role === "factory";
+  /* ХУРУУ юу, хулгана юу — рендер тутамд ижил хариу (`matchMedia`). Энэ нь
+     ролийн шийдвэр БИШ: планшет дээр сууж байгаа ХЭН Ч 52px авна. */
+  const coarse = isTouchDevice();
 
   /** Даргын ажлын дараалал — гадаа материалтай, идэвхтэй ТҮРЭЭСийн гэрээнүүд.
    *  Хамгийн их барааг барьж байгаа гэрээ дээр эхэлж очно. */
@@ -186,7 +190,12 @@ export default function Dashboard() {
     : d.notifications;
 
   /** Ачилт хүлээгдэж буй — даргын гол ажил. `touch` горимд мөр том, товч нь
-   *  анхаарлын товч болж 52px өндөр (планшетаар хуруугаар дардаг). */
+   *  анхаарлын товч болж 52px өндөр (планшетаар хуруугаар дардаг).
+   *
+   *  ⚠ `touch` нь ТӨХӨӨРӨМЖӨӨС гарна, РОЛИОС биш (`lib/touch.ts`). Урьд нь
+   *  даргын салаа `true`, Отгоогийнх `false` гэж ХАТУУ бичигдсэн байв: Отгоо
+   *  эгч iPad-аараа ачилт баталгаажуулахад 36px-ийн товч гарч ирнэ — ЯГ тэр
+   *  36px-ийг бид «хуруунд болохгүй» гэж шийдсэн (UI-ЗАРЧИМ §4). */
   const shipmentsCard = (touch: boolean) => (
     <div className="card p-5">
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
@@ -429,7 +438,7 @@ export default function Dashboard() {
       </div>
       {outcome && <OutcomeStrip text={outcome} onClose={() => setOutcome(null)} />}
       <div className="work-queue">
-        {shipmentsCard(true)}
+        {shipmentsCard(coarse)}
         {returnQueueCard}
       </div>
       {notificationsCard}
@@ -452,7 +461,12 @@ export default function Dashboard() {
              scope === "rent" ? "Зөвхөн түрээсийн үзүүлэлтүүд." : "Зөвхөн худалдааны үзүүлэлтүүд."}
           </p>
         </div>
-        <Link to="/contracts/new" className="btn-primary command-action">+ Шинэ гэрээ</Link>
+        {/* ШИНЭ ГЭРЭЭ нь ЗӨВХӨН менежерийнх (сервер: `POST /api/contracts`).
+            Санхүүчид энэ товч гарч байсан: дарж, харилцагч, материал, тариф
+            бөглөж дуустлаа явуулаад л 403 иднэ — бөглөсөн зүйл нь замдаа
+            үлдэнэ. `lib/guard.ts` мөн `/contracts/new`-ийг хаана. */}
+        {u?.role === "manager" &&
+          <Link to="/contracts/new" className="btn-primary command-action">+ Шинэ гэрээ</Link>}
       </div>
 
       {/* Түрээс/Худалдаа — доорх БҮХ тоог сольдог шийдвэр тул тэдгээрийн ЯГ
@@ -809,7 +823,7 @@ export default function Dashboard() {
       {/* Notifications + pending + loans */}
       <div className="dashboard-operations">
         {notificationsCard}
-        {shipmentsCard(false)}
+        {shipmentsCard(coarse)}
         <div className="card p-5">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-bold text-ink text-[15.5px]">Зээлийн ойрын төлөлт</h2>

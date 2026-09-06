@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Poller, dialogOpen, live, liveText, liveTitle, liveTone,
+import { Poller, dialogOpen, live, liveText, liveShort, liveTitle, liveTone,
          clockLabel, minutesSince, DOWN_AFTER } from "./live";
 
 // Тайлангууд өөрсдөө шинэчлэгдэнэ (X3). Poller нь ХЭЗЭЭ дахин татахыг шийддэг
@@ -135,5 +135,25 @@ describe("амьд төлөвийн дэлгүүр", () => {
     expect(live.retry()).toBe(true);
     expect(called).toBe(1);
     live.setRetry(null);
+  });
+});
+
+/* УТСАН ДЭЭРХ ХУРААНГУЙ (≤480px). Бүтэн өгүүлбэр нь тэр өргөнд ороогүй тул
+   НУУГДАЖ, заагч нь 26px өргөн ЦЭГ болж хоцордог байв — цэг дангаараа ЮУ Ч
+   хэлэхгүй. Одоо ЦАГ нь үлдэнэ; унасан төлөв ҮГЭЭ авч явна (өнгө дангаараа
+   утга зөөхгүй, §4). */
+describe("liveShort — утсан дээрх хураангуй", () => {
+  const T = new Date(2026, 8, 6, 14, 3).getTime();
+
+  it("хэвийн үед ЗӨВХӨН цаг", () => {
+    expect(liveShort({ okAt: T, fails: 0 }, T)).toBe(clockLabel(T));
+    expect(liveShort({ okAt: T, fails: 0 }, T)).toBe("14:03");
+  });
+
+  it("унасан төлөв нь ҮГТЭЙ хэвээр — өнгө дангаараа утга зөөхгүй", () => {
+    expect(liveShort({ okAt: T, fails: DOWN_AFTER }, T)).toBe("тасарсан");
+    expect(liveShort({ okAt: T, fails: 1 }, T + 4 * 60_000)).toBe("4 мин");
+    expect(liveShort({ okAt: null, fails: 1 }, T)).toBe("хоцорсон");
+    expect(liveShort({ okAt: null, fails: 0 }, T)).toBe("…");
   });
 });

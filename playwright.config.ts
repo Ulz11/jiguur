@@ -72,19 +72,24 @@ export default defineConfig({
      100 гаруй «алгасав» мөрөөр дүүрч, жинхэнэ тоо алга болно — тиймээс
      хамрах хүрээг проект дээрээ, НЭГ мөрөөр зарлана. */
   projects: [
+    /* Энэ проект нь ХЭМЖҮҮРГҮЙ (анхдагч 1280×720) — тиймээс өөрийн хэмжээгээ
+       `test.use`-аар зарладаг `her/phone-shell.spec.ts` (утас, 390×844) ЭНД
+       гүйнэ. Доорх гурав нь тус бүрдээ ТОГТСОН хэмжүүртэй: тэдний дээр
+       «утсан дээр багтав» гэдэг нь юу ч гэрчлэхгүй тул алгасана. */
     { name: 'chromium', use: { ...devices['Desktop Chrome'] },
       testIgnore: ['**/her/fits-her-screen.spec.ts', '**/her/targets.spec.ts'] },
     /* Отгоогийн ЖИНХЭНЭ дэлгэц. 1366×768 дээр л таслагддаг зүйлс (13 мөрт цэс,
        KPI-н мөр) энэ проектоор баригдана — «миний дээр болж байна» гэдэг
        хангалтгүй. */
     { name: 'otgoo-1366', use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 768 } },
-      testIgnore: ['**/her/targets.spec.ts'] },
+      testIgnore: ['**/her/targets.spec.ts', '**/her/phone-shell.spec.ts'] },
     /* Даргын планшет — touch, iPad (WebKit). */
     { name: 'darga-tablet', use: { ...devices['iPad (gen 7)'] },
-      testIgnore: ['**/her/fits-her-screen.spec.ts'] },
+      testIgnore: ['**/her/fits-her-screen.spec.ts', '**/her/phone-shell.spec.ts'] },
     /* Safari/WebKit — Mac дээр ажиллана (`~/Library/Caches/ms-playwright/webkit-*`). */
     { name: 'webkit', use: { ...devices['Desktop Safari'] },
-      testIgnore: ['**/her/fits-her-screen.spec.ts', '**/her/targets.spec.ts'] },
+      testIgnore: ['**/her/fits-her-screen.spec.ts', '**/her/targets.spec.ts',
+                   '**/her/phone-shell.spec.ts'] },
   ],
 
   webServer: {
@@ -113,6 +118,12 @@ export default defineConfig({
       JIGUUR_NO_CRON: '1',
       JIGUUR_BACKUP_DIR: path.join(E2E_DIR, 'backups'),
       JIGUUR_SECRET: 'jiguur-e2e-secret',
+      /* Vercel рүү шилжсэнээс хойш `app.main`-ийг импортлоход ЮУ Ч үүсдэггүй
+         (create_all/seed нь тусдаа CLI). Тестийн сервер л хоосон түр DB дээрээ
+         өөрөө схемээ үүсгэж, ДЕМО seed-ээ тарина — үйлдвэрлэлд энэ хоёр туг
+         ХЭЗЭЭ Ч тавигдахгүй. */
+      JIGUUR_AUTO_INIT: '1',
+      JIGUUR_SEED_DEMO: '1',
     },
   },
 });

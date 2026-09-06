@@ -29,6 +29,30 @@ describe("хаалттай зам", () => {
     }
   });
 
+  it("ШИНЭ ГЭРЭЭ нь ЗӨВХӨН менежерийнх — сервер ч тэгдэг", () => {
+    expect(canOpen("/contracts/new", "manager")).toBe(true);
+    expect(canOpen("/contracts/new", "finance")).toBe(false);
+    expect(canOpen("/contracts/new", "factory")).toBe(false);
+    // Дугаартай гэрээ нь ХЭВЭЭР — «new» гэдэг ганц үг л хаалттай
+    expect(canOpen("/contracts/9", "finance")).toBe(true);
+  });
+
+  it("БАРТЕР нь гурвуулангийнх — ил бичигдэв (дарга нөөцөд орох хөрөнгөө хардаг)", () => {
+    expect(routeRoles("/barter")).toEqual(["manager", "finance", "factory"]);
+    for (const r of ["manager", "finance", "factory"]) {
+      expect(canOpen("/barter", r), r).toBe(true);
+    }
+    expect(canOpen("/barter", undefined)).toBe(false);
+  });
+
+  it("«Миний бүртгэл» нь бүх рольд — бүтэн бүртгэл ХЭВЭЭР эзний", () => {
+    for (const r of ["manager", "finance", "factory"]) {
+      expect(canOpen("/audit/mine", r), r).toBe(true);
+    }
+    expect(canOpen("/audit", "factory")).toBe(false);
+    expect(canOpen("/audit", "finance")).toBe(false);
+  });
+
   it("рольгүй хүнд ХААЛТТАЙ — таамаглаж нээхгүй", () => {
     expect(canOpen("/reports", undefined)).toBe(false);
     expect(canOpen("/reports", "")).toBe(false);

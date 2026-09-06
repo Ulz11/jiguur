@@ -8,9 +8,9 @@ import { pageTitle, shellTitle } from "./lib/titles";
 import { scopeFrom, scopeHref, type Scope } from "./lib/links";
 import { canOpen, deniedMessage } from "./lib/guard";
 import { anyDialogDirty, resetDirtyDialogs } from "./lib/dirty";
-import { live, liveText, liveTitle, liveTone, useLiveState, useMinuteTick } from "./lib/live";
-import { expiryWarning, parseExpiry, readSessionInfo, saveSessionInfo,
-         shouldRefresh } from "./lib/session";
+import { live, liveShort, liveText, liveTitle, liveTone, useLiveState, useMinuteTick } from "./lib/live";
+import { expiryWarning, mustChangeAfterClose, parseExpiry, readSessionInfo,
+         saveSessionInfo, shouldRefresh } from "./lib/session";
 import { todayIso } from "./lib/schedule";
 import ChangePassword from "./components/ChangePassword";
 import brandLogo from "./assets/jiguur-logo.png";
@@ -117,6 +117,11 @@ function LiveDot() {
             }}>
       <span className="top-pulse" aria-hidden="true" />
       <span className="top-live-text">{liveText(s, now)}</span>
+      {/* Утсан дээр (≤480px) бүтэн өгүүлбэр нь орохгүй — заагч 26px өргөн ЦЭГ
+          болж хоцордог байв. Хураангуй нь ЦАГ (эсвэл унасан төлөвийн ганц үг):
+          өнгө ДАНГААРАА утга зөөхгүй. Уншигч давхар уншихгүй (`aria-hidden`) —
+          бүтэн өгүүлбэр нь товчны `aria-label` дээр хэвээр. */}
+      <span className="top-live-short" aria-hidden="true">{liveShort(s, now)}</span>
     </button>
   );
 }
@@ -177,8 +182,13 @@ function useSession(active: boolean) {
       setExpiresAt(t);
     }
     if (typeof d.must_change_password === "boolean") setMustChange(d.must_change_password);
+    /* Токены НАС ба ШИНЭЧЛЭХ ХААЛГЫГ сервер хэлж чадвал ТҮҮНИЙХИЙГ авна
+       (`lib/session.ts` → `policyFrom`). Хуучин сервер эдгээрийг илгээхгүй —
+       тэр үед `undefined` нь хадгалагдсан утгыг ДАРАХГҮЙ, анхдагч хэвээр. */
     saveSessionInfo({ token_expires_at: d.token_expires_at,
-                      must_change_password: d.must_change_password });
+                      must_change_password: d.must_change_password,
+                      token_ttl_seconds: d.token_ttl_seconds,
+                      refresh_after_seconds: d.refresh_after_seconds });
   }, []);
 
   const renew = useCallback(async () => {
@@ -214,9 +224,15 @@ function useSession(active: boolean) {
   }, [active, renew]);
 
   return { warning: expiryWarning(expiresAt, now), mustChange, renew,
-           clearMustChange: () => {
-             setMustChange(false);
-             saveSessionInfo({ must_change_password: false });
+           /* Нууц үг солих цонх ХААГДЛАА. Хаагдсан нь СОЛИГДСОН гэсэн үг БИШ:
+              Escape, «Болих», гадна товшилт гурвуулаа хаадаг. Урьд нь энэ гурав
+              ч зурвасыг унтрааж, `must_change_password: false`-ыг ХАДГАЛДАГ
+              байв — сануулга бүтэн сессийн турш чимээгүй алга болно. */
+           afterPasswordDialog: (changed: boolean) => {
+             const next = mustChangeAfterClose(mustChange, changed);
+             if (next === mustChange) return;
+             setMustChange(next);
+             saveSessionInfo({ must_change_password: next });
            } };
 }
 
@@ -237,14 +253,30 @@ function Shell({ children }: { children: ReactNode }) {
      дагана (`Navigate ... state`) — эс бөгөөс дарга хавчуургаа дараад
      тайлбаргүй самбар дээр буугаад «яагаад тайлан алга болов» гэж үлдэнэ. */
   const denied = canOpen(loc.pathname, u?.role) ? "" : deniedMessage(loc.pathname);
-  const strip = (loc.state as any)?.denied as string | undefined;
+  /* ---- ХААЛТТАЙ ХУУДСЫН ЗУРВАС нь ТҮҮХЭНД ҮЛДЭХГҮЙ ----
+     Зурвас нь `history.state`-аас уншигддаг байв: F5 дарахад браузер тэр
+     төлөвөө ЯГ хэвээр нь сэргээж, «Энэ хуудас танд хаалттай…» дахин гарч
+     ирдэг. Дарга нэг цохилтоор хаасан зурвасаа дахин дахин хааж суудаг.
+     Одоо: зурвасыг НЭГ удаа уншаад ЭНЭ бүрхүүлийн төлөвт зөөж, түүхийн
+     төлөвийг тэр дороо цэвэрлэнэ (`state: null`). Хаяг нь өөрчлөгдвөл
+     (өөр хуудас руу явбал) зурвас дагаж явахгүй — тиймээс замаа хамт барина. */
+  const denialState = (loc.state as any)?.denied as string | undefined;
+  const [strip, setStrip] = useState<{ path: string; text: string } | null>(
+    () => (denialState ? { path: loc.pathname, text: denialState } : null));
+  const stripText = strip && strip.path === loc.pathname ? strip.text : "";
+
+  useEffect(() => {
+    if (!denialState) return;
+    setStrip({ path: loc.pathname, text: denialState });
+    nav(loc.pathname + loc.search, { replace: true, state: null });
+  }, [denialState, loc.pathname, loc.search, nav]);
 
   useEffect(() => {
     /* 404 дээр таб нь «Жигүүр Зам · Жигүүр Зам» болдог байв — `shellTitle`
        танихгүй замд «Хуудас олдсонгүй» гэсэн нэр өгнө. */
-    document.title = `${shellTitle(loc.pathname)} · Жигүүр Зам`;
+    document.title = `${shellTitle(loc.pathname, u?.role)} · Жигүүр Зам`;
     setMenu(false);
-  }, [loc.pathname]);
+  }, [loc.pathname, u?.role]);
 
   /* Хуудас солигдлоо — амьд заагч ШИНЭ хуудасны тухай шинээр ярина
      (өмнөх хуудасны «Шинэчилсэн: 14:03» энд утгагүй). */
@@ -278,13 +310,19 @@ function Shell({ children }: { children: ReactNode }) {
   const orgNav = availableNav.slice(WORK_COUNT);
   const roleLabel = u.role === "manager" ? "Менежер" : u.role === "factory" ? "Үйлдвэрийн дарга" : "Санхүүч";
 
-  const navItem = (n: any) => (
-    <NavLink key={n.to} to={n.to} end={n.to === "/"} title={n.label}
-      className={({ isActive }) => `nav-btn ${isActive ? "on" : ""}`}>
-      <span className="nav-icon" aria-hidden="true">{n.icon}</span>
-      <span className="nav-label">{n.label}</span>
-    </NavLink>
-  );
+  /* Цэсний нэр нь `lib/titles.ts`-ээс ГАРНА — «цэсний нэр = хуудасны гарчиг =
+     дээд мөрийн байршил» гэдэг дүрэм ингэж бүтцээрээ баригдана. Даргын нүүр нь
+     «Өнөөдрийн ажил» (`<h1>`-тэйгээ ижил), менежер/санхүүчийнх «Удирдлагын төв». */
+  const navItem = (n: any) => {
+    const label = pageTitle(n.to, u.role) || n.label;
+    return (
+      <NavLink key={n.to} to={n.to} end={n.to === "/"} title={label}
+        className={({ isActive }) => `nav-btn ${isActive ? "on" : ""}`}>
+        <span className="nav-icon" aria-hidden="true">{n.icon}</span>
+        <span className="nav-label">{label}</span>
+      </NavLink>
+    );
+  };
 
   return (
     <ScopeCtx.Provider value={{ scope, setScope }}>
@@ -318,6 +356,12 @@ function Shell({ children }: { children: ReactNode }) {
           {/* Өөрийн мөрөнд гарсан тул нэр хумигдахгүй; nav-label ЗҮҮГДЭХГҮЙ —
               хураасан горимд ч гарах/нууц үг солих товч үлдэнэ */}
           <div className="side-foot-actions relative z-[1]">
+            {/* «МИНИЙ БҮРТГЭЛ» — өөрийн нэрний хажууд, өөрийн үлдээсэн мөр рүү.
+                Отгоогийнх нь БҮТЭН бүртгэл рүү (тэр хуудас түүнийх); дарга,
+                санхүүч өөрсдийн мөрөө уншина. Урьд нь дарга тооллого хийгээд
+                «суусан уу?» гэдгийг зөвхөн утсаар л мэддэг байв. */}
+            <NavLink className="side-foot-btn" title="Миний бүртгэл" aria-label="Миний бүртгэл"
+                     to={u.role === "manager" ? "/audit" : "/audit/mine"}>☰</NavLink>
             <button className="side-foot-btn" title="Нууц үг солих" aria-label="Нууц үг солих"
                     onClick={() => setPw(true)}>🔑</button>
             <button className="side-foot-btn" title="Гарах" aria-label="Гарах"
@@ -336,11 +380,17 @@ function Shell({ children }: { children: ReactNode }) {
                   aria-label={collapsed ? "Цэсийг дэлгэх" : "Цэсийг хураах"}>
             {collapsed ? "»" : "«"}
           </button>
-          <span className="jz-location">
+          {/* Утсан дээр ОГНОО нь мөрөөс гарна (`.jz-loc-date`) — 390px дээр гурвуулаа
+              нэг мөрөнд шахагдаж «202…» болж тасардаг байв. Бүтэн мөр нь `title`
+              дээр үлдэнэ: юу ч алдагдахгүй, зөвхөн хаана бичигдэх нь өөрчлөгдөнө. */}
+          <span className="jz-location"
+                title={`ЖИГҮҮР ЗАМ ХХК · ${shellTitle(loc.pathname, u.role).toUpperCase()} · ${todayIso()}`}>
             {/* `toISOString()` нь UTC — Улаанбаатар (UTC+8) дээр орой 8 цагаас
                 хойш МАРГААШИЙН огноог бичдэг байв. Топбарын огноо бол «өнөөдөр
                 хэд вэ» гэсэн ганц хариу тул ЛОКАЛ хуанлигаар унших ёстой. */}
-            ЖИГҮҮР ЗАМ ХХК <i /> {shellTitle(loc.pathname).toUpperCase()} <i /> {todayIso()}
+            <span className="jz-loc-org">ЖИГҮҮР ЗАМ ХХК <i />{" "}</span>
+            {shellTitle(loc.pathname, u.role).toUpperCase()}
+            <span className="jz-loc-date"><i /> {todayIso()}</span>
           </span>
           {/* Түрээс/Худалдаа энд байсан: топбарын баруун дээд буланд, 36px
               саарал сегмент болж — Отгоо түүнийг ХЭЗЭЭ Ч анзаараагүй, атал тэр
@@ -352,10 +402,10 @@ function Shell({ children }: { children: ReactNode }) {
         </div>
 
         {/* ═══ ТОГТМОЛ ЗУРВАСУУД — топбарын доор, агуулгын дээр ═══ */}
-        {/* 1. Хаалттай хуудсаас буцаагдсан (`Navigate ... state`) */}
-        {strip && (
-          <Strip tone="warn" text={strip}
-                 onDismiss={() => nav(loc.pathname + loc.search, { replace: true, state: null })} />
+        {/* 1. Хаалттай хуудсаас буцаагдсан (`Navigate ... state`) — түүхэнд БИШ,
+               энэ бүрхүүлийн төлөвт (F5 дээр дахин амилахгүй) */}
+        {stripText && (
+          <Strip tone="warn" text={stripText} onDismiss={() => setStrip(null)} />
         )}
         {/* 2. Нууц үг АНХНЫХААРАА («1234») — /audit-ийн «Хэн» багана утгагүй */}
         {session.mustChange && (
@@ -373,7 +423,12 @@ function Shell({ children }: { children: ReactNode }) {
         </div>
       </main>
 
-      {pw && <ChangePassword onClose={() => { setPw(false); session.clearMustChange(); }} />}
+      {/* «Анхны нууц үг хэвээр» зурвас нь ЗӨВХӨН нууц үг ҮНЭХЭЭР солигдоход
+          унтарна. Урьд нь цонхыг Escape-ээр (эсвэл «Болих»-оор) хаахад ч
+          `clearMustChange()` дуудагдаж, ХАДГАЛАГДДАГ байв: сануулга бүтэн
+          сессийн турш чимээгүй алга болж, /audit-ийн «Хэн» багана утгагүй
+          хэвээр үлдэнэ. Хаах ба СОЛИХ хоёр ӨӨР үйл явдал. */}
+      {pw && <ChangePassword onClose={(changed) => { setPw(false); session.afterPasswordDialog(!!changed); }} />}
       {askLogout && (
         <ConfirmModal
           title="Гарах уу?"
@@ -417,6 +472,9 @@ const router = createBrowserRouter(
       <Route path="/collections" element={<Shell><Collections /></Shell>} />
       <Route path="/analytics" element={<Shell><Analytics /></Shell>} />
       <Route path="/audit" element={<Shell><Audit /></Shell>} />
+      {/* «Миний бүртгэл» — ИЖИЛ бие, зөвхөн «зөвхөн миний мөр» гэсэн ялгаа.
+          Бүх рольд нээлттэй (`lib/guard.ts`); сервер нь `/api/audit/mine`. */}
+      <Route path="/audit/mine" element={<Shell><Audit mine /></Shell>} />
       <Route path="/warehouse" element={<Shell><Warehouse /></Shell>} />
       <Route path="/warehouse/stocktake" element={<Shell><Stocktake /></Shell>} />
       <Route path="/warehouse/materials/:id" element={<Shell><MaterialDetail /></Shell>} />

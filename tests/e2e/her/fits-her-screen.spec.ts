@@ -137,4 +137,34 @@ test.describe('1366×768', () => {
         .toBeLessThanOrEqual(Math.round(cardRight));
     });
   }
+
+  /* KPI КАРТЫН ТОО КАРТААСАА ГАРАХГҮЙ.
+     «Хугацаа хэтэрсэн» картан доорх тэмдэг нь ХЭДЭН НЭХЭМЖЛЭЛ, ХЭДЭН ХҮН
+     гэдгийг хэлдэг — залгах ажил нь ХҮНЭЭР хэмжигддэг тул тэр хоёр тоо хамт
+     л утгатай. Атал 1366 дээр карт 206px болж, `whitespace-nowrap`-тай пил
+     198px дээр `overflow: hidden`-д хайчлагдаж «8 харилц» гэж зогсдог байв:
+     Отгоо хэдэн ХҮН рүү залгахаа мэдэхгүй. Одоо пил нь картандаа эвхэгдэнэ. */
+  test('«N нэхэмжлэл · N харилцагч» картандаа БҮТНЭЭРЭЭ багтана',
+    async ({ managerPage }) => {
+      await openHerPage(managerPage, HER_ROUTES[0]);
+      const pill = managerPage.locator('.command-metric .pill-red').first();
+      await expect(pill, 'хэтэрсэн нэхэмжлэлийн тэмдэг алга').toBeVisible();
+      await expect(pill).toContainText(/нэхэмжлэл/);
+
+      const m = await pill.evaluate((el) => {
+        const card = el.closest('.command-metric')!;
+        const cs = getComputedStyle(card);
+        return {
+          right: el.getBoundingClientRect().right,
+          inner: card.getBoundingClientRect().right - parseFloat(cs.paddingRight),
+          scrollWidth: el.scrollWidth, clientWidth: el.clientWidth,
+          text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
+        };
+      });
+      expect(Math.round(m.right),
+        `«${m.text}» картын ирмэгээс ${Math.round(m.right - m.inner)}px давлаа — ` +
+        'үлдсэн нь хайчлагдана').toBeLessThanOrEqual(Math.round(m.inner) + 1);
+      expect(m.scrollWidth, `«${m.text}» өөрөө таслагдаж байна`)
+        .toBeLessThanOrEqual(m.clientWidth + 1);
+    });
 });

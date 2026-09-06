@@ -5,6 +5,7 @@ export const TITLES: Record<string, string> = {
   "/warehouse/stocktake": "Тооллого", "/barter": "Бартер",
   "/machines": "Механизм", "/loans": "Зээл / Өглөг", "/salary": "Цалин",
   "/reports": "Тайлан", "/analytics": "Аналитик", "/audit": "Үйлдлийн бүртгэл",
+  "/audit/mine": "Миний бүртгэл",
   "/settings": "Тохиргоо",
 };
 
@@ -17,8 +18,19 @@ const DYNAMIC: [RegExp, string][] = [
   [/^\/warehouse\/materials\/\d+$/, "Материалын дэлгэрэнгүй"],
 ];
 
-/** Замын гарчиг. Танихгүй бол хоосон — дуудагч тал нөөц нэрээ өөрөө тавина. */
-export function pageTitle(path: string): string {
+/** Үйлдвэрийн даргын НҮҮР — ӨӨР ХУУДАС биш, ӨӨР НЭР.
+ *
+ *  Түүний «/» дээр санхүүгийн самбар биш, өдрийн ажлын дараалал зурагддаг
+ *  (`Dashboard.tsx`-ийн `isFactory`) бөгөөд `<h1>` нь «Өнөөдрийн ажил» гэж
+ *  хэлдэг. Атал цэсний мөр, табын гарчиг, дээд мөрийн байршил ГУРВУУЛАА
+ *  «Удирдлагын төв» гэж дууддаг байв: дарга цэснээсээ нэг юм дараад ӨӨР
+ *  нэртэй хуудсан дээр буудаг. НЭГ хуудас НЭГ нэртэй. */
+export const FACTORY_HOME = "Өнөөдрийн ажил";
+
+/** Замын гарчиг. Танихгүй бол хоосон — дуудагч тал нөөц нэрээ өөрөө тавина.
+ *  `role` нь заавал биш: зөвхөн даргын нүүрийг өөрөөр нэрлэдэг. */
+export function pageTitle(path: string, role?: string | null): string {
+  if (path === "/" && role === "factory") return FACTORY_HOME;
   return TITLES[path] ?? DYNAMIC.find(([re]) => re.test(path))?.[1] ?? "";
 }
 
@@ -28,6 +40,6 @@ export function pageTitle(path: string): string {
 export const NOT_FOUND_TITLE = "Хуудас олдсонгүй";
 
 /** Дээд мөр ба табын гарчиг — 404 дээр ч НЭРТЭЙ. */
-export function shellTitle(path: string): string {
-  return pageTitle(path) || NOT_FOUND_TITLE;
+export function shellTitle(path: string, role?: string | null): string {
+  return pageTitle(path, role) || NOT_FOUND_TITLE;
 }

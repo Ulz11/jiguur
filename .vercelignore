@@ -1,0 +1,53 @@
+# Vercel рүү ЮУГ ЧУУЛГАХГҮЙ вэ (`.gitignore`-той ижил бичиглэл).
+# https://vercel.com/docs/deployments/vercel-ignore
+#
+# Хоёр шалтгаан:
+#   1) НУУЦЛАЛ — бодит харилцагчийн нэр, үлдэгдэл, утас агуулсан файлууд
+#      хэзээ ч серверт гарч болохгүй;
+#   2) ХЭМЖЭЭ — Python функцийн bundle 500 MB-аас хэтэрвэл deploy унана
+#      (https://vercel.com/docs/functions/limitations#bundle-size-limits).
+
+# ── Тест (Vercel дээр ажиллахгүй) ───────────────────────────────────────────
+system/backend/tests
+tests
+playwright.config.ts
+playwright-report
+playwright-results.json
+playwright-results.xml
+test-results
+system/frontend/test-results
+
+# ── Өгөгдөл: SQLite сан ба нөөц (Postgres руу шилжсэн) ──────────────────────
+*.db
+*.db-wal
+*.db-shm
+system/backend/backups
+system/backend/uploads
+system/backend/.secret
+system/backend/.env.top10
+system/backend/.venv
+system/backend/migration/real_data.json
+
+# ── Бодит харилцагчийн ₮ агуулсан тайлангууд ────────────────────────────────
+docs/Тулгалтын тайлан.md
+docs/Тулгалтын тайлан.html
+docs/Топ10 өгөгдлийн зураглал.md
+
+# ── Хэрэггүй хүнд зүйлс ─────────────────────────────────────────────────────
+node_modules
+system/frontend/node_modules
+graphify-out
+jiguur-repo.bundle
+.impeccable
+.claude
+**/__pycache__
+**/*.pyc
+.pytest_cache
+
+# ── Баримт, зураг, скриншот, хуучин Windows скриптүүд ───────────────────────
+# (`docs/` бүхэлдээ — фронтенд түүнээс ЮУ Ч импортлодоггүй. Харин
+#  `system/frontend/src/assets/*` нь build-д ХЭРЭГТЭЙ тул энд БАЙХГҮЙ.)
+docs
+*.numbers
+*.bat
+PUSH.bat

@@ -23,7 +23,7 @@ import { todayIso } from "../lib/schedule";
  * Одоо шүүлт бүхэлдээ СЕРВЕР дээр (`from,to,action,entity,user,q,offset`),
  * шүүлтүүр нь ТОЛИНООС (`BACKEND_ACTIONS` / `BACKEND_ENTITIES`) төрнө.
  */
-export default function Audit() {
+export default function Audit({ mine = false }: { mine?: boolean } = {}) {
   const today = todayIso();
   const [f, setF] = useState<AuditFilter>(() => defaultFilter(today));
   const [rows, setRows] = useState<any[]>([]);
@@ -39,7 +39,7 @@ export default function Audit() {
     const id = ++runId.current;
     setBusy(true);
     setErr("");
-    api(auditQuery(next))
+    api(auditQuery(next, mine))
       .then((d) => {
         if (id !== runId.current) return;      // хожуу ирсэн хуучин хариу
         const got = Array.isArray(d?.rows) ? d.rows : [];
@@ -48,7 +48,7 @@ export default function Audit() {
       })
       .catch((e) => { if (id === runId.current) setErr(e.message); })
       .finally(() => { if (id === runId.current) setBusy(false); });
-  }, []);
+  }, [mine]);
 
   useEffect(() => { fetchPage(f); }, [f, fetchPage]);
 
@@ -63,9 +63,16 @@ export default function Audit() {
     <div>
       <div className="dashboard-header">
         <div>
-          <div className="dashboard-kicker">ҮЙЛДЛИЙН БҮРТГЭЛ <span>•</span> {pagingLabel(p).toUpperCase()}</div>
-          <h1 className="dashboard-title">Үйлдлийн бүртгэл</h1>
-          <p className="dashboard-subtitle">Хэн, юуг, хэзээ өөрчилсөн — устгах боломжгүй бүртгэл.</p>
+          {/* ХОЁР ХУУДАС, НЭГ БИЕ. «Миний бүртгэл» нь бүх рольд нээлттэй
+              (`/api/audit/mine`): дарга тооллого хийгээд үр дүнгээ хардаггүй,
+              «суусан уу?» гэж Отгоо руу залгадаг байв. Бүтэн бүртгэл нь
+              (бусдын үйлдэл, мөнгөний мөрүүд) эзний хэвээр. */}
+          <div className="dashboard-kicker">{mine ? "МИНИЙ БҮРТГЭЛ" : "ҮЙЛДЛИЙН БҮРТГЭЛ"}
+            <span>•</span> {pagingLabel(p).toUpperCase()}</div>
+          <h1 className="dashboard-title">{mine ? "Миний бүртгэл" : "Үйлдлийн бүртгэл"}</h1>
+          <p className="dashboard-subtitle">
+            {mine ? "Таны өөрийн үлдээсэн мөрүүд — юуг, хэзээ бүртгэсэн бэ."
+                  : "Хэн, юуг, хэзээ өөрчилсөн — устгах боломжгүй бүртгэл."}</p>
         </div>
       </div>
 
@@ -95,6 +102,9 @@ export default function Audit() {
             ))}
           </select>
         </div>
+        {/* «Хэн» нь ЗӨВХӨН бүтэн бүртгэл дээр: миний хуудсанд бүх мөр НАДАЛХ
+            тул тэр талбар зөвхөн хоосон үр дүн төрүүлнэ. */}
+        {!mine && (
         <div>
           <label className="lbl" htmlFor={`${uid}-who`}>Хэн хийсэн</label>
           <input id={`${uid}-who`} className="inp !min-h-10 !py-2 w-[170px]" list={`${uid}-whos`}
@@ -108,6 +118,7 @@ export default function Audit() {
               .map((n: string) => <option key={n} value={n} />)}
           </datalist>
         </div>
+        )}
         <div className="flex-1 min-w-[180px]">
           <label className="lbl" htmlFor={`${uid}-q`}>Хайх</label>
           <input id={`${uid}-q`} className="inp !min-h-10 !py-2 w-full"
@@ -149,7 +160,7 @@ export default function Audit() {
           <div className="card overflow-x-auto">
             <table className="w-full min-w-[760px]">
               <thead><tr>
-                <th className="th">Хэзээ</th><th className="th">Хэн</th>
+                <th className="th">Хэзээ</th>{!mine && <th className="th">Хэн</th>}
                 <th className="th">Юу</th><th className="th">Хаана</th><th className="th">Дэлгэрэнгүй</th>
               </tr></thead>
               <tbody>
@@ -165,7 +176,7 @@ export default function Audit() {
                       <td className="td whitespace-nowrap text-t2 tabular-nums">
                         {localStamp(r.local_at, r.at)}
                       </td>
-                      <td className="td font-semibold text-ink">{r.user_name || "—"}</td>
+                      {!mine && <td className="td font-semibold text-ink">{r.user_name || "—"}</td>}
                       <td className="td"><span className={cls}>{label}</span></td>
                       {/* «Гэрээ #26» гэдэг нь мухардмал текст байв — хуудастай
                           объект бол тэр хуудас руугаа нээгдэнэ. Хуудасгүй объект

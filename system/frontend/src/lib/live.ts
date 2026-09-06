@@ -149,6 +149,18 @@ export function liveText(s: LiveSnapshot, now: number): string {
   return `Шинэчилсэн: ${clockLabel(s.okAt!)}`;
 }
 
+/** УТСАН дээрх (≤480px) ХУРААНГУЙ шошго — ЦАГ нь үлдэж, «Шинэчилсэн:» гэдэг
+ *  үг нь хумигдана. Урьд нь тэр өргөнд бүтэн бичиг нь нуугдаж, заагч нь 26px
+ *  өргөн ЦЭГ болж хоцордог байв: цэг дангаараа ЮУ Ч хэлэхгүй.
+ *  Унасан төлөвүүд ҮГЭЭ авч явна — өнгө дангаараа утга зөөхгүй (§4). */
+export function liveShort(s: LiveSnapshot, now: number): string {
+  const tone = liveTone(s);
+  if (tone === "down") return "тасарсан";
+  if (tone === "warn") return s.okAt === null ? "хоцорсон" : `${minutesSince(s.okAt, now)} мин`;
+  if (tone === "idle") return "…";
+  return clockLabel(s.okAt!);
+}
+
 /** Хулгана хүрэхэд ба уншигчид — заагч нь ЮУ хийхээ ч хэлнэ. */
 export function liveTitle(s: LiveSnapshot, now: number): string {
   const base = liveText(s, now);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pageTitle, shellTitle, NOT_FOUND_TITLE } from "./titles";
+import { pageTitle, shellTitle, NOT_FOUND_TITLE, FACTORY_HOME } from "./titles";
 
 // Гарчиг нь табын нэр БОЛОН дээд мөрийн байршлыг хоёуланг нь тэжээдэг.
 // Динамик зам (/contracts/42) таарахгүй байвал хамгийн гүн дэлгэц дээр
@@ -46,5 +46,30 @@ describe("shellTitle", () => {
   it("танихгүй зам дээр НЭРТЭЙ — дээд мөр, таб хоосорохгүй", () => {
     expect(shellTitle("/hongololt")).toBe(NOT_FOUND_TITLE);
     expect(NOT_FOUND_TITLE).toBe("Хуудас олдсонгүй");
+  });
+});
+
+/* ҮЙЛДВЭРИЙН ДАРГЫН НҮҮР — НЭГ ХУУДАС, НЭГ НЭР.
+   Түүний «/» дээр `<h1>` нь «Өнөөдрийн ажил» гэж хэлдэг атал цэсний мөр, таб,
+   дээд мөрийн байршил гурвуулаа «Удирдлагын төв» гэж дууддаг байв: дарга
+   цэснээсээ нэг юм дараад ӨӨР нэртэй хуудсан дээр буудаг. */
+describe("даргын нүүрний нэр", () => {
+  it("«/» дээр даргад «Өнөөдрийн ажил»", () => {
+    expect(pageTitle("/", "factory")).toBe(FACTORY_HOME);
+    expect(FACTORY_HOME).toBe("Өнөөдрийн ажил");
+    expect(shellTitle("/", "factory")).toBe("Өнөөдрийн ажил");
+  });
+
+  it("менежер, санхүүчид «Удирдлагын төв» хэвээр", () => {
+    expect(pageTitle("/", "manager")).toBe("Удирдлагын төв");
+    expect(pageTitle("/", "finance")).toBe("Удирдлагын төв");
+    // Роль мэдэгдэхгүй үед ч хуучин зан хэвээр (нэвтрээгүй бүрхүүл)
+    expect(pageTitle("/")).toBe("Удирдлагын төв");
+  });
+
+  it("бусад хуудас РОЛИОР өөрчлөгдөхгүй — «Агуулах» бол «Агуулах»", () => {
+    expect(pageTitle("/warehouse", "factory")).toBe("Агуулах");
+    expect(pageTitle("/contracts/42", "factory")).toBe("Гэрээний дэлгэрэнгүй");
+    expect(shellTitle("/hongololt", "factory")).toBe(NOT_FOUND_TITLE);
   });
 });

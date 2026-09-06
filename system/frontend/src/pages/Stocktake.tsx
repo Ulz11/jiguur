@@ -30,9 +30,14 @@ function readDraft(key: string): Draft | null {
   } catch { return null; }   // эвдэрсэн / уншигдахгүй ноорог ажлыг зогсоох ёсгүй
 }
 
+/* ЦАГ НЬ УЛААНБААТАРЫНХ. `toLocaleString()`-ыг ХООСОН дуудвал хөтөч нь
+   ӨӨРИЙНХӨӨ хэл, ӨӨРИЙНХӨӨ цагийн бүсээр бичнэ. Нэг компьютер дээр байхад
+   энэ нь мэдэгддэггүй байв; Vercel дээр Отгоо утсаараа (англи хэлтэй),
+   нөгөө хүн оффисын компьютероор нээхэд ЯГ НЭГ ноорог хоёр өөр огноотой
+   харагдана — «энэ хэзээний тоо вэ?» гэдэг асуулт төрнө. */
 const whenLabel = (iso: string) => {
   const t = new Date(iso);
-  return isNaN(+t) ? "" : t.toLocaleString();
+  return isNaN(+t) ? "" : t.toLocaleString("mn-MN", { timeZone: "Asia/Ulaanbaatar" });
 };
 
 /** Утсаар агуулах тоолоход зориулсан горим — том товч, нэг мөр = нэг зэрэглэл. */
@@ -170,15 +175,23 @@ export default function Stocktake() {
       </div>
 
       {/* ҮР ДҮНГИЙН ЗУРВАС — 40 минутын ажлын хариу нь 3.2 секундын toast
-          болж өнгөрөх ёсгүй. Бүртгэлийн мөр рүү нь холбоос дагалдана
-          (менежерт — бусдад тэр хуудас хаалттай, худал холбоос гаргахгүй). */}
+          болж өнгөрөх ёсгүй. Бүртгэлийн мөр рүү нь холбоос дагалдана.
+
+          ⚠ ТООЛЛОГЫГ ХИЙДЭГ НЬ ДАРГА. Урьд нь энэ холбоос зөвхөн менежерт
+          гарч байв: 40 минут тоолсон хүн өөрийнхөө ажил суусан эсэхийг
+          ХАРАХ ГАЗАРГҮЙ үлдэж, «болсон уу?» гэж утсаар асуудаг байв. Одоо
+          түүнд «Миний бүртгэл» рүү (`/audit/mine` — өөрийн мөрүүд) очно;
+          эзэнд нь бүтэн бүртгэл рүү. Хоёулаа ижил шүүлттэй. */}
       {done && (
         <OutcomeStrip text={done} onClose={() => setDone(null)} />
       )}
-      {done && canOpen("/audit", u?.role) && (
+      {done && (
         <p className="-mt-2 mb-4 text-[12.5px] text-t2">
-          <Link to="/audit?action=stocktake&entity=stock" className="text-brand-ink font-semibold hover:underline">
-            Үйлдлийн бүртгэлээс энэ тооллогыг харах →
+          <Link to={`${canOpen("/audit", u?.role) ? "/audit" : "/audit/mine"}?action=stocktake&entity=stock`}
+                className="text-brand-ink font-semibold hover:underline">
+            {canOpen("/audit", u?.role)
+              ? "Үйлдлийн бүртгэлээс энэ тооллогыг харах →"
+              : "Миний бүртгэлээс энэ тооллогыг харах →"}
           </Link>
         </p>
       )}

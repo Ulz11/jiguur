@@ -144,7 +144,12 @@ export default function Barter() {
             <th className="th">Хэвтсэн хугацаа</th>
             <th className="th">Төлөв</th>
             {seesMoney && <th className="th text-right">Зарсан / Ашиг·Алдагдал</th>}
-            <th className="th"></th>
+            {/* ҮЙЛДЛИЙН багана — бичих эрхтэй хүнд л. Даргад бүх бичих товч
+                хаалттай (сервер ч мөн адил) тул түүнд энэ багана нь МӨНХ
+                ХООСОН НҮД байв: «энд ямар нэг зүйл байгаа» гэж заадаг.
+                Хуудас нь өөрөө ХЭВЭЭР харагдана (`/barter` нь гурвуулангийн
+                зам — `lib/guard.ts` дээр ил бичигдэв). */}
+            {canSell && <th className="th"></th>}
           </tr></thead>
           <tbody>
             {d.assets.map((a: any) => (
@@ -195,8 +200,9 @@ export default function Barter() {
                   ) : "—"}
                 </td>
                 )}
+                {canSell && (
                 <td className="td">
-                  {a.status === "held" && canSell && (
+                  {a.status === "held" && (
                     <div className="flex gap-1">
                       <button className="btn-ghost btn-row text-money"
                               onClick={() => setModal({ kind: "sell", asset: a })}>Зарах</button>
@@ -209,6 +215,7 @@ export default function Barter() {
                     </div>
                   )}
                 </td>
+                )}
               </tr>
             ))}
           </tbody>

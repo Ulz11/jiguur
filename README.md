@@ -3,20 +3,36 @@
 Барилгын материалын **түрээс, худалдаа, тооцоо, санхүү**-г нэг дор хөтөлдөг систем.
 Messenger чат, гар падан, Numbers файлын оронд.
 
-**v1.1** · 78 автомат тест · бодит дата шилжсэн · production-д ажиллаж байна
+**v1.3** · бодит дата шилжсэн · **Vercel + Neon Postgres дээр ажиллаж байна**
 
 ---
 
-## Хурдан эхлэх
+## Хаана ажиллаж байна
+
+| | |
+|---|---|
+| **Хэрэглэгчид** | `https://jiguur-zam.vercel.app` — юу ч суулгахгүй, юу ч асаахгүй |
+| **Статик** | `system/frontend/dist` → Vercel CDN |
+| **API** | `api/index.py` → `system/backend/app/main.py:app` (Python функц, region `sin1`) |
+| **Өгөгдөл** | Neon Postgres, AWS `ap-southeast-1` |
+| **Өдөр бүрийн ажил** | Vercel Cron → `GET /api/cron/daily`, 06:00 Улаанбаатар |
+
+🚀 **Байршуулах журам (хөгжүүлэгчид):** [docs/Байршуулалт.md](docs/Байршуулалт.md)
+📘 **Ажилчдын гарын авлага:** [docs/Гарын авлага.md](docs/Гарын%20авлага.md)
+
+## Локал дээр гүйлгэх
+
+`system/frontend/dist` нь **git дотор байхгүй** (build-ийн гаралт). Шинэ
+хуулбар татсаны дараа нэг удаа:
 
 ```bash
-system\run.bat        # сервер асаана → http://localhost:8000
-system\migrate.bat    # бодит дата ачаална (нэг удаа)
-system\backup.bat     # нөөц хийнэ
+npm --prefix system/frontend ci
+npm --prefix system/frontend run build
 ```
 
-📘 **Ажилчдын гарын авлага:** [docs/Гарын авлага.pdf](docs/Гарын%20авлага.pdf) —
-хэвлэж өгөх боломжтой (13 хуудас, ролиор хуваасан)
+Дараа нь backend-ээ асаана (`.claude/launch.json` → `jiguur`) →
+`http://localhost:8000`. Зөвхөн фронтенд засах бол `jiguur-web` (`:5173`).
+Дэлгэрэнгүй: [docs/Байршуулалт.md §13](docs/Байршуулалт.md).
 
 Дэлгэрэнгүй заавар: **[system/README.md](system/README.md)**
 Тестийн журам: **[system/TESTING.md](system/TESTING.md)**
@@ -40,9 +56,10 @@ system\backup.bat     # нөөц хийнэ
 
 ## Технологи
 
-**Backend:** Python · FastAPI · SQLAlchemy · SQLite (WAL) — Neon Postgres руу шилжихэд бэлэн
-**Frontend:** React · TypeScript · Vite · Tailwind CSS v4
-**Тест:** pytest (74) · vitest (4) — TDD журмаар
+**Backend:** Python 3.12 · FastAPI · SQLAlchemy 2 · **Neon Postgres** (локал тест дээр SQLite)
+**Frontend:** React · TypeScript · Vite · Tailwind CSS v4 · Node 22
+**Хостинг:** Vercel — статик CDN + ганц Python функц (`api/index.py`), Cron
+**Тест:** pytest · vitest · Playwright (E2E) — TDD журмаар
 
 ## Лиценз
 

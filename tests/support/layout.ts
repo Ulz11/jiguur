@@ -92,16 +92,24 @@ export type SmallTarget = {
  * даргын эрхий хуруу хажуугийн мөрийг оносоор өөр материалын тоог засна.
  *
  * `scope` өгвөл зөвхөн тэр дотор хэмжинэ (модал шалгахад).
+ *
+ * `axis` — ХУРУУНЫ ШАТ (44px, `pointer: coarse`) дээр ЗӨВХӨН ӨНДРИЙГ хэмжинэ.
+ * Учир нь тэр шатанд хэвтээ хэмжээ нь өөр амьтан: «А» гэсэн зэрэглэлийн
+ * сонгогч, тооны талбар зэрэг нь агуулгаараа нарийн байх нь ЗӨВ (хуруу нь
+ * доош ондог, хажуу тийш биш). Анхдагч нь ХЭВЭЭР — §4-ийн 36px-ийн шалгалт
+ * хоёр талыг нь хардаг.
  */
-export async function undersizedTargets(scope: Locator, min = 36): Promise<SmallTarget[]> {
-  return scope.evaluate((root: Element, args: { SEL: string; min: number }) => {
+export async function undersizedTargets(scope: Locator, min = 36,
+                                        axis: 'both' | 'height' = 'both'): Promise<SmallTarget[]> {
+  return scope.evaluate((root: Element, args: { SEL: string; min: number; axis: string }) => {
     const out: SmallTarget[] = [];
     for (const el of Array.from(root.querySelectorAll(args.SEL))) {
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) continue;       // зурагдаагүй
       const cs = getComputedStyle(el);
       if (cs.visibility === 'hidden' || cs.display === 'none') continue;
-      if (Math.min(r.width, r.height) >= args.min - 0.5) continue;
+      const size = args.axis === 'height' ? r.height : Math.min(r.width, r.height);
+      if (size >= args.min - 0.5) continue;
       out.push({
         name: (el.getAttribute('aria-label') || el.textContent || el.tagName)
                 .trim().replace(/\s+/g, ' ').slice(0, 70),
@@ -111,7 +119,7 @@ export async function undersizedTargets(scope: Locator, min = 36): Promise<Small
       });
     }
     return out;
-  }, { SEL: PRESSABLE, min });
+  }, { SEL: PRESSABLE, min, axis });
 }
 
 /** Бүхэл хуудсыг хэмжих хамрах хүрээ (модалыг `page.getByRole('dialog')`-оор өг). */

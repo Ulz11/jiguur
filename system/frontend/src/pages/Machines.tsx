@@ -7,6 +7,7 @@ import { ErrorCard, SideStrip } from "../components/SideStrip";
 import { parseMoney } from "../lib/num";
 import { formDirty } from "../lib/dirty";
 import { usePdf } from "../lib/docs";
+import { canEditMachineLog } from "../lib/edit";
 import { billableJobs, type MachineLogRow } from "../lib/machine";
 import { methodMn, previewBlocked, previewRows, previewTotal, trimPct,
          type InvoicePreview } from "../lib/sideRows";
@@ -54,7 +55,11 @@ export default function Machines() {
      бичдэг. Харин түүхэн бичилт ЗАСАХ/УСТГАХ, нэхэмжлэл гаргах нь
      менежер+санхүүчийнх (routers/machines.py `money_guard` — сервер 403).
      Тиймээс тэдгээр товч задаргаа дотор ч ГАРАХГҮЙ: үргэлж унадаг товч
-     харуулах нь худал амлалт. */
+     харуулах нь худал амлалт.
+
+     ГАНЦ ЦОНХ нээгдэв: ӨНӨӨДӨР ӨӨРӨӨ бичсэн мөр (`mine_today`, сервер
+     хэлнэ) — тэр өдөртөө засаж, устгаж чадна. Маргааш нь тэр мөр ашгийн
+     тооцоонд орсон байна. */
   const seesMoney = u?.role !== "factory";
 
   /* Урьд нь `load()` нь БАРИГЧГҮЙ `async` байв: сервер унавал татгалзал
@@ -106,6 +111,10 @@ export default function Machines() {
 
   if (err && !d) return <ErrorCard message={err} onRetry={() => { setErr(""); load(); }} />;
   if (!d) return <Spinner />;
+
+  /* ГАНЦ Ч засагдах мөр байхгүй бол устгалын БАГАНА ч гарахгүй — хоосон
+     багана «энд ямар нэг зүйл байгаа» гэж хуурна. */
+  const anyMine = !!sel?.logs?.some((l: any) => canEditMachineLog(u?.role, !!l.mine_today));
 
   return (
     <div>
@@ -268,7 +277,10 @@ export default function Machines() {
               <th className="th">Огноо</th><th className="th">Юу</th><th className="th">Хэн / Хаана</th>
               {seesMoney && <th className="th text-right">Дүн</th>}
               <th className="th">Хэлбэр</th>
-              {seesMoney && <th className="th"></th>}
+              {/* УСТГАЛЫН багана — мөнгөний эздэд үргэлж, даргад зөвхөн
+                  өнөөдөр өөрийнх нь бичсэн мөр байвал (эс бөгөөс хоосон
+                  багана «энд ямар нэг зүйл байгаа» гэж хуурна). */}
+              {(seesMoney || anyMine) && <th className="th"></th>}
             </tr></thead>
             <tbody>
               {sel.logs.map((l: any) => {
@@ -277,10 +289,15 @@ export default function Machines() {
                    дуудагдвал уншигчаар ажилладаг хүн АЛЬ бичилтийг заасныг
                    мэдэхгүй (MaterialLedger-ийн журам: огноо · юу). */
                 const row = `${l.date} · ${l.label || (l.entry === "job" ? "Ажил" : "Зарлага")}`;
+                /* ӨӨРИЙН, ӨНӨӨДРИЙН мөрөө дарга ч засна (`mine_today` нь
+                   серверээс — `_own_log`-тэй ЯГ нэг дүрэм). «Бүтэн өдөр»
+                   гэж дараад хагас байсныг мэдэх нь тэр өдөртөө л болдог
+                   явдал; урьд нь ганц зам нь Отгоо руу залгах байв. */
+                const mine = canEditMachineLog(u?.role, !!l.mine_today);
                 return (
                 <tr key={l.id}>
                   <td className="td">
-                    {seesMoney ? (
+                    {mine ? (
                       <InlineEdit type="date" label={`${row} — огноо`} value={l.date} display={l.date} width="w-36"
                         confirmText="Огноо солих уу?"
                         onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { date: v }, "Огноо шинэчлэгдлээ")} />
@@ -289,7 +306,7 @@ export default function Machines() {
                   <td className="td">
                     {/* Шошго нь ЧӨЛӨӨТ текст (seed дээр «Сэлбэг — краны гинж» гэх мэт)
                         тул сонголтын жагсаалт болговол бичсэн зүйл нь алдагдана. */}
-                    {seesMoney ? (
+                    {mine ? (
                       <InlineEdit label={`${row} — ${l.entry === "job" ? "ажлын төрөл" : "зарлагын ангилал"}`}
                         value={l.label} width="w-40" confirmText="Хадгалах уу?"
                         display={l.label || "—"}
@@ -297,7 +314,7 @@ export default function Machines() {
                     ) : <span>{l.label || "—"}</span>}
                   </td>
                   <td className="td text-t2">
-                    {seesMoney ? (
+                    {mine ? (
                       <InlineEdit label={`${row} — хэн / хаана`} value={l.client} display={l.client || "—"} width="w-48"
                         confirmText="Хадгалах уу?"
                         onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { client: v }, "Харилцагч шинэчлэгдлээ")} />
@@ -314,18 +331,20 @@ export default function Machines() {
                   <td className="td">
                     {l.entry !== "job"
                       ? <span className="pill-red">зарлага</span>
-                      : seesMoney
+                      : mine
                         ? <InlineEdit label={`${row} — төлбөрийн хэлбэр`} value={l.method} display={methodLabel(l.method)}
                             options={METHODS} width="w-28" confirmText="Хэлбэр солих уу?"
                             onSave={(v) => doPatch(`/api/machine-logs/${l.id}`, { method: v }, "Төлбөрийн хэлбэр шинэчлэгдлээ")} />
                         : <span className="text-t2">{methodLabel(l.method)}</span>}
                   </td>
-                  {seesMoney && (
+                  {(seesMoney || anyMine) && (
                     <td className="td text-right">
                       {/* 28px байсан — docs/UI-ЗАРЧИМ.md §4: дарагддаг юм 36px-ээс намхан БАЙХГҮЙ */}
-                      <button className="w-9 h-9 rounded-lg bg-danger-50 text-danger shrink-0"
-                              title="Бичилт устгах" aria-label={`${row} — бичилт устгах`}
-                              onClick={() => setAsk({ kind: "delLog", log: l })}>✕</button>
+                      {mine && (
+                        <button className="w-9 h-9 rounded-lg bg-danger-50 text-danger shrink-0"
+                                title="Бичилт устгах" aria-label={`${row} — бичилт устгах`}
+                                onClick={() => setAsk({ kind: "delLog", log: l })}>✕</button>
+                      )}
                     </td>
                   )}
                 </tr>

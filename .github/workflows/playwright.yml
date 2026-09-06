@@ -17,6 +17,12 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
+    # `system/frontend/dist` нь ОДОО git-д БАЙХГҮЙ (build-ийн гаралт, эх код
+    # биш — Vercel түүнийг өөрөө үүсгэдэг). E2E нь backend-ийн үйлчилдэг
+    # dist рүү ордог тул түүнийг ЭНД барина.
+    - name: Build frontend
+      run: npm --prefix system/frontend ci && npm --prefix system/frontend run build
+
     # Backend нь суулгасан frontend/dist-ийг өөрөө үйлчилдэг тул нэг л сервер
     # хэрэгтэй. playwright.config.ts-ийн `webServer` үүнийг өөрөө асаана —
     # энд зөвхөн venv-ийг нь бэлдэнэ. Хоосон DB дээр `seed()` өөрөө ажиллана.

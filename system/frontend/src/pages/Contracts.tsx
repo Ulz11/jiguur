@@ -76,7 +76,10 @@ export default function Contracts() {
           <h1 className="dashboard-title">Гэрээнүүд</h1>
           <p className="dashboard-subtitle">Бүх түрээс, худалдааны гэрээ нэг дор.</p>
         </div>
-        {u?.role !== "factory" && <Link to="/contracts/new" className="btn-primary command-action">+ Шинэ гэрээ</Link>}
+        {/* ЗӨВХӨН менежер — сервер (`POST /api/contracts`) ба чиглүүлэгч
+            (`lib/guard.ts`) хоёулаа тэгнэ. Санхүүчид гарч байсан нь худал
+            амлалт: гэрээгээ бүтэн бөглөсний ДАРАА л 403 иддэг. */}
+        {u?.role === "manager" && <Link to="/contracts/new" className="btn-primary command-action">+ Шинэ гэрээ</Link>}
       </div>
 
       {/* Түрээс/Худалдаа нь топбарын баруун дээд буланд, хуудаснаасаа тусдаа
