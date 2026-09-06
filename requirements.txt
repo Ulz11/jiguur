@@ -1,4 +1,21 @@
-# Vercel-ийн Python runtime нь хамаарлаа ТӨСЛИЙН ҮНДЭС дэх энэ файлаас уншина
+# Vercel-ийн Python runtime нь хамаарлаа ТӨСЛИЙН ҮНДЭС дэх ЭНЭ файлаас уншина
 # (https://vercel.com/docs/functions/runtimes/python — «Dependencies»).
-# Жинхэнэ жагсаалт нь backend-ийн дэргэд амьдарна — хоёр газар давхардуулахгүй.
--r system/backend/requirements.txt
+#
+# ⚠ ЭНД `-r system/backend/requirements.txt` ГЭЖ БИЧИЖ БОЛОХГҮЙ. Vercel-ийн
+# задлагч `-r` оруулгыг ойлгодоггүй бөгөөс build нь «could not parse
+# requirements.txt» гэж унана (2026-09-06-нд амьдаар нь тулгарав). Тиймээс
+# жагсаалт нь ХОЁР газар — өөрчлөх бүрд ХОЁУЛАНГ нь.
+#
+# Ялгаа НЭГ: `uvicorn` энд БАЙХГҮЙ. Vercel өөрөө ASGI аппыг үйлчилдэг тул
+# сервер хэрэггүй (`app/` дотор `import uvicorn` нэг ч газар алга); оффисын
+# `run.bat` нь backend-ийн жагсаалтаас уншина.
+fastapi>=0.115
+sqlalchemy>=2.0
+fpdf2>=2.7
+openpyxl>=3.1
+python-multipart>=0.0.9
+# Neon Postgres — psycopg 3. `[binary]` нь хөрвүүлэгчгүйгээр суудаг
+# (Vercel-ийн build дээр libpq-dev байхгүй).
+psycopg[binary]>=3.2
+# Postgres-ийн схем (SQLite нь app/schema.py-ээр явна)
+alembic>=1.13
